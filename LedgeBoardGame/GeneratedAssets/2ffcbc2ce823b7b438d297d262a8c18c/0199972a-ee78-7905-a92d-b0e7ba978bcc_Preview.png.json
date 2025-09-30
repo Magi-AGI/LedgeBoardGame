@@ -1,0 +1,11 @@
+{
+    "asset": "2ffcbc2ce823b7b438d297d262a8c18c",
+    "fileName": "0199972a-ee78-7905-a92d-b0e7ba978bcc_Preview.png",
+    "prompt": "A 2D board game terrain layer for a board with 49 spaces, including a center, inner ring, and outer rings. The design should feature 12 wedges radiating from the center, alternating bridge and stop spaces in the inner ring, and ledge spaces on the rim with distinct color labels for Ela, Biz, Yun, Jutu, Glei, Sace, Rha, Dau, Wim, Pfi, Quae, Vei.",
+    "negativePrompt": "",
+    "model": "575ecf67-4425-4939-97b9-5e138b8ee234",
+    "modelName": "Unity Texture2D",
+    "customSeed": 17735036,
+    "w3CTraceId": "47d11f18dce294ac6d13f11717428844",
+    "refinementMode": "Generation"
+}

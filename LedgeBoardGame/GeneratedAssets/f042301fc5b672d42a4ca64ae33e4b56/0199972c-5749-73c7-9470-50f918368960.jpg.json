@@ -1,0 +1,20 @@
+{
+    "asset": "f042301fc5b672d42a4ca64ae33e4b56",
+    "fileName": "0199972c-5749-73c7-9470-50f918368960.jpg",
+    "prompt": "A texture for the background of a 2D board game, featuring a dark board color with subtle patterns to enhance visual appeal.",
+    "negativePrompt": "",
+    "model": "94c4260f-b988-40e7-b3d3-435b9f449bd0",
+    "modelName": "Flux.1 Dev",
+    "customSeed": -1,
+    "w3CTraceId": "7524fba070d93162de50ce2aa95ad0dc",
+    "refinementMode": "Generation",
+    "pixelateTargetSize": 0,
+    "pixelateKeepImageSize": false,
+    "pixelatePixelBlockSize": 0,
+    "pixelateMode": 0,
+    "pixelateOutlineThickness": 0,
+    "doodles": {
+        "m_Items": []
+    },
+    "upscaleFactor": 0
+}

@@ -1,0 +1,11 @@
+{
+    "asset": "daa2bce40c5db7544aab04f7376e5c8f",
+    "fileName": "019996b1-2765-7f5a-9a32-67bdeebbea3c_Preview.png",
+    "prompt": "Generate materials for the Ledge board game spaces, including textures for bridge spaces, stop spaces, and ledge spaces with distinct color labels.",
+    "negativePrompt": "",
+    "model": "575ecf67-4425-4939-97b9-5e138b8ee234",
+    "modelName": "Unity Texture2D",
+    "customSeed": 1751628345,
+    "w3CTraceId": "788bb10c6efe6ec4b6e6058c85185eda",
+    "refinementMode": "Generation"
+}

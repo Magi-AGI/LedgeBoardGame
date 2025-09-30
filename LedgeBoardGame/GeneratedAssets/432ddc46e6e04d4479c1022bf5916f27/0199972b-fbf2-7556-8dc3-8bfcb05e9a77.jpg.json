@@ -1,0 +1,20 @@
+{
+    "asset": "432ddc46e6e04d4479c1022bf5916f27",
+    "fileName": "0199972b-fbf2-7556-8dc3-8bfcb05e9a77.jpg",
+    "prompt": "A sprite for a token text placeholder to be used in a 2D board game space.",
+    "negativePrompt": "",
+    "model": "94c4260f-b988-40e7-b3d3-435b9f449bd0",
+    "modelName": "Flux.1 Dev",
+    "customSeed": -1,
+    "w3CTraceId": "f2a25fcfd7c3ddc4e8297687ab3b1fe8",
+    "refinementMode": "Generation",
+    "pixelateTargetSize": 0,
+    "pixelateKeepImageSize": false,
+    "pixelatePixelBlockSize": 0,
+    "pixelateMode": 0,
+    "pixelateOutlineThickness": 0,
+    "doodles": {
+        "m_Items": []
+    },
+    "upscaleFactor": 0
+}
