@@ -1,0 +1,20 @@
+{
+    "asset": "389d98d4581ba3b44b62d32c02cbec21",
+    "fileName": "0199972b-be1f-73dd-a751-6811edbd496c.jpg",
+    "prompt": "A sprite for a lock icon to be used in a 2D board game space, initially disabled.",
+    "negativePrompt": "",
+    "model": "94c4260f-b988-40e7-b3d3-435b9f449bd0",
+    "modelName": "Flux.1 Dev",
+    "customSeed": -1,
+    "w3CTraceId": "d6b587ddc9895b8a2c5d69df8746ecd7",
+    "refinementMode": "Generation",
+    "pixelateTargetSize": 0,
+    "pixelateKeepImageSize": false,
+    "pixelatePixelBlockSize": 0,
+    "pixelateMode": 0,
+    "pixelateOutlineThickness": 0,
+    "doodles": {
+        "m_Items": []
+    },
+    "upscaleFactor": 0
+}

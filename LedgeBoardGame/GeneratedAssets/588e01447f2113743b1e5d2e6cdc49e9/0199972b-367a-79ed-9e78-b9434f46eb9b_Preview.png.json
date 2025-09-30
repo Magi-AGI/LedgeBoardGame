@@ -1,0 +1,11 @@
+{
+    "asset": "588e01447f2113743b1e5d2e6cdc49e9",
+    "fileName": "0199972b-367a-79ed-9e78-b9434f46eb9b_Preview.png",
+    "prompt": "A dark gray material (#2C2C34) suitable for a 2D board game background in Unity.",
+    "negativePrompt": "",
+    "model": "575ecf67-4425-4939-97b9-5e138b8ee234",
+    "modelName": "Unity Texture2D",
+    "customSeed": 9291806,
+    "w3CTraceId": "07d0b55e370dc7e8addcb17be36c5b0b",
+    "refinementMode": "Generation"
+}

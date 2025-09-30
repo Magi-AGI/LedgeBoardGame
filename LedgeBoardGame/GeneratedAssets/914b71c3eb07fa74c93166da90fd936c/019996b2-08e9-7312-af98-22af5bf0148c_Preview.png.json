@@ -1,0 +1,11 @@
+{
+    "asset": "914b71c3eb07fa74c93166da90fd936c",
+    "fileName": "019996b2-08e9-7312-af98-22af5bf0148c_Preview.png",
+    "prompt": "Design a terrain layer for the Ledge board game board layout, featuring 12 wedges radiating from the center and distinct rings.",
+    "negativePrompt": "",
+    "model": "575ecf67-4425-4939-97b9-5e138b8ee234",
+    "modelName": "Unity Texture2D",
+    "customSeed": 1597936650,
+    "w3CTraceId": "867d7ee8db86dbeccf6f6be9fd19c69c",
+    "refinementMode": "Generation"
+}
