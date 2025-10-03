@@ -1,4 +1,4 @@
-registries:
+﻿registries:
   magi: https://registry.magi.dev
 scopes:
   - com.magi
@@ -42,7 +42,7 @@ packages:
   com.unity.visualscripting: 1.9.8
 
   # Magi packages
-  com.magi.unitytools: file:../../../MagiUnityTools/MagiUnityTools/Assets/_Project/MagiUnityTools
+  com.magi.unitytools: file:../../MagiUnityTools/MagiUnityTools/Assets/_Project/MagiUnityTools
 
 policy:
   allowGitDependencies: false
@@ -52,3 +52,5 @@ policy:
     - GameObject.Find
     - SendMessage
     - Object.FindObjectsOfType
+
+

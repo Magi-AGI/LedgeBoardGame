@@ -1,11 +1,11 @@
-{
+﻿{
     "name": "Magi.LedgeBoardGame.Runtime",
     "rootNamespace": "Magi.LedgeBoardGame.Runtime",
     "references": [
         "Unity.Mathematics",
         "Unity.Burst",
         "Unity.InputSystem",
-        "Magi.UnityTools.Runtime"
+        "Magi.UnityTools"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
