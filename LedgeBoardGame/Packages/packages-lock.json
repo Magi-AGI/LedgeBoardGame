@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "com.magi.unitytools": {
-      "version": "file:..\\..\\..\\MagiUnityTools\\MagiUnityTools\\Assets\\_Project\\Scripts\\UnityTools",
+      "version": "file:..\\..\\..\\MagiUnityTools\\MagiUnityTools\\Assets\\_Project\\Scripts",
       "depth": 0,
       "source": "local",
       "dependencies": {

@@ -42,7 +42,7 @@ packages:
   com.unity.visualscripting: 1.9.8
 
   # Magi packages
-  com.magi.unitytools: file:../../MagiUnityTools/MagiUnityTools/Assets/_Project/Scripts/UnityTools
+  com.magi.unitytools: file:../../MagiUnityTools/MagiUnityTools/Assets/_Project/Scripts
 
 policy:
   allowGitDependencies: false
@@ -52,6 +52,7 @@ policy:
     - GameObject.Find
     - SendMessage
     - Object.FindObjectsOfType
+
 
 
 
