@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Magi.LedgeBoardGame.Builder;
 
 namespace Magi.LedgeBoardGame.Models
 {
@@ -42,11 +43,14 @@ namespace Magi.LedgeBoardGame.Models
 
         private void InitializeBoards()
         {
+            var builder = BoardGraphBuilder.CreateHexagonalBoard();
+
             foreach (var player in Players)
             {
-                var board = new BoardState(player.BoardId, player.Id);
+                var board = builder.BuildBoard(player.BoardId, player.Id);
                 Boards.Add(board);
             }
+
             GenerateCrossBoardLedgeEdges();
         }
 

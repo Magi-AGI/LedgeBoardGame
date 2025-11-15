@@ -5,6 +5,7 @@ using UnityEngine;
 using System.Collections.Generic;
 using Magi.LedgeBoardGame.Models;
 using Magi.LedgeBoardGame.Config;
+using UnityEngine.UI;
 
 namespace Magi.LedgeBoardGame.Board
 {
@@ -13,11 +14,107 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private BoardLayoutConfig layoutConfig;
         [SerializeField] private SpaceView spaceViewPrefab;
 
-        private BoardState boardState;
-        private Dictionary<int, SpaceView> spaceViews;
+        private BoardState _boardState;
+        private readonly Dictionary<int, SpaceView> _spaceViews = new Dictionary<int, SpaceView>();
 
-        public void Initialize(BoardState state) { }
-        public void UpdateView() { }
-        public void HighlightValidMoves(List<SpaceId> spaces) { }
+        public BoardState BoardState => _boardState;
+        public IReadOnlyDictionary<int, SpaceView> SpaceViews => _spaceViews;
+
+        public void Initialize(BoardState state)
+        {
+            _boardState = state;
+            BuildSpaceViews();
+            UpdateView();
+        }
+
+        private void BuildSpaceViews()
+        {
+            foreach (Transform child in transform)
+            {
+                Destroy(child.gameObject);
+            }
+
+            _spaceViews.Clear();
+
+            if (_boardState == null)
+                return;
+
+            foreach (var kvp in _boardState.SpaceMetadata)
+            {
+                var spaceId = kvp.Key;
+                var meta = kvp.Value;
+
+                var view = CreateSpaceView(spaceId, meta);
+                _spaceViews[spaceId] = view;
+            }
+        }
+
+        private SpaceView CreateSpaceView(int spaceId, SpaceMeta meta)
+        {
+            SpaceView viewInstance;
+
+            if (spaceViewPrefab != null)
+            {
+                var go = Instantiate(spaceViewPrefab.gameObject, transform);
+                go.name = $"Space_{spaceId:00}_{meta.Type}";
+                viewInstance = go.GetComponent<SpaceView>();
+            }
+            else
+            {
+                var go = new GameObject($"Space_{spaceId:00}_{meta.Type}");
+                go.transform.SetParent(transform, false);
+
+                var rect = go.AddComponent<RectTransform>();
+                rect.sizeDelta = new Vector2(60f, 60f);
+
+                go.AddComponent<Image>();
+
+                viewInstance = go.AddComponent<SpaceView>();
+            }
+
+            var stack = _boardState.GetStack(spaceId);
+            viewInstance.SetData(spaceId, meta, stack);
+
+            return viewInstance;
+        }
+
+        public void UpdateView()
+        {
+            if (_boardState == null)
+                return;
+
+            foreach (var kvp in _spaceViews)
+            {
+                var spaceId = kvp.Key;
+                var view = kvp.Value;
+
+                var stack = _boardState.GetStack(spaceId);
+                view.UpdateTokenDisplay(stack);
+                view.SetHighlight(false);
+            }
+        }
+
+        public void HighlightValidMoves(List<SpaceId> spaces)
+        {
+            // Clear all highlights first
+            foreach (var view in _spaceViews.Values)
+            {
+                view.SetHighlight(false);
+            }
+
+            if (spaces == null)
+                return;
+
+            foreach (var space in spaces)
+            {
+                if (space.BoardId != _boardState.BoardId)
+                    continue;
+
+                if (_spaceViews.TryGetValue(space.Id, out var view))
+                {
+                    view.SetHighlight(true);
+                }
+            }
+        }
     }
 }
