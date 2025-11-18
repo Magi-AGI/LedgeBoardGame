@@ -1,0 +1,47 @@
+{
+  "name": "Movement_EliminationChain_MultiplePlayers",
+  "initial": {
+    "players": [
+      { "id": "1", "name": "Player1", "boardId": 0, "isEliminated": false },
+      { "id": "2", "name": "Player2", "boardId": 1, "isEliminated": false },
+      { "id": "3", "name": "Player3", "boardId": 2, "isEliminated": false }
+    ],
+    "ctx": {
+      "currentPlayer": "1",
+      "phase": "movement",
+      "turnNumber": 1
+    }
+  },
+  "moves": [
+    {
+      "move": "moveToken",
+      "args": {
+        "fromBoardId": 1,
+        "fromSpaceId": 1,
+        "toBoardId": 1,
+        "toSpaceId": 0,
+        "tone": "Dark"
+      }
+    },
+    {
+      "move": "moveToken",
+      "args": {
+        "fromBoardId": 2,
+        "fromSpaceId": 1,
+        "toBoardId": 2,
+        "toSpaceId": 0,
+        "tone": "Dark"
+      }
+    },
+    {
+      "move": "endTurn",
+      "args": {}
+    }
+  ],
+  "expected": {
+    "phase": "placement",
+    "currentPlayer": "1",
+    "turnNumber": 2
+  }
+}
+

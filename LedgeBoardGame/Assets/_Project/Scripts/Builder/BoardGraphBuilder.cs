@@ -113,16 +113,10 @@ namespace Magi.LedgeBoardGame.Builder
                 builder.AddBidirectionalEdge(ring2Index, i + 25);
             }
 
-            var ledgeColors = new[]
-            {
-                "Ela", "Biz", "Yun", "Jutu", "Glei", "Sace",
-                "Rha", "Dau", "Wim", "Pfi", "Quae", "Vei"
-            };
-
             for (int i = 0; i < 12; i++)
             {
                 var ledgeId = 37 + i;
-                builder.AddSpace(ledgeId, new SpaceMeta(SpaceType.Ledge, 4, i, false, ledgeColors[i]));
+                builder.AddSpace(ledgeId, new SpaceMeta(SpaceType.Ledge, 4, i, false, LedgeConfigConstants.LedgeColors[i]));
 
                 var ring3Start = 25 + (i * 18) / 12;
                 builder.AddBidirectionalEdge(ring3Start, ledgeId);

@@ -1,0 +1,48 @@
+{
+  "name": "Movement_SingleStepAfterPlacement",
+  "initial": {
+    "players": [
+      { "id": "1", "name": "Player1", "boardId": 0, "isEliminated": false },
+      { "id": "2", "name": "Player2", "boardId": 1, "isEliminated": false }
+    ],
+    "ctx": {
+      "currentPlayer": "1",
+      "phase": "placement",
+      "turnNumber": 1
+    }
+  },
+  "moves": [
+    {
+      "move": "placeToken",
+      "args": {
+        "boardId": 0,
+        "spaceId": 1,
+        "tone": "Light"
+      }
+    },
+    {
+      "move": "placeToken",
+      "args": {
+        "boardId": 0,
+        "spaceId": 2,
+        "tone": "Dark"
+      }
+    },
+    {
+      "move": "moveToken",
+      "args": {
+        "fromBoardId": 0,
+        "fromSpaceId": 1,
+        "toBoardId": 0,
+        "toSpaceId": 0,
+        "tone": "Light"
+      }
+    }
+  },
+  "expected": {
+    "phase": "movement",
+    "currentPlayer": "1",
+    "turnNumber": 1
+  }
+}
+

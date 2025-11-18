@@ -19,6 +19,7 @@ This document describes how to wire the existing scripts into a playable Unity s
 - Add the `GameController` component (`Magi.LedgeBoardGame.GameController` in `Assets/_Project/Scripts/Scripts/GameController.cs`).
 - You will assign these serialized fields in the inspector:
   - `boardPresenterPrefab`
+  - `ledgeSpecJson` (a `TextAsset` containing the JSON from `Specs/ledge/ledge-game.v1.json` or an equivalent copy)
   - `endTurnButton`
   - `statusText`
   - `phaseText`
@@ -149,4 +150,3 @@ Once the above wiring is in place, hitting Play will let the existing code drive
   - Disables the button when the game is over and shows a winner message (or “No Winner”).
 
 With this setup, you should be able to enter Play mode, see two boards (one per player) with 49 clickable spaces each, place Light/Dark tokens in the placement phase, move tokens in the movement phase, and advance turns with the End Turn button while the HUD reflects the current game state.
-

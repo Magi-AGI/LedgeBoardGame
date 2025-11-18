@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using System.Collections.Generic;
 using Magi.LedgeBoardGame.Models;
+using Magi.LedgeBoardGame.Models.Spec;
 using Magi.LedgeBoardGame.Rules;
 using Magi.LedgeBoardGame.Board;
 
@@ -10,6 +11,7 @@ namespace Magi.LedgeBoardGame
     public class GameController : MonoBehaviour
     {
         [SerializeField] private BoardPresenter boardPresenterPrefab;
+        [SerializeField] private TextAsset ledgeSpecJson;
         [SerializeField] private Button endTurnButton;
         [SerializeField] private Text statusText;
         [SerializeField] private Text phaseText;
@@ -23,15 +25,38 @@ namespace Magi.LedgeBoardGame
 
         private void Start()
         {
-            _rules = new GameRules();
-
             var players = new List<Player>
             {
                 new Player(1, "Player1", 0),
                 new Player(2, "Player2", 1)
             };
 
-            _gameState = new GameState(players);
+            LedgeRuntimeConfig runtimeConfig = null;
+            var useSpec = false;
+            if (ledgeSpecJson != null && !string.IsNullOrEmpty(ledgeSpecJson.text))
+            {
+                var spec = LedgeGameSpecLoader.LoadFromJson(ledgeSpecJson.text);
+                if (spec != null)
+                {
+                    // Validate that the loaded spec matches our code assumptions.
+                    LedgeSpecValidator.Validate(spec);
+                    runtimeConfig = LedgeRuntimeConfig.FromSpec(spec);
+                    useSpec = true;
+                }
+                else if (Application.isEditor)
+                {
+                    Debug.LogError("GameController: Failed to parse ledge spec JSON. Aborting initialization in editor.");
+                    return;
+                }
+            }
+            else if (Application.isEditor)
+            {
+                Debug.LogError("GameController: No ledgeSpecJson assigned. Aborting initialization in editor.");
+                return;
+            }
+
+            _gameState = new GameState(players, runtimeConfig);
+            _rules = new GameRules(useSpec ? runtimeConfig : null);
 
             CreateBoardPresenters();
 

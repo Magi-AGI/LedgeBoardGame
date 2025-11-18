@@ -17,7 +17,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                 new Player(2, "Player2", 1)
             };
 
-            var gameState = new GameState(players);
+            var gameState = new GameState(players, null);
 
             Assert.AreEqual(2, gameState.Boards.Count);
 
@@ -50,7 +50,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                 new Player(2, "Player2", 1)
             };
 
-            var gameState = new GameState(players);
+            var gameState = new GameState(players, null);
 
             // For at least one ledge color, there should be cross-board edges between boards.
             Assert.IsNotEmpty(gameState.CrossBoardLedgeEdges.Keys);
@@ -70,4 +70,3 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
         }
     }
 }
-

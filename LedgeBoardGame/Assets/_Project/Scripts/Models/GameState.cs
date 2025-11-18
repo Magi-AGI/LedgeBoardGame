@@ -34,11 +34,28 @@ namespace Magi.LedgeBoardGame.Models
             GameOver = false;
         }
 
-        public GameState(List<Player> players) : this()
+        public GameState(List<Player> players) : this(players, null)
         {
-            Players = players;
+        }
+
+        public GameState(List<Player> players, Spec.LedgeRuntimeConfig runtimeConfig) : this()
+        {
+            if (runtimeConfig != null)
+            {
+                var count = players?.Count ?? 0;
+                if (count < runtimeConfig.MinPlayers || count > runtimeConfig.MaxPlayers)
+                {
+                    throw new System.ArgumentException(
+                        $"Player count {count} is outside allowed range [{runtimeConfig.MinPlayers}, {runtimeConfig.MaxPlayers}] defined in spec.");
+                }
+            }
+
+            Players = players ?? new List<Player>();
             InitializeBoards();
-            CurrentPlayerId = players.First().Id;
+            if (Players.Count > 0)
+            {
+                CurrentPlayerId = Players.First().Id;
+            }
         }
 
         private void InitializeBoards()
@@ -56,10 +73,7 @@ namespace Magi.LedgeBoardGame.Models
 
         private void GenerateCrossBoardLedgeEdges()
         {
-            var ledgeColors = new[] { "Ela", "Biz", "Yun", "Jutu", "Glei", "Sace",
-                                      "Rha", "Dau", "Wim", "Pfi", "Quae", "Vei" };
-
-            foreach (var color in ledgeColors)
+            foreach (var color in LedgeConfigConstants.LedgeColors)
             {
                 CrossBoardLedgeEdges[color] = new List<CrossBoardEdge>();
 
@@ -235,6 +249,88 @@ namespace Magi.LedgeBoardGame.Models
             };
 
             return clone;
+        }
+
+        public Spec.SpecGameState ToSpecState()
+        {
+            var specPlayers = Players.Select(p => new Spec.SpecPlayer
+            {
+                Id = p.Id.ToString(),
+                Name = p.Name,
+                BoardId = p.BoardId,
+                IsEliminated = p.IsEliminated
+            }).ToList();
+
+            var ctx = new Spec.SpecCtx
+            {
+                CurrentPlayer = CurrentPlayerId.ToString(),
+                Phase = CurrentPhase.ToString().ToLowerInvariant(),
+                TurnNumber = TurnNumber
+            };
+
+            var data = new Spec.SpecLedgeData
+            {
+                Boards = Boards.Select(b => b.Clone()).ToList(),
+                WinnerId = WinnerId,
+                GameOver = GameOver
+            };
+
+            return new Spec.SpecGameState
+            {
+                Players = specPlayers,
+                Ctx = ctx,
+                Data = data
+            };
+        }
+
+        public static GameState FromSpecState(Spec.SpecGameState specState)
+        {
+            if (specState == null)
+                return null;
+
+            var players = specState.Players.Select(p => new Player
+            {
+                Id = int.Parse(p.Id),
+                Name = p.Name,
+                BoardId = p.BoardId,
+                IsEliminated = p.IsEliminated
+            }).ToList();
+
+            GameState gameState;
+
+            // If the spec has full board data, clone it directly; otherwise, construct
+            // a fresh GameState from players so boards/metadata are initialized correctly.
+            if (specState.Data != null && specState.Data.Boards != null && specState.Data.Boards.Count > 0)
+            {
+                gameState = new GameState
+                {
+                    Players = players,
+                    Boards = specState.Data.Boards.Select(b => b.Clone()).ToList(),
+                    CurrentTurnMoves = new List<Move>(),
+                    CurrentTurnPlacements = new List<PlacementMove>(),
+                    CrossBoardLedgeEdges = new Dictionary<string, List<CrossBoardEdge>>()
+                };
+            }
+            else
+            {
+                gameState = new GameState(players, null);
+            }
+
+            gameState.CurrentPlayerId = specState.Ctx != null && int.TryParse(specState.Ctx.CurrentPlayer, out var currentId)
+                ? currentId
+                : (players.FirstOrDefault()?.Id ?? 0);
+
+            gameState.CurrentPhase = specState.Ctx != null && !string.IsNullOrEmpty(specState.Ctx.Phase)
+                ? (GamePhase)System.Enum.Parse(typeof(GamePhase), specState.Ctx.Phase, true)
+                : GamePhase.Placement;
+
+            gameState.TurnNumber = specState.Ctx?.TurnNumber ?? 1;
+            gameState.WinnerId = specState.Data?.WinnerId;
+            gameState.GameOver = specState.Data?.GameOver ?? false;
+
+            gameState.GenerateCrossBoardLedgeEdges();
+
+            return gameState;
         }
     }
 

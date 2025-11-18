@@ -1,0 +1,52 @@
+{
+  "name": "Movement_LockTrail_ThreeEmpties",
+  "initial": {
+    "players": [
+      { "id": "1", "name": "Player1", "boardId": 0, "isEliminated": false },
+      { "id": "2", "name": "Player2", "boardId": 1, "isEliminated": false }
+    ],
+    "ctx": {
+      "currentPlayer": "1",
+      "phase": "movement",
+      "turnNumber": 1
+    }
+  },
+  "moves": [
+    {
+      "move": "moveToken",
+      "args": {
+        "fromBoardId": 0,
+        "fromSpaceId": 1,
+        "toBoardId": 0,
+        "toSpaceId": 2,
+        "tone": "Light"
+      }
+    },
+    {
+      "move": "moveToken",
+      "args": {
+        "fromBoardId": 0,
+        "fromSpaceId": 1,
+        "toBoardId": 0,
+        "toSpaceId": 3,
+        "tone": "Light"
+      }
+    },
+    {
+      "move": "moveToken",
+      "args": {
+        "fromBoardId": 0,
+        "fromSpaceId": 1,
+        "toBoardId": 0,
+        "toSpaceId": 4,
+        "tone": "Light"
+      }
+    }
+  },
+  "expected": {
+    "phase": "movement",
+    "currentPlayer": "1",
+    "turnNumber": 1
+  }
+}
+

@@ -14,14 +14,14 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
         [SetUp]
         public void Setup()
         {
-            _rules = new GameRules();
+            _rules = new GameRules(null);
             var players = new List<Player>
             {
                 new Player(1, "Player1", 0),
                 new Player(2, "Player2", 1),
                 new Player(3, "Player3", 2)
             };
-            _gameState = new GameState(players);
+            _gameState = new GameState(players, null);
             SetupFullBoardAdjacency();
         }
 

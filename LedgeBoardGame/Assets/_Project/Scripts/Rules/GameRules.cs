@@ -1,11 +1,23 @@
 using System.Collections.Generic;
 using System.Linq;
 using Magi.LedgeBoardGame.Models;
+using Magi.LedgeBoardGame.Models.Spec;
 
 namespace Magi.LedgeBoardGame.Rules
 {
     public class GameRules : IGameRules
     {
+        private readonly LedgeRuntimeConfig _config;
+
+        public GameRules() : this(null)
+        {
+        }
+
+        public GameRules(LedgeRuntimeConfig config)
+        {
+            _config = config;
+        }
+
         public bool CanPlaceToken(GameState gameState, SpaceId target, Tone tone)
         {
             if (gameState.GameOver) return false;
@@ -23,6 +35,15 @@ namespace Magi.LedgeBoardGame.Rules
                 return false;
             if (tone == Tone.Dark && gameState.CurrentTurnPlacements.Any(p => p.Tone == Tone.Dark))
                 return false;
+
+            if (_config != null)
+            {
+                var placementsThisTurn = gameState.CurrentTurnPlacements.Count;
+                if (placementsThisTurn >= _config.PlacementMaxMoves)
+                {
+                    return false;
+                }
+            }
 
             return true;
         }
@@ -56,6 +77,15 @@ namespace Magi.LedgeBoardGame.Rules
         {
             if (gameState.GameOver) return false;
             if (gameState.CurrentPhase != GamePhase.Movement) return false;
+
+            if (_config != null)
+            {
+                var movesThisTurn = gameState.CurrentTurnMoves.Count;
+                if (movesThisTurn >= _config.MovementMaxMoves)
+                {
+                    return false;
+                }
+            }
 
             var currentPlayer = gameState.GetCurrentPlayer();
             if (currentPlayer == null || currentPlayer.IsEliminated) return false;
