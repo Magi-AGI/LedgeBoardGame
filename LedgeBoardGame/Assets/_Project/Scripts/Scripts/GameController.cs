@@ -45,13 +45,13 @@ namespace Magi.LedgeBoardGame
                 }
                 else if (Application.isEditor)
                 {
-                    Debug.LogError("GameController: Failed to parse ledge spec JSON. Aborting initialization in editor.");
+                    UnityEngine.Debug.LogError("GameController: Failed to parse ledge spec JSON. Aborting initialization in editor.");
                     return;
                 }
             }
             else if (Application.isEditor)
             {
-                Debug.LogError("GameController: No ledgeSpecJson assigned. Aborting initialization in editor.");
+                UnityEngine.Debug.LogError("GameController: No ledgeSpecJson assigned. Aborting initialization in editor.");
                 return;
             }
 

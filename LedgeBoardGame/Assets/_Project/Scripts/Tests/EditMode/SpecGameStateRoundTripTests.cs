@@ -1,4 +1,4 @@
-using System.Text.Json;
+using Newtonsoft.Json;
 using NUnit.Framework;
 using Magi.LedgeBoardGame.Models;
 using Magi.LedgeBoardGame.Models.Spec;
@@ -21,16 +21,23 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
 
             var specState = original.ToSpecState();
 
-            var options = new JsonSerializerOptions
+            var settings = new JsonSerializerSettings
             {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = false
+                ContractResolver = new Newtonsoft.Json.Serialization.DefaultContractResolver
+                {
+                    NamingStrategy = new Newtonsoft.Json.Serialization.CamelCaseNamingStrategy()
+                },
+                Formatting = Formatting.None
             };
-            var json = JsonSerializer.Serialize(specState, options);
+            var json = JsonConvert.SerializeObject(specState, settings);
 
-            var deserialized = JsonSerializer.Deserialize<SpecGameState>(json, new JsonSerializerOptions
+            var deserialized = JsonConvert.DeserializeObject<SpecGameState>(json, new JsonSerializerSettings
             {
-                PropertyNameCaseInsensitive = true
+                ContractResolver = new Newtonsoft.Json.Serialization.DefaultContractResolver
+                {
+                    NamingStrategy = new Newtonsoft.Json.Serialization.CamelCaseNamingStrategy()
+                },
+                MissingMemberHandling = MissingMemberHandling.Ignore
             });
 
             var restored = GameState.FromSpecState(deserialized);

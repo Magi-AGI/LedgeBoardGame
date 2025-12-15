@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text.Json;
+using Newtonsoft.Json;
 using NUnit.Framework;
 using Magi.LedgeBoardGame.Models;
 using Magi.LedgeBoardGame.Models.Spec;
@@ -73,12 +73,16 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
             Assert.IsTrue(File.Exists(path), $"Expected scenario file at {path}");
 
             var json = File.ReadAllText(path);
-            var options = new JsonSerializerOptions
+            var settings = new JsonSerializerSettings
             {
-                PropertyNameCaseInsensitive = true
+                ContractResolver = new Newtonsoft.Json.Serialization.DefaultContractResolver
+                {
+                    NamingStrategy = new Newtonsoft.Json.Serialization.CamelCaseNamingStrategy()
+                },
+                MissingMemberHandling = MissingMemberHandling.Ignore
             };
 
-            return JsonSerializer.Deserialize<LedgeScenario>(json, options);
+            return JsonConvert.DeserializeObject<LedgeScenario>(json, settings);
         }
 
         [Test]

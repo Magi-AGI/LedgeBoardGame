@@ -28,7 +28,17 @@
 - In PRs, link issues, summarize changes, include screenshots/GIFs for scene/UI changes, and state how you tested.
 - Ensure tests pass and there are no new C# warnings before requesting review.
 
-## Security & Configuration Tips
-- Unity packages are pinned in `LedgeBoardGame/Packages/manifest.json`; avoid version drift without discussion.
-- Do not commit large binaries or generated folders; rely on `.gitignore` already present in the repo.
+## Dependency Management
+- This project uses **[MagiUnityDependencyManager](../MagiUnityDependencyManager)** for package management.
+- **Edit `depfile.yaml`** (not `manifest.json`) to modify dependencies.
+- After editing `depfile.yaml`, run:
+  ```powershell
+  cd ../MagiUnityDependencyManager
+  ./magi-deps.ps1 apply -ProjectPath ../LedgeBoardGame/LedgeBoardGame
+  ./magi-deps.ps1 verify -ProjectPath ../LedgeBoardGame/LedgeBoardGame -Strict
+  ```
+- `Packages/manifest.json` is **GENERATED** - changes will be overwritten.
 
+## Security & Configuration Tips
+- Unity packages are version-controlled in `depfile.yaml`; avoid version drift without discussion.
+- Do not commit large binaries or generated folders; rely on `.gitignore` already present in the repo.

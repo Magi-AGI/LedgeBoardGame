@@ -1,4 +1,4 @@
-using System.Text.Json;
+using Newtonsoft.Json;
 
 namespace Magi.LedgeBoardGame.Models.Spec
 {
@@ -11,12 +11,20 @@ namespace Magi.LedgeBoardGame.Models.Spec
                 return null;
             }
 
-            var options = new JsonSerializerOptions
+            var settings = new JsonSerializerSettings
             {
-                PropertyNameCaseInsensitive = true
+                // Case-insensitive property matching
+                ContractResolver = new Newtonsoft.Json.Serialization.DefaultContractResolver
+                {
+                    NamingStrategy = new Newtonsoft.Json.Serialization.CamelCaseNamingStrategy()
+                },
+                // Handle missing properties gracefully
+                MissingMemberHandling = MissingMemberHandling.Ignore,
+                // Preserve null values
+                NullValueHandling = NullValueHandling.Include
             };
 
-            return JsonSerializer.Deserialize<LedgeGameSpec>(json, options);
+            return JsonConvert.DeserializeObject<LedgeGameSpec>(json, settings);
         }
     }
 }

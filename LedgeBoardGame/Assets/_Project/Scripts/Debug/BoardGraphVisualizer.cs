@@ -17,7 +17,7 @@ namespace Magi.LedgeBoardGame.Debug
         [SerializeField] private bool showSpaceIds = true;
         [SerializeField] private bool showSpaceTypes = false;
         [SerializeField] private bool highlightLedgeSpaces = true;
-        [SerializeField] private bool showCrossBoardConnections = false;
+        [SerializeField] private bool showCrossBoardConnections = false;  // Reserved for future use
 
         [Header("Colors")]
         [SerializeField] private Color adjacencyColor = Color.green;
