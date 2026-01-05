@@ -68,5 +68,34 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                 }
             }
         }
+
+        [Test]
+        public void CrossBoardEdges_ExistForEveryColorBetweenAllBoards()
+        {
+            var players = new List<Player>
+            {
+                new Player(1, "Player1", 0),
+                new Player(2, "Player2", 1),
+                new Player(3, "Player3", 2)
+            };
+
+            var gameState = new GameState(players, null);
+
+            foreach (var color in LedgeConfigConstants.LedgeColors)
+            {
+                Assert.IsTrue(gameState.CrossBoardLedgeEdges.ContainsKey(color), $"Missing cross-board edges for color {color}.");
+                var edges = gameState.CrossBoardLedgeEdges[color];
+
+                // Each board has exactly one ledge of each color; with N boards expect N*(N-1) directed edges.
+                var expectedCount = players.Count * (players.Count - 1);
+                Assert.AreEqual(expectedCount, edges.Count, $"Unexpected edge count for color {color}.");
+
+                foreach (var edge in edges)
+                {
+                    Assert.AreEqual(color, edge.Color);
+                    Assert.AreNotEqual(edge.From.BoardId, edge.To.BoardId);
+                }
+            }
+        }
     }
 }

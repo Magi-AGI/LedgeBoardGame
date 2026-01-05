@@ -49,7 +49,7 @@ namespace Magi.LedgeBoardGame.Config
         public List<AdjacencyDefinition> AdjacencyList => adjacencyList;
         public List<string> LedgeColors => ledgeColors;
 
-        public SpaceMeta GetSpaceMeta(int spaceId)
+        public SpaceMeta? GetSpaceMeta(int spaceId)
         {
             var def = spaces.Find(s => s.spaceId == spaceId);
             if (def == null) return null;
@@ -116,118 +116,37 @@ namespace Magi.LedgeBoardGame.Config
         {
             spaces.Clear();
             adjacencyList.Clear();
+            // Build directly from the authoritative graph so ScriptableObject and code stay in sync.
+            var builder = Magi.LedgeBoardGame.Builder.BoardGraphBuilder.CreateHexagonalBoard();
+            var board = builder.BuildBoard(0, 0);
 
-            spaces.Add(new SpaceDefinition
-            {
-                spaceId = 0,
-                type = SpaceType.Center,
-                ringIndex = 0,
-                wedgeIndex = 0,
-                isHalf = false,
-                position = Vector2.zero
-            });
+            totalSpaces = board.SpaceMetadata.Count;
+            ledgeColors = new List<string>(Magi.LedgeBoardGame.Models.LedgeConfigConstants.LedgeColors);
 
-            for (int i = 0; i < 6; i++)
+            foreach (var kvp in board.SpaceMetadata)
             {
+                var meta = kvp.Value;
                 spaces.Add(new SpaceDefinition
                 {
-                    spaceId = i + 1,
-                    type = SpaceType.InnerBridge,
-                    ringIndex = 1,
-                    wedgeIndex = i * 2,
-                    isHalf = true
+                    spaceId = kvp.Key,
+                    type = meta.Type,
+                    ringIndex = meta.RingIndex,
+                    wedgeIndex = meta.WedgeIndex,
+                    isHalf = meta.IsHalf,
+                    colorLabel = meta.ColorLabel
                 });
             }
 
-            for (int i = 0; i < 6; i++)
+            foreach (var kvp in board.Adjacency)
             {
-                spaces.Add(new SpaceDefinition
+                adjacencyList.Add(new AdjacencyDefinition
                 {
-                    spaceId = i + 7,
-                    type = SpaceType.InnerStop,
-                    ringIndex = 1,
-                    wedgeIndex = i * 2 + 1,
-                    isHalf = true
+                    spaceId = kvp.Key,
+                    adjacentSpaces = new List<int>(kvp.Value)
                 });
             }
-
-            for (int i = 0; i < 12; i++)
-            {
-                spaces.Add(new SpaceDefinition
-                {
-                    spaceId = i + 13,
-                    type = SpaceType.Ring2,
-                    ringIndex = 2,
-                    wedgeIndex = i,
-                    isHalf = false
-                });
-            }
-
-            for (int i = 0; i < 18; i++)
-            {
-                spaces.Add(new SpaceDefinition
-                {
-                    spaceId = i + 25,
-                    type = SpaceType.Ring3,
-                    ringIndex = 3,
-                    wedgeIndex = (i * 2) / 3,
-                    isHalf = false
-                });
-            }
-
-            for (int i = 0; i < 6; i++)
-            {
-                spaces.Add(new SpaceDefinition
-                {
-                    spaceId = i + 43,
-                    type = SpaceType.OuterAdded,
-                    ringIndex = 4,
-                    wedgeIndex = i * 2,
-                    isHalf = false
-                });
-            }
-
-            for (int i = 0; i < 12; i++)
-            {
-                spaces.Add(new SpaceDefinition
-                {
-                    spaceId = 37 + i,
-                    type = SpaceType.Ledge,
-                    ringIndex = 4,
-                    wedgeIndex = i,
-                    isHalf = false,
-                    colorLabel = ledgeColors[i % ledgeColors.Count]
-                });
-            }
-
-            GenerateDefaultAdjacency();
         }
 
-        private void GenerateDefaultAdjacency()
-        {
-            var centerAdj = new AdjacencyDefinition { spaceId = 0 };
-            for (int i = 1; i <= 6; i++)
-            {
-                centerAdj.adjacentSpaces.Add(i);
-            }
-            adjacencyList.Add(centerAdj);
-
-            for (int i = 1; i <= 6; i++)
-            {
-                var adj = new AdjacencyDefinition { spaceId = i };
-                adj.adjacentSpaces.Add(0);
-                adj.adjacentSpaces.Add(12 + i * 2);
-                adj.adjacentSpaces.Add(12 + i * 2 + 1);
-                adjacencyList.Add(adj);
-            }
-
-            for (int i = 7; i <= 12; i++)
-            {
-                var adj = new AdjacencyDefinition { spaceId = i };
-                adj.adjacentSpaces.Add(12 + (i - 7) * 2 + 1);
-                adj.adjacentSpaces.Add(12 + (i - 7) * 2 + 2);
-                adjacencyList.Add(adj);
-            }
-        }
+        private void GenerateDefaultAdjacency() { }
     }
 }

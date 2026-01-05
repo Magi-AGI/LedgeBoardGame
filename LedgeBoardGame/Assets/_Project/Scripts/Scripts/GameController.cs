@@ -13,9 +13,9 @@ namespace Magi.LedgeBoardGame
         [SerializeField] private BoardPresenter boardPresenterPrefab;
         [SerializeField] private TextAsset ledgeSpecJson;
         [SerializeField] private Button endTurnButton;
-        [SerializeField] private Text statusText;
-        [SerializeField] private Text phaseText;
-        [SerializeField] private Text currentPlayerText;
+        [SerializeField] private GameHud gameHud;
+        [SerializeField] private Board.MultiBoardLayout multiBoardLayout;
+        [SerializeField] private Tone defaultMovementTone = Tone.Light;
 
         private GameState _gameState;
         private GameRules _rules;
@@ -45,14 +45,12 @@ namespace Magi.LedgeBoardGame
                 }
                 else if (Application.isEditor)
                 {
-                    UnityEngine.Debug.LogError("GameController: Failed to parse ledge spec JSON. Aborting initialization in editor.");
-                    return;
+                    UnityEngine.Debug.LogWarning("GameController: Failed to parse ledge spec JSON. Falling back to defaults.");
                 }
             }
             else if (Application.isEditor)
             {
-                UnityEngine.Debug.LogError("GameController: No ledgeSpecJson assigned. Aborting initialization in editor.");
-                return;
+                UnityEngine.Debug.LogWarning("GameController: No ledgeSpecJson assigned. Falling back to defaults.");
             }
 
             _gameState = new GameState(players, runtimeConfig);
@@ -61,6 +59,15 @@ namespace Magi.LedgeBoardGame
             CreateBoardPresenters();
 
             SpaceClickedEvent.Register(OnSpaceClicked);
+
+            if (multiBoardLayout == null)
+            {
+                multiBoardLayout = GetComponent<Board.MultiBoardLayout>();
+                if (multiBoardLayout == null)
+                {
+                    multiBoardLayout = gameObject.AddComponent<Board.MultiBoardLayout>();
+                }
+            }
 
             if (endTurnButton != null)
             {
@@ -99,6 +106,14 @@ namespace Magi.LedgeBoardGame
             }
 
             RefreshBoards();
+
+            // Update multi-board layout positions if present
+            if (multiBoardLayout != null)
+            {
+                multiBoardLayout.Refresh();
+            }
+
+            gameHud?.UpdateHud(_gameState);
         }
 
         private void OnSpaceClicked(SpaceView view)
@@ -189,6 +204,16 @@ namespace Magi.LedgeBoardGame
                 if (!movablePieces.Contains(clicked))
                     return;
 
+                var stack = _gameState.GetBoard(clicked.BoardId)?.GetStack(clicked.Id);
+                if (stack != null)
+                {
+                    if (_selectedTone == defaultMovementTone && !stack.CanMove(_selectedTone))
+                    {
+                        // Fallback to the other tone if default is not movable
+                        _selectedTone = _selectedTone == Tone.Light ? Tone.Dark : Tone.Light;
+                    }
+                }
+
                 _selectedSpace = clicked;
                 var targets = _rules.GetValidMoveTargets(_gameState, clicked, _selectedTone);
                 HighlightSpaces(targets);
@@ -271,6 +296,12 @@ namespace Magi.LedgeBoardGame
             if (_gameState == null || _gameState.GameOver)
                 return;
 
+            if (_gameState.CurrentPhase == GamePhase.Placement && !_gameState.IsPlacementComplete())
+            {
+                // Must place both tones before ending the turn.
+                return;
+            }
+
             _selectedSpace = null;
             ClearHighlights();
 
@@ -294,41 +325,7 @@ namespace Magi.LedgeBoardGame
 
         private void UpdateStatusUI()
         {
-            if (phaseText != null)
-            {
-                phaseText.text = $"Phase: {_gameState.CurrentPhase}";
-            }
-
-            if (currentPlayerText != null)
-            {
-                var player = _gameState.GetCurrentPlayer();
-                currentPlayerText.text = player != null
-                    ? $"Player: {player.Name}"
-                    : "Player: -";
-            }
-
-            if (statusText != null)
-            {
-                if (_gameState.GameOver)
-                {
-                    statusText.text = _gameState.WinnerId.HasValue
-                        ? $"Game Over - Winner: Player {_gameState.WinnerId.Value}"
-                        : "Game Over - No Winner";
-                }
-                else if (_gameState.CurrentPhase == GamePhase.Placement)
-                {
-                    statusText.text = "Place one Light and one Dark token.";
-                }
-                else
-                {
-                    statusText.text = "Select a movable stack, then a valid destination.";
-                }
-            }
-
-            if (endTurnButton != null)
-            {
-                endTurnButton.interactable = !_gameState.GameOver;
-            }
+            gameHud?.UpdateHud(_gameState);
         }
     }
 }

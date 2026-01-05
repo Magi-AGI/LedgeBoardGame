@@ -1,15 +1,13 @@
 namespace Magi.LedgeBoardGame.Models
 {
     [System.Serializable]
-    public class SpaceMeta
+    public struct SpaceMeta
     {
-        public SpaceType Type { get; set; }
-        public int RingIndex { get; set; }
-        public int WedgeIndex { get; set; }
-        public bool IsHalf { get; set; }
-        public string ColorLabel { get; set; }
-
-        public SpaceMeta() { }
+        public SpaceType Type { get; }
+        public int RingIndex { get; }
+        public int WedgeIndex { get; }
+        public bool IsHalf { get; }
+        public string ColorLabel { get; }
 
         public SpaceMeta(SpaceType type, int ringIndex, int wedgeIndex, bool isHalf = false, string colorLabel = null)
         {

@@ -107,10 +107,14 @@ namespace Magi.LedgeBoardGame.Builder
 
             for (int i = 0; i < 18; i++)
             {
-                builder.AddSpace(i + 25, new SpaceMeta(SpaceType.Ring3, 3, (i * 2) / 3));
+                var wedgeIndex = (i * 2) / 3;
+                var ring3Id = i + 25;
+                builder.AddSpace(ring3Id, new SpaceMeta(SpaceType.Ring3, 3, wedgeIndex));
 
-                var ring2Index = 13 + (i * 2) / 3;
-                builder.AddBidirectionalEdge(ring2Index, i + 25);
+                var ring2IndexA = 13 + wedgeIndex;
+                var ring2IndexB = 13 + ((wedgeIndex + 1) % 12);
+                builder.AddBidirectionalEdge(ring2IndexA, ring3Id);
+                builder.AddBidirectionalEdge(ring2IndexB, ring3Id);
             }
 
             for (int i = 0; i < 12; i++)
@@ -124,14 +128,6 @@ namespace Magi.LedgeBoardGame.Builder
                 {
                     builder.AddBidirectionalEdge(ring3Start + 1, ledgeId);
                 }
-            }
-
-            for (int i = 0; i < 6; i++)
-            {
-                builder.AddSpace(i + 43, new SpaceMeta(SpaceType.OuterAdded, 4, i * 2));
-
-                var ring3Index = 25 + i * 3;
-                builder.AddBidirectionalEdge(ring3Index, i + 43);
             }
 
             ConnectRings(builder);

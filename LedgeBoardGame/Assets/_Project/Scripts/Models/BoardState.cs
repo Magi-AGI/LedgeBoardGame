@@ -118,7 +118,7 @@ namespace Magi.LedgeBoardGame.Models
                 BoardId = BoardId,
                 PlayerId = PlayerId,
                 Spaces = new Dictionary<int, TokenStack>(),
-                SpaceMetadata = new Dictionary<int, SpaceMeta>(SpaceMetadata),
+                SpaceMetadata = new Dictionary<int, SpaceMeta>(),
                 Adjacency = new Dictionary<int, List<int>>(),
                 LedgeSpacesByColor = new Dictionary<string, List<int>>()
             };
@@ -126,6 +126,11 @@ namespace Magi.LedgeBoardGame.Models
             foreach (var kvp in Spaces)
             {
                 clone.Spaces[kvp.Key] = kvp.Value.Clone();
+            }
+
+            foreach (var kvp in SpaceMetadata)
+            {
+                clone.SpaceMetadata[kvp.Key] = kvp.Value;
             }
 
             foreach (var kvp in Adjacency)

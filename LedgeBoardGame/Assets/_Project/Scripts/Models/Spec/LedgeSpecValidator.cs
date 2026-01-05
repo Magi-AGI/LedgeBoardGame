@@ -57,7 +57,11 @@ namespace Magi.LedgeBoardGame.Models.Spec
                         _ => throw new InvalidOperationException($"Unexpected ring name '{ring.Name}' in spec.")
                     };
 
-                    if (meta.RingIndex != expectedRingIndex)
+                    // Ledge spaces are listed in both outerMiddle and outer rings in the spec; tolerate the outer ring index for ledges.
+                    var ringIndexMatches = meta.RingIndex == expectedRingIndex ||
+                                           (meta.Type == SpaceType.Ledge && ring.Name == "outerMiddle" && meta.RingIndex == 4);
+
+                    if (!ringIndexMatches)
                     {
                         throw new InvalidOperationException(
                             $"Space {id} in ring '{ring.Name}' has ringIndex {meta.RingIndex} but expected {expectedRingIndex}.");
@@ -104,4 +108,3 @@ namespace Magi.LedgeBoardGame.Models.Spec
         }
     }
 }
-

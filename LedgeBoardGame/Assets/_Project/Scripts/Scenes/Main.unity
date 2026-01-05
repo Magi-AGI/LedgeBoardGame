@@ -198,6 +198,54 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &154640122
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 154640124}
+  - component: {fileID: 154640123}
+  m_Layer: 0
+  m_Name: GameHud
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &154640123
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 154640122}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5b0d15ea5bb236a42be17cd20d02c904, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Magi.LedgeBoardGame::Magi.LedgeBoardGame.GameHud
+  statusText: {fileID: 0}
+  phaseText: {fileID: 0}
+  currentPlayerText: {fileID: 0}
+  endTurnButton: {fileID: 0}
+--- !u!4 &154640124
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 154640122}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &306378763
 GameObject:
   m_ObjectHideFlags: 0
@@ -228,10 +276,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Magi.LedgeBoardGame::Magi.LedgeBoardGame.GameController
   boardPresenterPrefab: {fileID: 0}
+  ledgeSpecJson: {fileID: 4900000, guid: bb7e51f2f99a42048b5141159db49b51, type: 3}
   endTurnButton: {fileID: 0}
-  statusText: {fileID: 0}
-  phaseText: {fileID: 0}
-  currentPlayerText: {fileID: 0}
+  gameHud: {fileID: 0}
+  multiBoardLayout: {fileID: 0}
+  defaultMovementTone: 0
 --- !u!4 &306378765
 Transform:
   m_ObjectHideFlags: 0
@@ -340,7 +389,8 @@ RectTransform:
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 0, y: 0, z: 0}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 794267576}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
@@ -383,6 +433,10 @@ MonoBehaviour:
   darkCountText: {fileID: 0}
   lockIndicator: {fileID: 0}
   highlightEffect: {fileID: 0}
+  highlightImage: {fileID: 0}
+  onClicked:
+    m_PersistentCalls:
+      m_Calls: []
 --- !u!114 &747162398
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -440,6 +494,58 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &794267575
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 794267576}
+  - component: {fileID: 794267577}
+  m_Layer: 5
+  m_Name: MultiBoardLayout
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &794267576
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 794267575}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 389826907}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0.5, y: 0.5}
+  m_AnchorMax: {x: 0.5, y: 0.5}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 100, y: 100}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &794267577
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 794267575}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 55744d40ad8e48b429532d52c15ce4cc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Magi.LedgeBoardGame::Magi.LedgeBoardGame.Board.MultiBoardLayout
+  presenters: []
+  columns: 4
+  spacing: {x: 1600, y: 1600}
+  startOffset: {x: 0, y: 0}
 --- !u!1 &1305088256
 GameObject:
   m_ObjectHideFlags: 0
@@ -586,3 +692,4 @@ SceneRoots:
   - {fileID: 135771545}
   - {fileID: 306378765}
   - {fileID: 747162400}
+  - {fileID: 154640124}

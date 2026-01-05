@@ -13,6 +13,14 @@ namespace Magi.LedgeBoardGame.Board
     {
         [SerializeField] private BoardLayoutConfig layoutConfig;
         [SerializeField] private SpaceView spaceViewPrefab;
+        [Header("Layout")]
+        [SerializeField] private float innerRingRadius = 100f;
+        [SerializeField] private float ring2Radius = 200f;
+        [SerializeField] private float ring3Radius = 300f;
+        [SerializeField] private float outerRadius = 400f;
+        [SerializeField] private float ledgeRadius = 450f;
+        [Header("Highlighting")]
+        [SerializeField] private Color highlightColor = new Color(0.4f, 0.9f, 0.4f, 0.35f);
 
         private BoardState _boardState;
         private readonly Dictionary<int, SpaceView> _spaceViews = new Dictionary<int, SpaceView>();
@@ -24,6 +32,7 @@ namespace Magi.LedgeBoardGame.Board
         {
             _boardState = state;
             BuildSpaceViews();
+            PositionSpaceViews();
             UpdateView();
         }
 
@@ -45,6 +54,7 @@ namespace Magi.LedgeBoardGame.Board
                 var meta = kvp.Value;
 
                 var view = CreateSpaceView(spaceId, meta);
+                view.SetHighlightColor(highlightColor);
                 _spaceViews[spaceId] = view;
             }
         }
@@ -76,6 +86,42 @@ namespace Magi.LedgeBoardGame.Board
             viewInstance.SetData(spaceId, meta, stack);
 
             return viewInstance;
+        }
+
+        private void PositionSpaceViews()
+        {
+            if (_boardState == null)
+                return;
+
+            var radii = new BoardLayoutHelper.Radii
+            {
+                Center = 0f,
+                Inner = innerRingRadius,
+                Ring2 = ring2Radius,
+                Ring3 = ring3Radius,
+                Outer = outerRadius,
+                Ledge = ledgeRadius
+            };
+
+            foreach (var kvp in _spaceViews)
+            {
+                var spaceId = kvp.Key;
+                var view = kvp.Value;
+
+                if (!_boardState.SpaceMetadata.TryGetValue(spaceId, out var meta))
+                    continue;
+
+                var pos = BoardLayoutHelper.ComputePosition(spaceId, meta, radii);
+                var rect = view.GetComponent<RectTransform>();
+                if (rect != null)
+                {
+                    rect.anchoredPosition = pos;
+                }
+                else
+                {
+                    view.transform.localPosition = pos;
+                }
+            }
         }
 
         public void UpdateView()

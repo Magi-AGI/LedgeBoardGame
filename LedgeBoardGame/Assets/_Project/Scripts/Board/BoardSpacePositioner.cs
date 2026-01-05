@@ -147,9 +147,18 @@ namespace Magi.LedgeBoardGame.Board
                 if (!spaceTransforms.ContainsKey(spaceId))
                     continue;
 
-                Vector2 position = CalculateSpacePosition(spaceId, meta);
+                var radii = new BoardLayoutHelper.Radii
+                {
+                    Center = centerRadius,
+                    Inner = innerRingRadius,
+                    Ring2 = ring2Radius,
+                    Ring3 = ring3Radius,
+                    Outer = outerRadius,
+                    Ledge = ledgeRadius
+                };
 
-                // Position the space
+                Vector2 position = BoardLayoutHelper.ComputePosition(spaceId, meta, radii);
+
                 var rectTransform = spaceTransforms[spaceId].GetComponent<RectTransform>();
                 if (rectTransform != null)
                 {
@@ -160,71 +169,6 @@ namespace Magi.LedgeBoardGame.Board
                     spaceTransforms[spaceId].localPosition = position;
                 }
             }
-        }
-
-        private Vector2 CalculateSpacePosition(int spaceId, SpaceMeta meta)
-        {
-            // Center is always at origin
-            if (meta.Type == SpaceType.Center)
-            {
-                return Vector2.zero;
-            }
-
-            float radius = GetRadiusForType(meta.Type, meta.RingIndex);
-            float angle = GetAngleForSpace(meta);
-
-            float x = radius * Mathf.Cos(angle * Mathf.Deg2Rad);
-            float y = radius * Mathf.Sin(angle * Mathf.Deg2Rad);
-
-            return new Vector2(x, y);
-        }
-
-        private float GetRadiusForType(SpaceType type, int ringIndex)
-        {
-            switch (type)
-            {
-                case SpaceType.Center:
-                    return centerRadius;
-                case SpaceType.InnerBridge:
-                case SpaceType.InnerStop:
-                    return innerRingRadius;
-                case SpaceType.Ring2:
-                    return ring2Radius;
-                case SpaceType.Ring3:
-                    return ring3Radius;
-                case SpaceType.OuterAdded:
-                    return outerRadius;
-                case SpaceType.Ledge:
-                    return ledgeRadius;
-                default:
-                    return ring2Radius;
-            }
-        }
-
-        private float GetAngleForSpace(SpaceMeta meta)
-        {
-            // 12 wedges = 30 degrees each
-            float baseAngle = meta.WedgeIndex * 30f;
-
-            // Offset for half spaces in inner ring
-            if (meta.IsHalf)
-            {
-                // Bridge spaces are at wedge boundaries
-                // Stop spaces are offset by 15 degrees
-                if (meta.Type == SpaceType.InnerStop)
-                {
-                    baseAngle += 15f;
-                }
-            }
-
-            // Add slight offset for Ring3 (18 spaces)
-            if (meta.Type == SpaceType.Ring3)
-            {
-                // Ring3 has 18 spaces, so adjust positioning
-                baseAngle = (meta.WedgeIndex % 18) * 20f;
-            }
-
-            return baseAngle;
         }
 
         private Color GetSpaceColor(SpaceMeta meta)

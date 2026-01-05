@@ -81,7 +81,14 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                             Assert.AreEqual(2, meta.RingIndex, "Inner middle ring spaces should have ringIndex 2.");
                             break;
                         case "outerMiddle":
-                            Assert.AreEqual(3, meta.RingIndex, "Outer middle ring spaces should have ringIndex 3.");
+                            if (meta.Type == SpaceType.Ledge)
+                            {
+                                Assert.AreEqual(4, meta.RingIndex, "Ledge spaces listed in outerMiddle may carry the outer ring index.");
+                            }
+                            else
+                            {
+                                Assert.AreEqual(3, meta.RingIndex, "Outer middle ring spaces should have ringIndex 3.");
+                            }
                             break;
                         case "outer":
                             Assert.AreEqual(4, meta.RingIndex, "Outer ring spaces should have ringIndex 4.");

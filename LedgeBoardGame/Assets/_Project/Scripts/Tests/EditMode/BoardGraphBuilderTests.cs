@@ -60,16 +60,63 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
             var distances = ComputeDistancesFromCenter(board);
 
             var outerIds = board.SpaceMetadata
-                .Where(kvp => kvp.Value.Type == SpaceType.Ledge || kvp.Value.Type == SpaceType.OuterAdded)
+                .Where(kvp => kvp.Value.Type == SpaceType.Ledge)
                 .Select(kvp => kvp.Key)
                 .ToList();
 
-            Assert.AreEqual(18, outerIds.Count, "Outer ring should contain 18 spaces (12 ledges + 6 outer).");
+            Assert.AreEqual(12, outerIds.Count, "Outer ring should contain 12 ledge spaces.");
 
             foreach (var id in outerIds)
             {
                 Assert.IsTrue(distances.ContainsKey(id), $"No path found from center to space {id}.");
                 Assert.AreEqual(4, distances[id], $"Expected distance 4 from center to space {id}.");
+            }
+        }
+
+        [Test]
+        public void LedgeSpaces_AreUniqueAndMatchColorList()
+        {
+            var builder = BoardGraphBuilder.CreateHexagonalBoard();
+            var board = builder.BuildBoard(0, 0);
+
+            var ledgeIds = board.SpaceMetadata
+                .Where(kvp => kvp.Value.Type == SpaceType.Ledge)
+                .Select(kvp => kvp.Key)
+                .OrderBy(id => id)
+                .ToList();
+
+            CollectionAssert.AreEqual(Enumerable.Range(37, 12).ToList(), ledgeIds, "Expected exactly 12 ledge space IDs 37-48.");
+
+            var colors = new HashSet<string>();
+            foreach (var id in ledgeIds)
+            {
+                var meta = board.SpaceMetadata[id];
+                Assert.IsFalse(string.IsNullOrEmpty(meta.ColorLabel), $"Ledge {id} missing color label.");
+                colors.Add(meta.ColorLabel);
+            }
+
+            CollectionAssert.AreEquivalent(LedgeConfigConstants.LedgeColors, colors, "Ledge color labels should cover all configured colors.");
+
+            // Verify adjacency retained for ledges that overrode Ring3 IDs.
+            foreach (var id in ledgeIds)
+            {
+                Assert.IsTrue(board.Adjacency.ContainsKey(id), $"Ledge {id} should have adjacency entries.");
+            }
+        }
+
+        [Test]
+        public void Ring3Spaces_ConnectToTwoRing2Neighbors()
+        {
+            var builder = BoardGraphBuilder.CreateHexagonalBoard();
+            var board = builder.BuildBoard(0, 0);
+
+            for (int id = 25; id <= 42; id++)
+            {
+                Assert.IsTrue(board.SpaceMetadata.ContainsKey(id), $"Missing ring3 space {id}");
+                var neighbors = board.GetAdjacentSpaces(id);
+                var ring2Neighbors = neighbors.Where(n => n >= 13 && n <= 24).ToList();
+
+                Assert.AreEqual(2, ring2Neighbors.Count, $"Ring3 space {id} should connect to exactly two Ring2 spaces.");
             }
         }
 

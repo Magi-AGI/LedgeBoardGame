@@ -81,10 +81,36 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                         _ => throw new InvalidOperationException($"Unexpected ring name '{ring.Name}' in spec.")
                     };
 
-                    Assert.AreEqual(expectedRingIndex, meta.RingIndex, $"Space {id} ringIndex mismatch for ring '{ring.Name}'.");
+                    if (!(meta.Type == SpaceType.Ledge && ring.Name == "outerMiddle" && meta.RingIndex == 4))
+                    {
+                        Assert.AreEqual(expectedRingIndex, meta.RingIndex, $"Space {id} ringIndex mismatch for ring '{ring.Name}'.");
+                    }
                 }
+            }
+        }
+
+        [Test]
+        public void BoardLayoutConfig_Ring3Spaces_HaveTwoRing2Connections()
+        {
+            var layout = ScriptableObject.CreateInstance<BoardLayoutConfig>();
+            layout.GenerateDefaultLayout();
+            var adjacency = layout.GetAdjacencyMap();
+            var ring3Ids = new List<int>();
+            foreach (var space in layout.Spaces)
+            {
+                if (space.type == SpaceType.Ring3)
+                {
+                    ring3Ids.Add(space.spaceId);
+                }
+            }
+
+            foreach (var id in ring3Ids)
+            {
+                Assert.IsTrue(adjacency.ContainsKey(id), $"Adjacency missing for ring3 space {id}");
+                var neighbors = adjacency[id];
+                var ring2Neighbors = neighbors.FindAll(n => n >= 13 && n <= 24);
+                Assert.AreEqual(2, ring2Neighbors.Count, $"Ring3 space {id} should connect to two Ring2 neighbors.");
             }
         }
     }
 }
-

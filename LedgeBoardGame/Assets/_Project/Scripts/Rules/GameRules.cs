@@ -54,6 +54,9 @@ namespace Magi.LedgeBoardGame.Rules
                 return null;
 
             var board = gameState.GetBoard(target.BoardId);
+            if (board == null)
+                return null;
+
             var stack = board.GetStack(target.Id);
             var result = stack.ResolveEntry(tone, 1);
 
@@ -113,6 +116,9 @@ namespace Magi.LedgeBoardGame.Rules
 
             var fromBoard = gameState.GetBoard(from.BoardId);
             var toBoard = gameState.GetBoard(to.BoardId);
+            if (fromBoard == null || toBoard == null)
+                return null;
+
             var fromStack = fromBoard.GetStack(from.Id);
             var toStack = toBoard.GetStack(to.Id);
 

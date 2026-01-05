@@ -19,9 +19,6 @@ namespace Magi.LedgeBoardGame.Models
         public int? WinnerId { get; set; }
         public bool GameOver { get; set; }
 
-        private bool _hasPlacedLight;
-        private bool _hasPlacedDark;
-
         public GameState()
         {
             Players = new List<Player>();
@@ -126,15 +123,15 @@ namespace Magi.LedgeBoardGame.Models
 
         public bool IsPlacementComplete()
         {
-            return _hasPlacedLight && _hasPlacedDark;
+            return HasPlacedLight && HasPlacedDark;
         }
+
+        public bool HasPlacedLight => CurrentTurnPlacements.Any(p => p.Tone == Tone.Light);
+        public bool HasPlacedDark => CurrentTurnPlacements.Any(p => p.Tone == Tone.Dark);
 
         public void RecordPlacement(Tone tone)
         {
-            if (tone == Tone.Light)
-                _hasPlacedLight = true;
-            else
-                _hasPlacedDark = true;
+            // CurrentTurnPlacements already record the tone; nothing else needed.
         }
 
         public void StartMovementPhase()
@@ -150,8 +147,6 @@ namespace Magi.LedgeBoardGame.Models
             {
                 CurrentTurnMoves.Clear();
                 CurrentTurnPlacements.Clear();
-                _hasPlacedLight = false;
-                _hasPlacedDark = false;
                 CurrentPhase = GamePhase.Placement;
 
                 AdvanceToNextPlayer();
@@ -243,9 +238,7 @@ namespace Magi.LedgeBoardGame.Models
                 CurrentTurnPlacements = new List<PlacementMove>(CurrentTurnPlacements),
                 CrossBoardLedgeEdges = new Dictionary<string, List<CrossBoardEdge>>(CrossBoardLedgeEdges),
                 WinnerId = WinnerId,
-                GameOver = GameOver,
-                _hasPlacedLight = _hasPlacedLight,
-                _hasPlacedDark = _hasPlacedDark
+                GameOver = GameOver
             };
 
             return clone;
