@@ -102,10 +102,10 @@ policy:
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `com.magi.unitytools` | local | Shared Magi utilities |
-| `com.unity.nuget.newtonsoft-json` | 3.2.1 | JSON serialization (spec loader) |
-| `com.unity.inputsystem` | 1.14.2 | Modern input handling |
-| `com.unity.render-pipelines.universal` | 17.2.0 | URP rendering |
-| `com.unity.2d.*` | ~12.0 | 2D board rendering |
+| `com.unity.nuget.newtonsoft-json` | 3.2.2 | JSON serialization (spec loader) |
+| `com.unity.inputsystem` | 1.17.0 | Modern input handling |
+| `com.unity.render-pipelines.universal` | 17.3.0 | URP rendering |
+| `com.unity.2d.*` | ~13.0 | 2D board rendering |
 
 ## JSON Serialization Migration
 

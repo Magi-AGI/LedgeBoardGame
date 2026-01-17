@@ -5,6 +5,7 @@
         "Unity.Mathematics",
         "Unity.Burst",
         "Unity.InputSystem",
+        "Unity.TextMeshPro",
         "Magi.UnityTools"
     ],
     "includePlatforms": [],

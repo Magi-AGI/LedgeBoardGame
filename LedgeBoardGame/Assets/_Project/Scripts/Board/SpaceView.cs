@@ -4,17 +4,27 @@
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
+using TMPro;
 using Magi.LedgeBoardGame.Models;
 
 namespace Magi.LedgeBoardGame.Board
 {
     public class SpaceView : MonoBehaviour, IPointerClickHandler
     {
+        [Header("Token Display (TMP preferred)")]
+        [SerializeField] private TextMeshProUGUI lightCountTMP;
+        [SerializeField] private TextMeshProUGUI darkCountTMP;
+
+        [Header("Token Display (Legacy fallback)")]
         [SerializeField] private Text lightCountText;
         [SerializeField] private Text darkCountText;
+
+        [Header("Indicators")]
         [SerializeField] private GameObject lockIndicator;
         [SerializeField] private GameObject highlightEffect;
         [SerializeField] private Image highlightImage;
+
+        [Header("Events")]
         [SerializeField] private UnityEngine.Events.UnityEvent<SpaceView> onClicked;
 
         private int _spaceId;
@@ -34,14 +44,26 @@ namespace Magi.LedgeBoardGame.Board
 
         public void UpdateTokenDisplay(TokenStack stack)
         {
-            if (lightCountText != null)
+            // Prefer TMP, fall back to legacy Text
+            var lightStr = stack.LightCount.ToString();
+            var darkStr = stack.DarkCount.ToString();
+
+            if (lightCountTMP != null)
             {
-                lightCountText.text = stack.LightCount.ToString();
+                lightCountTMP.text = lightStr;
+            }
+            else if (lightCountText != null)
+            {
+                lightCountText.text = lightStr;
             }
 
-            if (darkCountText != null)
+            if (darkCountTMP != null)
             {
-                darkCountText.text = stack.DarkCount.ToString();
+                darkCountTMP.text = darkStr;
+            }
+            else if (darkCountText != null)
+            {
+                darkCountText.text = darkStr;
             }
 
             if (lockIndicator != null)

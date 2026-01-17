@@ -8,9 +8,9 @@
 - Do not edit or commit generated folders: `LedgeBoardGame/Library/`, `LedgeBoardGame/Logs/`, `LedgeBoardGame/obj/`, `LedgeBoardGame/UserSettings/`.
 
 ## Build, Test, and Development Commands
-- Unity version is pinned in `LedgeBoardGame/ProjectSettings/ProjectVersion.txt` (e.g., 6000.2.5f1). Open the folder in that Editor via Unity Hub.
+- Unity version is pinned in `LedgeBoardGame/ProjectSettings/ProjectVersion.txt` (currently 6000.3.4f1). Open the folder in that Editor via Unity Hub.
 - Run EditMode tests (Windows example):
-  `"C:\\Program Files\\Unity\\Hub\\Editor\\6000.2.5f1\\Editor\\Unity.exe" -batchmode -quit -projectPath "%CD%\\LedgeBoardGame" -runTests -testPlatform EditMode -logFile "LedgeBoardGame\\Logs\\editmode.log" -testResults "LedgeBoardGame\\Logs\\results.xml"`
+  `"C:\\Program Files\\Unity\\Hub\\Editor\\6000.3.4f1\\Editor\\Unity.exe" -batchmode -quit -projectPath "%CD%\\LedgeBoardGame" -runTests -testPlatform EditMode -logFile "LedgeBoardGame\\Logs\\editmode.log" -testResults "LedgeBoardGame\\Logs\\results.xml"`
 - Optional compile for IDE feedback: `dotnet build LedgeBoardGame/LedgeBoardGame.sln` (requires the pinned Unity installed so references resolve).
 
 ## Coding Style & Naming Conventions
