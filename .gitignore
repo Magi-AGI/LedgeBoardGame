@@ -126,5 +126,9 @@
 # Root OS/IDE ignores
 .idea/
 .vscode/
+.claude/
 .DS_Store
 Thumbs.db
+
+# Unity crash-recovery scenes (auto-generated, per-machine)
+**/_Recovery/
