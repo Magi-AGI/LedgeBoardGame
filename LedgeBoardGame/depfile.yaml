@@ -1,13 +1,13 @@
 # Magi Unity Dependency File
 # Generated for LedgeBoardGame
 # Managed by MagiUnityDependencyManager
-# Updated: 2026-01-16 - Reconciled with manifest.json (Unity 6000.3.4f1)
+# Updated: 2026-04-14 - Tier 1 reset: minimal set, let Unity auto-resolve transitive deps
 
 version: 1.0
 
 project:
   name: LedgeBoardGame
-  unityVersion: 6000.3.4f1
+  unityVersion: 6000.4.2f1
   targetPlatforms:
     - StandaloneWindows64
     - WebGL
@@ -17,12 +17,10 @@ registries:
     url: https://packages.unity.com
     scopes:
       - com.unity
-  # Optional: enable only if you have access to the private Magi registry.
-  # - name: Magi Private
-  #   url: https://registry.magi.dev
-  #   scopes:
-  #     - com.magi
-  #     - com.inktools
+  - name: OpenUPM
+    url: https://package.openupm.com
+    scopes:
+      - com.coplaydev
 
 packages:
   # Local Magi packages
@@ -30,70 +28,40 @@ packages:
     path: ../../MagiUnityTools/MagiUnityTools/Assets/_Project/Scripts
     source: local
 
-  # JSON Serialization - REQUIRED for LedgeGameSpecLoader
+  # JSON serialization - REQUIRED for LedgeGameSpecLoader
   - name: com.unity.nuget.newtonsoft-json
     version: 3.2.2
     source: registry
 
-  # Core Unity packages
+  # Core engine packages referenced by Magi.LedgeBoardGame.asmdef
   - name: com.unity.inputsystem
-    version: 1.17.0
+    version: 1.19.0
     source: registry
 
+  - name: com.unity.mathematics
+    version: 1.3.3
+    source: registry
+
+  - name: com.unity.burst
+    version: 1.8.29
+    source: registry
+
+  # UI — ships TextMeshPro in Unity 6
+  - name: com.unity.ugui
+    version: 2.0.0
+    source: registry
+
+  # Rendering — scene uses URP
   - name: com.unity.render-pipelines.universal
-    version: 17.3.0
+    version: 17.4.0
     source: registry
 
-  - name: com.unity.render-pipelines.core
-    version: 17.3.0
-    source: registry
-
-  - name: com.unity.shadergraph
-    version: 17.3.0
-    source: registry
-
-  - name: com.unity.render-pipelines.universal-config
-    version: 17.0.3
-    source: registry
-
-  # 2D packages (for board rendering)
-  - name: com.unity.2d.animation
-    version: 13.0.2
-    source: registry
-
+  # 2D — scene uses UI.Image backed by sprites
   - name: com.unity.2d.sprite
     version: 1.0.0
     source: registry
 
-  - name: com.unity.2d.tilemap
-    version: 1.0.0
-    source: registry
-
-  - name: com.unity.2d.spriteshape
-    version: 13.0.0
-    source: registry
-
-  - name: com.unity.2d.aseprite
-    version: 3.0.1
-    source: registry
-
-  - name: com.unity.2d.psdimporter
-    version: 12.0.1
-    source: registry
-
-  - name: com.unity.2d.common
-    version: 12.0.1
-    source: registry
-
-  - name: com.unity.2d.enhancers
-    version: 1.0.0
-    source: registry
-
-  - name: com.unity.2d.tilemap.extras
-    version: 6.0.1
-    source: registry
-
-  # Testing
+  # Testing — Magi.LedgeBoardGame tests are edit-mode
   - name: com.unity.test-framework
     version: 1.6.0
     source: registry
@@ -102,98 +70,64 @@ packages:
     version: 2.0.5
     source: registry
 
-  - name: com.unity.test-framework.performance
-    version: 3.2.0
-    source: registry
-
-  # Performance & utilities
-  - name: com.unity.burst
-    version: 1.8.27
-    source: registry
-
-  - name: com.unity.collections
-    version: 2.6.2
-    source: registry
-
-  - name: com.unity.mathematics
-    version: 1.3.3
-    source: registry
-
-  # UI
-  - name: com.unity.ugui
-    version: 2.0.0
-    source: registry
-
-  - name: com.unity.visualscripting
-    version: 1.9.9
-    source: registry
-
-  # Development tools
+  # IDE integrations
   - name: com.unity.ide.rider
-    version: 3.0.38
+    version: 3.0.39
     source: registry
 
   - name: com.unity.ide.visualstudio
-    version: 2.0.26
+    version: 2.0.27
     source: registry
 
-  - name: com.unity.collab-proxy
-    version: 2.11.2
-    source: registry
-
-  # AI/ML tools (optional - Unity AI features)
+  # Unity official MCP + chat
   - name: com.unity.ai.assistant
-    version: 1.0.0-pre.12
+    version: 2.5.0-pre.2
     source: registry
     policyException: development-tool
 
-  - name: com.unity.ai.generators
-    version: 1.0.0-pre.20
+  # Coplay MCP bridge (OpenUPM)
+  - name: com.coplaydev.unity-mcp
+    version: 9.6.6
     source: registry
     policyException: development-tool
 
-  - name: com.unity.ai.toolkit
-    version: 1.0.0-pre.20
+  # Engine modules — Unity no longer auto-includes these when depfile is minimal.
+  # Coplay's Runtime asmdef is autoReferenced with no explicit module refs, so it
+  # needs these implicitly: EncodeToPNG, ScreenCapture, JsonUtility, UnityWebRequest,
+  # UIElements editor windows, IMGUIContainer. Plus UGUI/UI basics and 2D physics
+  # for potential URP shader graph variants.
+  - name: com.unity.modules.imageconversion
+    version: 1.0.0
     source: registry
-    policyException: development-tool
-
-  - name: com.unity.ai.inference
-    version: 2.4.1
+  - name: com.unity.modules.screencapture
+    version: 1.0.0
     source: registry
-
-  # Utilities
-  - name: com.unity.dt.app-ui
-    version: 2.1.1
+  - name: com.unity.modules.jsonserialize
+    version: 1.0.0
     source: registry
-
-  - name: com.unity.timeline
-    version: 1.8.10
+  - name: com.unity.modules.unitywebrequest
+    version: 1.0.0
     source: registry
-
-  - name: com.unity.serialization
-    version: 3.1.3
+  - name: com.unity.modules.uielements
+    version: 1.0.0
     source: registry
-
-  - name: com.unity.settings-manager
-    version: 2.1.1
+  - name: com.unity.modules.imgui
+    version: 1.0.0
     source: registry
-
-  - name: com.unity.searcher
-    version: 4.9.4
+  - name: com.unity.modules.ui
+    version: 1.0.0
     source: registry
-
-  - name: com.unity.nuget.mono-cecil
-    version: 1.11.6
+  - name: com.unity.modules.animation
+    version: 1.0.0
     source: registry
-
-  - name: com.unity.multiplayer.center
-    version: 1.0.1
+  - name: com.unity.modules.physics2d
+    version: 1.0.0
     source: registry
 
 # Policy configuration
 policy:
   allowGitDependencies: false
-  allowPrerelease: true  # Allow for AI packages (pre.X versions)
+  allowPrerelease: true  # ai.assistant ships as pre-release
   requireLockFile: true
   bannedAPIs:
     - GameObject.Find
@@ -205,7 +139,12 @@ policy:
   maxPackageCount: 60
 
 # Notes:
-# - Unity version updated to 6000.3.4f1 (from 6000.2.5f1)
-# - Package versions reconciled with manifest.json on 2026-01-16
-# - System.Text.Json is NOT directly available in Unity 6
-# - Use Newtonsoft.Json (already included) OR Unity's built-in JsonUtility
+# - Target Unity 6000.4.2f1 (stable); NOT 6000.5 Beta (Coplay's GetInstanceID is obsolete there)
+# - Dropped from prior depfile to unblock compile:
+#     ai.toolkit, ai.generators   — ai.assistant 2.5+ is self-contained; old toolkit conflicts
+#     2d.enhancers                 — hard-pinned old ai.generators; not needed for gameplay
+#     2d.animation/aseprite/psd/spriteshape/tilemap-extras/common — unused
+#     timeline, visualscripting, collab-proxy, multiplayer.center — unused
+#     dt.app-ui, serialization, settings-manager, searcher, mono-cecil — unused or transitive
+#     ai.inference, test-framework.performance — not currently exercised
+# - System.Text.Json is NOT available in Unity 6; use Newtonsoft.Json everywhere
