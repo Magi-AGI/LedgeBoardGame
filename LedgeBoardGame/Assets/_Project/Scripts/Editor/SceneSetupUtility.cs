@@ -29,7 +29,7 @@ namespace Magi.LedgeBoardGame.Editor
             // Setup scene hierarchy
             SetupSceneHierarchy();
 
-            Debug.Log("Ledge scene setup complete!");
+            UnityEngine.Debug.Log("Ledge scene setup complete!");
         }
 
         [MenuItem("Ledge/Create SpaceView Prefab", false, 200)]
@@ -98,13 +98,13 @@ namespace Magi.LedgeBoardGame.Editor
             {
                 // Update existing prefab
                 PrefabUtility.SaveAsPrefabAsset(spaceViewGO, SpaceViewPrefabPath);
-                Debug.Log("Updated SpaceView prefab at: " + SpaceViewPrefabPath);
+                UnityEngine.Debug.Log("Updated SpaceView prefab at: " + SpaceViewPrefabPath);
             }
             else
             {
                 // Create new prefab
                 PrefabUtility.SaveAsPrefabAsset(spaceViewGO, SpaceViewPrefabPath);
-                Debug.Log("Created SpaceView prefab at: " + SpaceViewPrefabPath);
+                UnityEngine.Debug.Log("Created SpaceView prefab at: " + SpaceViewPrefabPath);
             }
 
             Object.DestroyImmediate(spaceViewGO);
@@ -132,7 +132,7 @@ namespace Magi.LedgeBoardGame.Editor
 
             EnsureDirectoryExists("Assets/_Project/Prefabs");
             PrefabUtility.SaveAsPrefabAsset(boardPresenterGO, BoardPresenterPrefabPath);
-            Debug.Log("Created/Updated BoardPresenter prefab at: " + BoardPresenterPrefabPath);
+            UnityEngine.Debug.Log("Created/Updated BoardPresenter prefab at: " + BoardPresenterPrefabPath);
 
             Object.DestroyImmediate(boardPresenterGO);
         }
@@ -199,7 +199,7 @@ namespace Magi.LedgeBoardGame.Editor
             WireGameControllerReferences(gameController, gameHud, multiBoardLayout);
 
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
-            Debug.Log("Scene hierarchy setup complete. Save the scene to persist changes.");
+            UnityEngine.Debug.Log("Scene hierarchy setup complete. Save the scene to persist changes.");
         }
 
         private static void SetupHudUI(Transform canvasTransform, GameHud gameHud)
@@ -309,7 +309,7 @@ namespace Magi.LedgeBoardGame.Editor
             }
 
             so.ApplyModifiedPropertiesWithoutUndo();
-            Debug.Log("GameController references wired successfully.");
+            UnityEngine.Debug.Log("GameController references wired successfully.");
         }
 
         private static GameObject CreateUIChild(GameObject parent, string name, Vector2 size)
