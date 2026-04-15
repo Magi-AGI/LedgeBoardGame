@@ -1,5 +1,8 @@
 using UnityEngine;
 using UnityEngine.UI;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 using Magi.LedgeBoardGame.Models;
 
 namespace Magi.LedgeBoardGame.Board
@@ -90,7 +93,8 @@ namespace Magi.LedgeBoardGame.Board
 
             Vector2 localPoint;
             var cam = _canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : _canvas.worldCamera;
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_parentCanvasRect, Input.mousePosition, cam, out localPoint))
+            if (!TryReadPointer(out Vector2 screenPos)) return;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_parentCanvasRect, screenPos, cam, out localPoint))
                 return;
 
             if (!_hasCursorPos)
@@ -117,6 +121,32 @@ namespace Magi.LedgeBoardGame.Board
                 var selfParent = _selfRect.parent as RectTransform;
                 if (selfParent != null) _parentCanvasRect = selfParent;
             }
+        }
+
+        // Project uses com.unity.inputsystem, so UnityEngine.Input.mousePosition
+        // throws at runtime. Guarded pointer read keeps the ghost compilable under
+        // either backend.
+        private static bool TryReadPointer(out Vector2 screenPos)
+        {
+#if ENABLE_INPUT_SYSTEM
+            var mouse = Mouse.current;
+            if (mouse != null)
+            {
+                screenPos = mouse.position.ReadValue();
+                return true;
+            }
+            var touch = Touchscreen.current;
+            if (touch != null && touch.primaryTouch.press.isPressed)
+            {
+                screenPos = touch.primaryTouch.position.ReadValue();
+                return true;
+            }
+            screenPos = default;
+            return false;
+#else
+            screenPos = Input.mousePosition;
+            return true;
+#endif
         }
     }
 }
