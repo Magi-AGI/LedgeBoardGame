@@ -17,7 +17,7 @@ namespace Magi.LedgeBoardGame.Board
     {
         [SerializeField] private float chipSize = 38f;
         [SerializeField] private float stackOffset = 4f;
-        [SerializeField] private float alpha = 0.55f;
+        [SerializeField] private float alpha = 1f;
         [SerializeField] private float followSmoothing = 18f;
 
         private RectTransform _selfRect;

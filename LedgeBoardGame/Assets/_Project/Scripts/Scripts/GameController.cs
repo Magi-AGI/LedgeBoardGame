@@ -30,7 +30,12 @@ namespace Magi.LedgeBoardGame
         private readonly Stack<UndoFrame> _undoStack = new Stack<UndoFrame>();
         private bool _moveInProgress;
         private SpaceId? _pendingRetarget;
+        private SpaceView _sourcePhantomView;
         private const float MoveTweenDuration = 0.28f;
+        // Alpha applied to the source SpaceView while its chips are "in hand," so the
+        // origin reads as a faded placeholder while the opaque flying/in-hand stack
+        // becomes the player's visual anchor.
+        private const float SourcePhantomAlpha = 0.35f;
 
         private struct UndoFrame
         {
@@ -87,6 +92,7 @@ namespace Magi.LedgeBoardGame
             CreateBoardPresenters();
 
             EnsureInHandGhost();
+            EnsurePlacementGhost();
 
             SpaceClickedEvent.Register(OnSpaceClicked);
 
@@ -208,6 +214,7 @@ namespace Magi.LedgeBoardGame
         private void OnMoveTweenComplete()
         {
             _moveInProgress = false;
+            ClearSourcePhantom();
             // Destination was held at its pre-move state during the tween so the chips
             // read as arriving — now that they've landed, catch every board up to state.
             RefreshBoards();
@@ -331,17 +338,10 @@ namespace Magi.LedgeBoardGame
             _selectedTone = _pickedUpLight > 0 ? Tone.Light : Tone.Dark;
             _selectedSpace = clicked;
 
-            // Drain the source view immediately so the in-hand ghost + drained space
-            // read as "chips have been lifted." Model stays untouched; rules still see
-            // the full stack for MoveToken.
-            var fromView = FindSpaceView(clicked);
-            if (fromView != null)
-            {
-                var draining = stack.Clone();
-                for (int i = 0; i < _pickedUpLight; i++) draining.RemoveOne(Tone.Light);
-                for (int i = 0; i < _pickedUpDark; i++) draining.RemoveOne(Tone.Dark);
-                fromView.UpdateTokenDisplay(draining);
-            }
+            // Fade the source view so the origin reads as "these chips are in the player's
+            // hand." Chips remain rendered so the player still sees where they came from;
+            // the in-hand ghost (opaque) becomes the anchor point for where they are now.
+            SetSourcePhantom(FindSpaceView(clicked));
 
             var targets = GetStackValidTargets(clicked, stack);
             HighlightSpaces(targets);
@@ -351,21 +351,31 @@ namespace Magi.LedgeBoardGame
 
         private void ClearMovementSelection()
         {
-            var prior = _selectedSpace;
             _selectedSpace = null;
             _pickedUpLight = 0;
             _pickedUpDark = 0;
             ClearHighlights();
             NotifyInHandGhost();
+            ClearSourcePhantom();
+        }
 
-            // Restore the source view if we drained it on pickup and are clearing
-            // without a return tween (e.g., failed execute, undo, end-turn).
-            if (prior.HasValue && _gameState != null)
-            {
-                var view = FindSpaceView(prior.Value);
-                var stack = _gameState.GetBoard(prior.Value.BoardId)?.GetStack(prior.Value.Id);
-                if (view != null && stack != null) view.UpdateTokenDisplay(stack);
-            }
+        private void SetSourcePhantom(SpaceView view)
+        {
+            if (view == null) return;
+            if (_sourcePhantomView != null && _sourcePhantomView != view)
+                ClearSourcePhantom();
+            var cg = view.GetComponent<CanvasGroup>();
+            if (cg == null) cg = view.gameObject.AddComponent<CanvasGroup>();
+            cg.alpha = SourcePhantomAlpha;
+            _sourcePhantomView = view;
+        }
+
+        private void ClearSourcePhantom()
+        {
+            if (_sourcePhantomView == null) return;
+            var cg = _sourcePhantomView.GetComponent<CanvasGroup>();
+            if (cg != null) cg.alpha = 1f;
+            _sourcePhantomView = null;
         }
 
         private List<SpaceId> GetStackValidTargets(SpaceId from, TokenStack stack)
@@ -385,9 +395,9 @@ namespace Magi.LedgeBoardGame
             var fromView = FindSpaceView(from);
             var toView = FindSpaceView(clicked);
 
-            // Flying stack originates at the cursor — that's where the chips visually
-            // live once the source has drained on pickup. Fall back to the source view
-            // if the in-hand ghost isn't wired up (editor setups without auto-spawn).
+            // Flying stack originates at the cursor — seamless handoff from the in-hand
+            // ghost (which sits at the cursor) to the MovingCounter. Fall back to the
+            // source view if the in-hand ghost isn't wired up.
             Vector3 fromPos = (inHandGhost != null)
                 ? inHandGhost.transform.position
                 : (fromView != null ? fromView.transform.position : Vector3.zero);
@@ -423,22 +433,16 @@ namespace Magi.LedgeBoardGame
             }
 
             ClearMovementSelection();
-
-            // Source view is already drained from SelectMovementSource; this repaint
-            // only matters if rules partially rejected (shouldn't happen today) so the
-            // view matches the model.
-            if (fromView != null)
-            {
-                var postMoveFrom = _gameState.GetBoard(from.BoardId)?.GetStack(from.Id);
-                if (postMoveFrom != null) fromView.UpdateTokenDisplay(postMoveFrom);
-            }
             UpdateStatusUI();
 
             _moveInProgress = true;
             RefreshUndoButton();
+            // Keep the origin faded (still rendering the pre-move chips) during the tween;
+            // OnMoveTweenComplete clears the phantom and RefreshBoards snaps it to post-move.
+            SetSourcePhantom(fromView);
             var overlayParent = ResolveOverlayParent(fromView ?? toView);
-            // No phantom on the forward tween — the drained source already reads as
-            // "these chips have been lifted," so a translucent copy would double up.
+            // No MovingCounter phantom — the faded source already reads as the origin,
+            // so a translucent copy on top of it would double up.
             MovingCounter.Play(overlayParent, fromPos, toPos, lightMoved, darkMoved,
                 MoveTweenDuration, OnMoveTweenComplete, withPhantom: false);
         }
@@ -486,17 +490,8 @@ namespace Magi.LedgeBoardGame
         private void OnReturnTweenComplete()
         {
             _moveInProgress = false;
-
-            var prior = _selectedSpace;
             _selectedSpace = null;
-
-            if (prior.HasValue && _gameState != null)
-            {
-                var view = FindSpaceView(prior.Value);
-                var stack = _gameState.GetBoard(prior.Value.BoardId)?.GetStack(prior.Value.Id);
-                if (view != null && stack != null) view.UpdateTokenDisplay(stack);
-            }
-
+            ClearSourcePhantom();
             RefreshUndoButton();
 
             if (_gameState == null || _gameState.GameOver)
@@ -546,6 +541,32 @@ namespace Magi.LedgeBoardGame
             rt.pivot = new Vector2(0.5f, 0.5f);
             rt.sizeDelta = new Vector2(48f, 48f);
             inHandGhost = go.AddComponent<InHandGhost>();
+        }
+
+        private void EnsurePlacementGhost()
+        {
+            if (placementGhost != null) return;
+            // Mirror the InHandGhost auto-spawn — scenes that never ran the setup utility
+            // still get a working placement preview without a manual wiring step.
+            var canvas = GetComponentInParent<Canvas>();
+            if (canvas == null)
+            {
+                foreach (var presenter in _boardPresenters.Values)
+                {
+                    canvas = presenter.GetComponentInParent<Canvas>();
+                    if (canvas != null) break;
+                }
+            }
+            if (canvas == null) return;
+
+            var go = new GameObject("PlacementGhost", typeof(RectTransform));
+            var rt = (RectTransform)go.transform;
+            rt.SetParent(canvas.transform, false);
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(48f, 48f);
+            placementGhost = go.AddComponent<PlacementGhost>();
         }
 
         private void HighlightSelectedSource()
