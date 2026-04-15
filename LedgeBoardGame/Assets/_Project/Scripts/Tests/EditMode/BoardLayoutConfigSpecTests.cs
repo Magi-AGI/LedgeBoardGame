@@ -52,8 +52,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
         [Test]
         public void BoardLayoutConfig_MatchesSpecRingAssignments()
         {
-            var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-            var specPath = Path.Combine(projectRoot, "Specs", "ledge", "ledge-game.v1.json");
+            var specPath = Path.Combine(Application.dataPath, "_Project", "Specs", "ledge", "ledge-game.v1.json");
             Assert.IsTrue(File.Exists(specPath), $"Expected spec file at {specPath}");
 
             var json = File.ReadAllText(specPath);
@@ -81,7 +80,12 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                         _ => throw new InvalidOperationException($"Unexpected ring name '{ring.Name}' in spec.")
                     };
 
-                    if (!(meta.Type == SpaceType.Ledge && ring.Name == "outerMiddle" && meta.RingIndex == 4))
+                    // Ring3 vertex spaces (IDs 37-42) appear in both the "outerMiddle" and "outer" rings of
+                    // the spec but carry ringIndex 3 in code. Tolerate that overlap for the "outer" ring.
+                    var ringIndexMatches = meta.RingIndex == expectedRingIndex ||
+                                           (!string.IsNullOrEmpty(meta.ColorLabel) && ring.Name == "outer" && meta.RingIndex == 3);
+
+                    if (!ringIndexMatches)
                     {
                         Assert.AreEqual(expectedRingIndex, meta.RingIndex, $"Space {id} ringIndex mismatch for ring '{ring.Name}'.");
                     }
@@ -90,26 +94,29 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
         }
 
         [Test]
-        public void BoardLayoutConfig_Ring3Spaces_HaveTwoRing2Connections()
+        public void BoardLayoutConfig_Ring3Spaces_HaveExpectedRing2Connections()
         {
             var layout = ScriptableObject.CreateInstance<BoardLayoutConfig>();
             layout.GenerateDefaultLayout();
             var adjacency = layout.GetAdjacencyMap();
-            var ring3Ids = new List<int>();
+
+            // Ring3-off spaces (25-36) flank the ring3-vertex; they connect to two Ring2 neighbours.
+            // Ring3-vertex spaces (37-42) sit on the vertex axis and connect to exactly one Ring2 neighbour.
             foreach (var space in layout.Spaces)
             {
-                if (space.type == SpaceType.Ring3)
-                {
-                    ring3Ids.Add(space.spaceId);
-                }
-            }
+                if (space.type != SpaceType.Ring3) continue;
 
-            foreach (var id in ring3Ids)
-            {
-                Assert.IsTrue(adjacency.ContainsKey(id), $"Adjacency missing for ring3 space {id}");
-                var neighbors = adjacency[id];
-                var ring2Neighbors = neighbors.FindAll(n => n >= 13 && n <= 24);
-                Assert.AreEqual(2, ring2Neighbors.Count, $"Ring3 space {id} should connect to two Ring2 neighbors.");
+                Assert.IsTrue(adjacency.ContainsKey(space.spaceId), $"Adjacency missing for ring3 space {space.spaceId}");
+                var ring2Neighbors = adjacency[space.spaceId].FindAll(n => n >= 13 && n <= 24);
+
+                if (string.IsNullOrEmpty(space.colorLabel))
+                {
+                    Assert.AreEqual(2, ring2Neighbors.Count, $"Ring3-off space {space.spaceId} should connect to two Ring2 neighbors.");
+                }
+                else
+                {
+                    Assert.AreEqual(1, ring2Neighbors.Count, $"Ring3-vertex space {space.spaceId} should connect to exactly one Ring2 neighbor.");
+                }
             }
         }
     }

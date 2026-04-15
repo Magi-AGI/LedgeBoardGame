@@ -218,6 +218,30 @@ namespace Magi.LedgeBoardGame.Models
             return stack.LightCount >= 2 || stack.DarkCount >= 2;
         }
 
+        public void CopyFrom(GameState other)
+        {
+            CurrentPlayerId = other.CurrentPlayerId;
+            CurrentPhase = other.CurrentPhase;
+            TurnNumber = other.TurnNumber;
+            GameOver = other.GameOver;
+            WinnerId = other.WinnerId;
+
+            CurrentTurnMoves.Clear();
+            CurrentTurnMoves.AddRange(other.CurrentTurnMoves);
+            CurrentTurnPlacements.Clear();
+            CurrentTurnPlacements.AddRange(other.CurrentTurnPlacements);
+
+            for (int i = 0; i < Players.Count && i < other.Players.Count; i++)
+            {
+                Players[i].IsEliminated = other.Players[i].IsEliminated;
+            }
+
+            for (int i = 0; i < Boards.Count && i < other.Boards.Count; i++)
+            {
+                Boards[i].CopyFrom(other.Boards[i]);
+            }
+        }
+
         public GameState Clone()
         {
             var clone = new GameState

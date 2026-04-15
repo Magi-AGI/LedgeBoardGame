@@ -43,8 +43,8 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                     board.SpaceMetadata[i] = new SpaceMeta(SpaceType.InnerBridge, 1, i - 1);
                 }
 
-                board.SpaceMetadata[37] = new SpaceMeta(SpaceType.Ledge, 4, 0, false, "Ela");
-                board.SpaceMetadata[38] = new SpaceMeta(SpaceType.Ledge, 4, 1, false, "Biz");
+                board.SpaceMetadata[37] = new SpaceMeta(SpaceType.Ring3, 3, 1, false, "Ela");
+                board.SpaceMetadata[38] = new SpaceMeta(SpaceType.Ring3, 3, 3, false, "Biz");
                 board.LedgeSpacesByColor["Ela"] = new List<int> { 37 };
                 board.LedgeSpacesByColor["Biz"] = new List<int> { 38 };
             }
@@ -120,6 +120,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
         {
             _gameState.CurrentPhase = GamePhase.Movement;
             var board = _gameState.GetBoard(0);
+            board.Adjacency[1] = new List<int> { 0, 2, 3 };
             board.SetStack(1, new TokenStack(3, 0, Tone.Light));
             board.SetStack(2, new TokenStack());
             board.SetStack(3, new TokenStack());
@@ -143,7 +144,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
         {
             _gameState.CurrentPhase = GamePhase.Movement;
             var board = _gameState.GetBoard(0);
-            board.SetStack(1, new TokenStack(3, 0, Tone.Dark));
+            board.SetStack(1, new TokenStack(0, 3, Tone.Dark));
             board.SetStack(2, new TokenStack(2, 0, Tone.Light));
 
             var move = _rules.MoveToken(_gameState, new SpaceId(0, 1), new SpaceId(0, 2), Tone.Dark);
@@ -185,12 +186,12 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
 
             board0.SetStack(1, new TokenStack(0, 2, Tone.Dark));
             board1.SetStack(0, new TokenStack(1, 0, Tone.Light));
-            board1.SetStack(1, new TokenStack());
+            board1.SetStack(1, new TokenStack(0, 2, Tone.Dark));
             board1.Adjacency[1] = new List<int> { 0 };
 
             _gameState.CurrentPlayerId = 1;
-            var move = _rules.MoveToken(_gameState, new SpaceId(0, 1), new SpaceId(1, 1), Tone.Dark);
-            _gameState.CurrentTurnMoves.Add(move);
+            // Simulate a prior cross-board move that landed Dark on (1,1); this gives player 1 control over that space.
+            _gameState.CurrentTurnMoves.Add(new Move(new SpaceId(0, 37), new SpaceId(1, 1), Tone.Dark));
 
             var move2 = _rules.MoveToken(_gameState, new SpaceId(1, 1), new SpaceId(1, 0), Tone.Dark);
             Assert.AreEqual(MoveResult.Clear, move2.Result);

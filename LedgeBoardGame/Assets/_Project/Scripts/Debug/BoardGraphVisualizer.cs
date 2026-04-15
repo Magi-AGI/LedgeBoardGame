@@ -110,7 +110,7 @@ namespace Magi.LedgeBoardGame.Debug
                         label += "\n";
                     label += meta.Type.ToString();
 
-                    if (meta.Type == SpaceType.Ledge && !string.IsNullOrEmpty(meta.ColorLabel))
+                    if (!string.IsNullOrEmpty(meta.ColorLabel))
                     {
                         label += $"\n({meta.ColorLabel})";
                     }
@@ -144,15 +144,14 @@ namespace Magi.LedgeBoardGame.Debug
                 {
                     var meta = boardState.SpaceMetadata[spaceId];
 
-                    switch (meta.Type)
+                    if (!string.IsNullOrEmpty(meta.ColorLabel))
                     {
-                        case SpaceType.InnerBridge:
-                            highlightColor = bridgeColor;
-                            break;
-                        case SpaceType.Ledge:
-                            highlightColor = GetLedgeColor(meta.ColorLabel);
-                            size = 0.25f;
-                            break;
+                        highlightColor = GetLedgeColor(meta.ColorLabel);
+                        size = 0.25f;
+                    }
+                    else if (meta.Type == SpaceType.InnerBridge)
+                    {
+                        highlightColor = bridgeColor;
                     }
                 }
 

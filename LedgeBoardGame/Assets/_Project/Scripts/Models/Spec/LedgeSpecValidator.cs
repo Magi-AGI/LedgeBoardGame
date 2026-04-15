@@ -57,9 +57,10 @@ namespace Magi.LedgeBoardGame.Models.Spec
                         _ => throw new InvalidOperationException($"Unexpected ring name '{ring.Name}' in spec.")
                     };
 
-                    // Ledge spaces are listed in both outerMiddle and outer rings in the spec; tolerate the outer ring index for ledges.
+                    // Color-labeled ring3 vertices appear in both the "outerMiddle" ring (ringIndex 3)
+                    // and the "outer" ring (expected ringIndex 4) of the spec; tolerate that overlap.
                     var ringIndexMatches = meta.RingIndex == expectedRingIndex ||
-                                           (meta.Type == SpaceType.Ledge && ring.Name == "outerMiddle" && meta.RingIndex == 4);
+                                           (!string.IsNullOrEmpty(meta.ColorLabel) && ring.Name == "outer" && meta.RingIndex == 3);
 
                     if (!ringIndexMatches)
                     {

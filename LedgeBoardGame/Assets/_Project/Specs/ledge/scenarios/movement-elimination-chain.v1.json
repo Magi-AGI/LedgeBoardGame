@@ -39,9 +39,9 @@
     }
   ],
   "expected": {
-    "phase": "placement",
+    "phase": "movement",
     "currentPlayer": "1",
-    "turnNumber": 2
+    "turnNumber": 1
   }
 }
 

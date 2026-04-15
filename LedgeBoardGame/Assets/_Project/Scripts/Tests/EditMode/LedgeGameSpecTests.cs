@@ -14,8 +14,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
     {
         private static string GetSpecPath()
         {
-            var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-            return Path.Combine(projectRoot, "Specs", "ledge", "ledge-game.v1.json");
+            return Path.Combine(Application.dataPath, "_Project", "Specs", "ledge", "ledge-game.v1.json");
         }
 
         private static LedgeGameSpec LoadSpec()
@@ -81,17 +80,20 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                             Assert.AreEqual(2, meta.RingIndex, "Inner middle ring spaces should have ringIndex 2.");
                             break;
                         case "outerMiddle":
-                            if (meta.Type == SpaceType.Ledge)
+                            Assert.AreEqual(3, meta.RingIndex, "Outer middle ring spaces should have ringIndex 3.");
+                            break;
+                        case "outer":
+                            // The spec lists ring3 vertex spaces (37-42) in both outerMiddle and outer rings;
+                            // tolerate that overlap since they sit on the geometric outer axis but are graph-wise
+                            // one edge inside the added outer ring.
+                            if (!string.IsNullOrEmpty(meta.ColorLabel) && meta.RingIndex == 3)
                             {
-                                Assert.AreEqual(4, meta.RingIndex, "Ledge spaces listed in outerMiddle may carry the outer ring index.");
+                                // ring3-vertex ledge space, listed in "outer" for convenience — allow.
                             }
                             else
                             {
-                                Assert.AreEqual(3, meta.RingIndex, "Outer middle ring spaces should have ringIndex 3.");
+                                Assert.AreEqual(4, meta.RingIndex, "Outer ring spaces should have ringIndex 4.");
                             }
-                            break;
-                        case "outer":
-                            Assert.AreEqual(4, meta.RingIndex, "Outer ring spaces should have ringIndex 4.");
                             break;
                         default:
                             Assert.Fail($"Unexpected ring name '{ring.Name}' in spec.");

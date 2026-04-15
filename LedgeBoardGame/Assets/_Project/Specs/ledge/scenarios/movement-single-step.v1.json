@@ -38,7 +38,7 @@
         "tone": "Light"
       }
     }
-  },
+  ],
   "expected": {
     "phase": "movement",
     "currentPlayer": "1",

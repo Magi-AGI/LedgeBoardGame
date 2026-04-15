@@ -59,9 +59,9 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                     board.SpaceMetadata[i] = new SpaceMeta(SpaceType.InnerStop, 1, i - 7, true);
                 }
 
-                board.SpaceMetadata[37] = new SpaceMeta(SpaceType.Ledge, 4, 0, false, "Ela");
-                board.SpaceMetadata[38] = new SpaceMeta(SpaceType.Ledge, 4, 1, false, "Biz");
-                board.SpaceMetadata[39] = new SpaceMeta(SpaceType.Ledge, 4, 2, false, "Yun");
+                board.SpaceMetadata[37] = new SpaceMeta(SpaceType.Ring3, 3, 1, false, "Ela");
+                board.SpaceMetadata[38] = new SpaceMeta(SpaceType.Ring3, 3, 3, false, "Biz");
+                board.SpaceMetadata[39] = new SpaceMeta(SpaceType.Ring3, 3, 5, false, "Yun");
 
                 board.LedgeSpacesByColor["Ela"] = new List<int> { 37 };
                 board.LedgeSpacesByColor["Biz"] = new List<int> { 38 };
@@ -103,6 +103,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
         {
             _gameState.CurrentPhase = GamePhase.Movement;
             var board = _gameState.GetBoard(0);
+            board.Adjacency[1] = new List<int> { 0, 2, 3, 4 };
 
             board.SetStack(1, new TokenStack(4, 0, Tone.Light));
             board.SetStack(2, new TokenStack());
@@ -129,8 +130,10 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
         {
             _gameState.CurrentPhase = GamePhase.Movement;
             var board = _gameState.GetBoard(0);
+            board.Adjacency[1] = new List<int> { 0, 2, 3 };
 
-            board.SetStack(1, new TokenStack(0, 3, Tone.Dark));
+            // Need 4 Dark here so the third move still has >1 and isn't locked on the source.
+            board.SetStack(1, new TokenStack(0, 4, Tone.Dark));
             board.SetStack(2, new TokenStack(2, 0, Tone.Light));
             board.SetStack(3, new TokenStack(3, 0, Tone.Light));
 
@@ -159,12 +162,14 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
             board0.SetStack(37, new TokenStack(0, 2, Tone.Dark));
             board1.SetStack(37, new TokenStack(2, 0, Tone.Light));
             board1.SetStack(36, new TokenStack());
+            board0.Adjacency[36] = new List<int> { 37 };
 
             var move1 = _rules.MoveToken(_gameState, new SpaceId(0, 36), new SpaceId(0, 37), Tone.Light);
             Assert.AreEqual(MoveResult.Clear, move1.Result);
 
             var stack = board0.GetStack(37);
-            Assert.AreEqual(1, stack.LightCount);
+            // Single-token move semantics: one Light clears one Dark, leaving Dark=1 at the destination.
+            Assert.AreEqual(0, stack.LightCount);
             Assert.AreEqual(1, stack.DarkCount);
 
             board0.SetStack(37, new TokenStack(0, 2, Tone.Dark));
@@ -194,15 +199,16 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
 
             var move1 = _rules.MoveToken(_gameState, new SpaceId(0, 37), new SpaceId(2, 37), Tone.Dark);
             Assert.AreEqual(MoveResult.Clear, move1.Result);
+            // Single-token move: one Dark clears one Light, leaving Light=1 at destination.
             Assert.AreEqual(1, board2.GetStack(37).LightCount);
-            Assert.AreEqual(1, board2.GetStack(37).DarkCount);
+            Assert.AreEqual(0, board2.GetStack(37).DarkCount);
 
             board1.SetStack(38, new TokenStack(0, 2, Tone.Dark));
             _gameState.CurrentTurnMoves.Add(new Move(new SpaceId(1, 38), new SpaceId(2, 38), Tone.Dark));
 
-            board2.SetStack(38, new TokenStack(0, 2, Tone.Dark));
+            board2.SetStack(38, new TokenStack(0, 3, Tone.Dark));
             board2.SetStack(36, new TokenStack());
-            board2.Adjacency[38] = new List<int> { 36 };
+            board2.Adjacency[38] = new List<int> { 36, 0 };
 
             var move2 = _rules.MoveToken(_gameState, new SpaceId(2, 38), new SpaceId(2, 36), Tone.Dark);
             Assert.AreEqual(MoveResult.Lock, move2.Result);
@@ -227,6 +233,10 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
 
             board1.SetStack(1, new TokenStack(0, 2, Tone.Dark));
             board2.SetStack(1, new TokenStack(0, 2, Tone.Dark));
+
+            // Simulate prior cross-board moves that landed Dark on (1,1) and (2,1); this gives player 1 control over those spaces.
+            _gameState.CurrentTurnMoves.Add(new Move(new SpaceId(0, 37), new SpaceId(1, 1), Tone.Dark));
+            _gameState.CurrentTurnMoves.Add(new Move(new SpaceId(0, 38), new SpaceId(2, 1), Tone.Dark));
 
             var move1 = _rules.MoveToken(_gameState, new SpaceId(1, 1), new SpaceId(1, 0), Tone.Dark);
             Assert.AreEqual(MoveResult.Clear, move1.Result);

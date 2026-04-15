@@ -99,7 +99,7 @@ namespace Magi.LedgeBoardGame.Config
 
             foreach (var space in spaces)
             {
-                if (space.type == SpaceType.Ledge && !string.IsNullOrEmpty(space.colorLabel))
+                if (!string.IsNullOrEmpty(space.colorLabel))
                 {
                     if (ledgesByColor.ContainsKey(space.colorLabel))
                     {

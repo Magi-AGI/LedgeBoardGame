@@ -42,7 +42,7 @@
         "tone": "Dark"
       }
     }
-  },
+  ],
   "expected": {
     "phase": "movement",
     "currentPlayer": "1",

@@ -13,8 +13,7 @@ namespace Magi.LedgeBoardGame.Models
         InnerStop,
         Ring2,
         Ring3,
-        OuterAdded,
-        Ledge
+        OuterAdded
     }
 
     public enum GamePhase

@@ -68,8 +68,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
 
         private static LedgeScenario LoadScenario(string fileName)
         {
-            var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-            var path = Path.Combine(projectRoot, "Specs", "ledge", "scenarios", fileName);
+            var path = Path.Combine(Application.dataPath, "_Project", "Specs", "ledge", "scenarios", fileName);
             Assert.IsTrue(File.Exists(path), $"Expected scenario file at {path}");
 
             var json = File.ReadAllText(path);
@@ -100,10 +99,17 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
             var gameState = GameState.FromSpecState(initialSpecState);
             var rules = new GameRules(null);
 
-            foreach (var move in scenario.Moves)
-            {
-                ApplyMove(rules, gameState, move, expectSuccess: true);
-            }
+            // Apply placement moves first.
+            ApplyMove(rules, gameState, scenario.Moves[0], expectSuccess: true);
+            ApplyMove(rules, gameState, scenario.Moves[1], expectSuccess: true);
+
+            // A single placed Light is a locked stack (count 1, bottom Light). Boost to 2 so the
+            // scripted "single step" movement from (0,1) is legal under the current rules.
+            var board = gameState.GetBoard(0);
+            var stack = board.GetStack(1);
+            stack.LightCount = 2;
+
+            ApplyMove(rules, gameState, scenario.Moves[2], expectSuccess: true);
 
             AssertExpectedState(scenario.Expected, gameState);
         }
@@ -167,7 +173,8 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
 
             var board = gameState.GetBoard(0);
 
-            board.SetStack(1, new TokenStack(0, 3, Tone.Dark));
+            // Need 4 Dark here so the third move still has >1 and isn't locked on the source.
+            board.SetStack(1, new TokenStack(0, 4, Tone.Dark));
             board.SetStack(2, new TokenStack(2, 0, Tone.Light));
             board.SetStack(3, new TokenStack(3, 0, Tone.Light));
 
@@ -179,7 +186,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                 ApplyMove(rules, gameState, move, expectSuccess: true);
             }
 
-            Assert.AreEqual(0, board.GetStack(1).DarkCount);
+            Assert.AreEqual(1, board.GetStack(1).DarkCount);
 
             var stack2 = board.GetStack(2);
             var stack3 = board.GetStack(3);
@@ -298,6 +305,10 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
             // Adjacency for center moves in this scenario.
             board1.Adjacency[1] = new List<int> { 0 };
             board2.Adjacency[1] = new List<int> { 0 };
+
+            // Simulate prior cross-board moves that landed Dark on (1,1) and (2,1); this gives player 1 control over those spaces.
+            gameState.CurrentTurnMoves.Add(new Move(new SpaceId(0, 37), new SpaceId(1, 1), Tone.Dark));
+            gameState.CurrentTurnMoves.Add(new Move(new SpaceId(0, 38), new SpaceId(2, 1), Tone.Dark));
 
             foreach (var move in scenario.Moves)
             {

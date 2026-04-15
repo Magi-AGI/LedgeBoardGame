@@ -173,6 +173,11 @@ namespace Magi.LedgeBoardGame.Board
 
         private Color GetSpaceColor(SpaceMeta meta)
         {
+            if (!string.IsNullOrEmpty(meta.ColorLabel))
+            {
+                return GetLedgeColor(meta.ColorLabel);
+            }
+
             switch (meta.Type)
             {
                 case SpaceType.Center:
@@ -181,8 +186,6 @@ namespace Magi.LedgeBoardGame.Board
                     return new Color(0.5f, 0.7f, 1f); // Light blue
                 case SpaceType.InnerStop:
                     return new Color(0.7f, 0.7f, 0.7f); // Gray
-                case SpaceType.Ledge:
-                    return GetLedgeColor(meta.ColorLabel);
                 default:
                     return new Color(0.9f, 0.9f, 0.9f); // Light gray
             }
@@ -212,7 +215,7 @@ namespace Magi.LedgeBoardGame.Board
         {
             string name = $"Space_{spaceId:00}_{meta.Type}";
 
-            if (meta.Type == SpaceType.Ledge && !string.IsNullOrEmpty(meta.ColorLabel))
+            if (!string.IsNullOrEmpty(meta.ColorLabel))
             {
                 name += $"_{meta.ColorLabel}";
             }

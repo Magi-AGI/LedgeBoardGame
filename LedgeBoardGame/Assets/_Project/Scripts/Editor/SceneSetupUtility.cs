@@ -248,32 +248,44 @@ namespace Magi.LedgeBoardGame.Editor
             statusText.alignment = TextAnchor.MiddleCenter;
             statusText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
-            // Create End Turn button
-            var buttonGO = CreateUIChild(hudPanel, "EndTurnButton", new Vector2(120f, 36f));
-            var buttonRect = buttonGO.GetComponent<RectTransform>();
-            buttonRect.anchoredPosition = new Vector2(0f, -45f);
+            // Create End Turn button (right side)
+            var endTurnButton = CreateHudButton(hudPanel, "EndTurnButton", "End Turn",
+                new Vector2(70f, -45f), new Color(0.2f, 0.4f, 0.6f));
 
-            var buttonImg = buttonGO.AddComponent<Image>();
-            buttonImg.color = new Color(0.2f, 0.4f, 0.6f);
-
-            var button = buttonGO.AddComponent<Button>();
-            button.targetGraphic = buttonImg;
-
-            var buttonTextGO = CreateUIChild(buttonGO, "Text", new Vector2(120f, 36f));
-            var buttonText = buttonTextGO.AddComponent<Text>();
-            buttonText.text = "End Turn";
-            buttonText.fontSize = 16;
-            buttonText.color = Color.white;
-            buttonText.alignment = TextAnchor.MiddleCenter;
-            buttonText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            // Create Undo button (left side)
+            var undoButton = CreateHudButton(hudPanel, "UndoButton", "Undo",
+                new Vector2(-70f, -45f), new Color(0.5f, 0.35f, 0.15f));
 
             // Wire up GameHud
             var hudSO = new SerializedObject(gameHud);
             hudSO.FindProperty("phaseText").objectReferenceValue = phaseText;
             hudSO.FindProperty("currentPlayerText").objectReferenceValue = playerText;
             hudSO.FindProperty("statusText").objectReferenceValue = statusText;
-            hudSO.FindProperty("endTurnButton").objectReferenceValue = button;
+            hudSO.FindProperty("endTurnButton").objectReferenceValue = endTurnButton;
             hudSO.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static Button CreateHudButton(GameObject parent, string name, string label, Vector2 position, Color color)
+        {
+            var buttonGO = CreateUIChild(parent, name, new Vector2(120f, 36f));
+            var buttonRect = buttonGO.GetComponent<RectTransform>();
+            buttonRect.anchoredPosition = position;
+
+            var buttonImg = buttonGO.AddComponent<Image>();
+            buttonImg.color = color;
+
+            var button = buttonGO.AddComponent<Button>();
+            button.targetGraphic = buttonImg;
+
+            var buttonTextGO = CreateUIChild(buttonGO, "Text", new Vector2(120f, 36f));
+            var buttonText = buttonTextGO.AddComponent<Text>();
+            buttonText.text = label;
+            buttonText.fontSize = 16;
+            buttonText.color = Color.white;
+            buttonText.alignment = TextAnchor.MiddleCenter;
+            buttonText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+            return button;
         }
 
         private static void WireGameControllerReferences(GameController gameController, GameHud gameHud, MultiBoardLayout multiBoardLayout)
@@ -308,8 +320,65 @@ namespace Magi.LedgeBoardGame.Editor
                 so.FindProperty("endTurnButton").objectReferenceValue = endTurnButton;
             }
 
+            // Find Undo button by name under the HUD panel, since GameHud doesn't own it.
+            var undoButtonGO = GameObject.Find("HudPanel/UndoButton");
+            if (undoButtonGO != null)
+            {
+                var undoButton = undoButtonGO.GetComponent<Button>();
+                if (undoButton != null)
+                {
+                    so.FindProperty("undoButton").objectReferenceValue = undoButton;
+                }
+            }
+
             so.ApplyModifiedPropertiesWithoutUndo();
             UnityEngine.Debug.Log("GameController references wired successfully.");
+        }
+
+        [MenuItem("Ledge/Add Undo Button (patch existing scene)", false, 203)]
+        public static void AddUndoButtonToExistingScene()
+        {
+            var hudPanel = GameObject.Find("HudPanel");
+            if (hudPanel == null)
+            {
+                UnityEngine.Debug.LogError("HudPanel not found. Run 'Ledge/Setup Scene' first.");
+                return;
+            }
+
+            var existing = hudPanel.transform.Find("UndoButton");
+            Button undoButton;
+            if (existing != null)
+            {
+                undoButton = existing.GetComponent<Button>();
+                UnityEngine.Debug.Log("UndoButton already exists; rewiring.");
+            }
+            else
+            {
+                // Nudge End Turn to the right so the two buttons sit side by side.
+                var endTurnGO = hudPanel.transform.Find("EndTurnButton");
+                if (endTurnGO != null)
+                {
+                    var etRect = endTurnGO.GetComponent<RectTransform>();
+                    if (etRect != null) etRect.anchoredPosition = new Vector2(70f, -45f);
+                }
+
+                undoButton = CreateHudButton(hudPanel, "UndoButton", "Undo",
+                    new Vector2(-70f, -45f), new Color(0.5f, 0.35f, 0.15f));
+            }
+
+            var gameController = Object.FindFirstObjectByType<GameController>();
+            if (gameController == null)
+            {
+                UnityEngine.Debug.LogError("GameController not found in scene.");
+                return;
+            }
+
+            var so = new SerializedObject(gameController);
+            so.FindProperty("undoButton").objectReferenceValue = undoButton;
+            so.ApplyModifiedPropertiesWithoutUndo();
+
+            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            UnityEngine.Debug.Log("Undo button added and wired. Save the scene to persist changes.");
         }
 
         private static GameObject CreateUIChild(GameObject parent, string name, Vector2 size)

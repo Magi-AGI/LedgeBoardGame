@@ -11,8 +11,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
         [Test]
         public void RuntimeConfig_FromSpec_UsesExpectedTurnLimits()
         {
-            var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-            var specPath = Path.Combine(projectRoot, "Specs", "ledge", "ledge-game.v1.json");
+            var specPath = Path.Combine(Application.dataPath, "_Project", "Specs", "ledge", "ledge-game.v1.json");
             Assert.IsTrue(File.Exists(specPath), $"Expected spec file at {specPath}");
 
             var json = File.ReadAllText(specPath);

@@ -67,14 +67,14 @@ namespace Magi.LedgeBoardGame.Models
         {
             if (!SpaceMetadata.TryGetValue(localSpaceId, out var meta))
                 return false;
-            return meta.Type == SpaceType.Ledge;
+            return !string.IsNullOrEmpty(meta.ColorLabel);
         }
 
         public string GetLedgeColor(int localSpaceId)
         {
             if (!SpaceMetadata.TryGetValue(localSpaceId, out var meta))
                 return null;
-            return meta.Type == SpaceType.Ledge ? meta.ColorLabel : null;
+            return !string.IsNullOrEmpty(meta.ColorLabel) ? meta.ColorLabel : null;
         }
 
         public List<int> GetLedgeSpacesWithColor(string color)
@@ -109,6 +109,16 @@ namespace Magi.LedgeBoardGame.Models
         {
             var centerStack = GetStack(CENTER_SPACE_ID);
             return centerStack.DarkCount > 0 && centerStack.BottomTone == Tone.Dark;
+        }
+
+        public void CopyFrom(BoardState other)
+        {
+            // Only the dynamic state — stacks — changes during gameplay. Metadata/adjacency/ledges are static.
+            Spaces.Clear();
+            foreach (var kvp in other.Spaces)
+            {
+                Spaces[kvp.Key] = kvp.Value.Clone();
+            }
         }
 
         public BoardState Clone()

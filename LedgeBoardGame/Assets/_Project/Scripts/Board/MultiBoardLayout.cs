@@ -33,17 +33,24 @@ namespace Magi.LedgeBoardGame.Board
                 presenters = new List<BoardPresenter>(GetComponentsInChildren<BoardPresenter>(true));
             }
 
-            for (int i = 0; i < presenters.Count; i++)
+            int cols = Mathf.Max(1, columns);
+            int count = presenters.Count;
+            int usedCols = Mathf.Min(cols, count);
+            int usedRows = Mathf.CeilToInt(count / (float)cols);
+            float xCenterShift = (usedCols - 1) * spacing.x * 0.5f;
+            float yCenterShift = (usedRows - 1) * spacing.y * 0.5f;
+
+            for (int i = 0; i < count; i++)
             {
                 var presenter = presenters[i];
                 if (presenter == null) continue;
 
-                int row = i / Mathf.Max(1, columns);
-                int col = i % Mathf.Max(1, columns);
+                int row = i / cols;
+                int col = i % cols;
 
                 var pos = new Vector2(
-                    startOffset.x + col * spacing.x,
-                    startOffset.y - row * spacing.y);
+                    startOffset.x + col * spacing.x - xCenterShift,
+                    startOffset.y - row * spacing.y + yCenterShift);
 
                 var rect = presenter.GetComponent<RectTransform>();
                 if (rect != null)

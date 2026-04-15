@@ -13,6 +13,7 @@ namespace Magi.LedgeBoardGame
         [SerializeField] private BoardPresenter boardPresenterPrefab;
         [SerializeField] private TextAsset ledgeSpecJson;
         [SerializeField] private Button endTurnButton;
+        [SerializeField] private Button undoButton;
         [SerializeField] private GameHud gameHud;
         [SerializeField] private Board.MultiBoardLayout multiBoardLayout;
         [SerializeField] private Tone defaultMovementTone = Tone.Light;
@@ -22,6 +23,7 @@ namespace Magi.LedgeBoardGame
         private readonly Dictionary<int, BoardPresenter> _boardPresenters = new Dictionary<int, BoardPresenter>();
         private SpaceId? _selectedSpace;
         private Tone _selectedTone = Tone.Light;
+        private readonly Stack<GameState> _undoStack = new Stack<GameState>();
 
         private void Start()
         {
@@ -56,10 +58,6 @@ namespace Magi.LedgeBoardGame
             _gameState = new GameState(players, runtimeConfig);
             _rules = new GameRules(useSpec ? runtimeConfig : null);
 
-            CreateBoardPresenters();
-
-            SpaceClickedEvent.Register(OnSpaceClicked);
-
             if (multiBoardLayout == null)
             {
                 multiBoardLayout = GetComponent<Board.MultiBoardLayout>();
@@ -69,12 +67,22 @@ namespace Magi.LedgeBoardGame
                 }
             }
 
+            CreateBoardPresenters();
+
+            SpaceClickedEvent.Register(OnSpaceClicked);
+
             if (endTurnButton != null)
             {
                 endTurnButton.onClick.AddListener(OnEndTurnClicked);
             }
 
+            if (undoButton != null)
+            {
+                undoButton.onClick.AddListener(OnUndoClicked);
+            }
+
             UpdateStatusUI();
+            RefreshUndoButton();
         }
 
         private void OnDestroy()
@@ -84,20 +92,22 @@ namespace Magi.LedgeBoardGame
 
         private void CreateBoardPresenters()
         {
+            var presenterParent = multiBoardLayout != null ? multiBoardLayout.transform : transform;
+
             foreach (var board in _gameState.Boards)
             {
                 BoardPresenter presenterInstance;
 
                 if (boardPresenterPrefab != null)
                 {
-                    var go = Instantiate(boardPresenterPrefab.gameObject, transform);
+                    var go = Instantiate(boardPresenterPrefab.gameObject, presenterParent);
                     go.name = $"Board_{board.BoardId}_Presenter";
                     presenterInstance = go.GetComponent<BoardPresenter>();
                 }
                 else
                 {
                     var go = new GameObject($"Board_{board.BoardId}_Presenter");
-                    go.transform.SetParent(transform, false);
+                    go.transform.SetParent(presenterParent, false);
                     presenterInstance = go.AddComponent<BoardPresenter>();
                 }
 
@@ -173,6 +183,7 @@ namespace Magi.LedgeBoardGame
 
             if (_rules.CanPlaceToken(_gameState, target, toneToPlace))
             {
+                PushUndoSnapshot();
                 var move = _rules.PlaceToken(_gameState, target, toneToPlace);
                 if (move != null)
                 {
@@ -187,6 +198,13 @@ namespace Magi.LedgeBoardGame
                         ClearHighlights();
                         HighlightMovablePieces();
                     }
+                    RefreshUndoButton();
+                }
+                else
+                {
+                    // Placement actually failed — drop the speculative snapshot.
+                    _undoStack.Pop();
+                    RefreshUndoButton();
                 }
             }
         }
@@ -207,16 +225,23 @@ namespace Magi.LedgeBoardGame
                 var stack = _gameState.GetBoard(clicked.BoardId)?.GetStack(clicked.Id);
                 if (stack != null)
                 {
-                    if (_selectedTone == defaultMovementTone && !stack.CanMove(_selectedTone))
+                    // Re-pick tone each selection: prefer the default if movable, otherwise the other tone.
+                    // Without this, a prior fallback to Dark would stick and later Light-only stacks would appear stuck.
+                    if (stack.CanMove(defaultMovementTone))
                     {
-                        // Fallback to the other tone if default is not movable
-                        _selectedTone = _selectedTone == Tone.Light ? Tone.Dark : Tone.Light;
+                        _selectedTone = defaultMovementTone;
+                    }
+                    else
+                    {
+                        var other = defaultMovementTone == Tone.Light ? Tone.Dark : Tone.Light;
+                        _selectedTone = stack.CanMove(other) ? other : defaultMovementTone;
                     }
                 }
 
                 _selectedSpace = clicked;
                 var targets = _rules.GetValidMoveTargets(_gameState, clicked, _selectedTone);
                 HighlightSpaces(targets);
+                HighlightSelectedSource();
             }
             else
             {
@@ -224,6 +249,7 @@ namespace Magi.LedgeBoardGame
                 var targets = _rules.GetValidMoveTargets(_gameState, from, _selectedTone);
                 if (targets.Contains(clicked))
                 {
+                    PushUndoSnapshot();
                     var move = _rules.MoveToken(_gameState, from, clicked, _selectedTone);
                     if (move != null)
                     {
@@ -232,14 +258,40 @@ namespace Magi.LedgeBoardGame
                         RefreshBoards();
                         HighlightMovablePieces();
                         UpdateStatusUI();
+                        RefreshUndoButton();
                     }
+                    else
+                    {
+                        _undoStack.Pop();
+                        RefreshUndoButton();
+                    }
+                }
+                else if (clicked.Equals(from))
+                {
+                    // Tapping the same source deselects without further side effects.
+                    _selectedSpace = null;
+                    ClearHighlights();
+                    HighlightMovablePieces();
                 }
                 else
                 {
-                    // Deselect if clicking elsewhere
+                    // Re-target: try treating the new click as a fresh source selection.
                     _selectedSpace = null;
                     ClearHighlights();
+                    HighlightMovablePieces();
+                    HandleMovementClick(clicked);
                 }
+            }
+        }
+
+        private void HighlightSelectedSource()
+        {
+            if (!_selectedSpace.HasValue)
+                return;
+
+            foreach (var presenter in _boardPresenters.Values)
+            {
+                presenter.HighlightSelection(_selectedSpace);
             }
         }
 
@@ -307,6 +359,11 @@ namespace Magi.LedgeBoardGame
 
             _gameState.EndTurn();
 
+            // Turn boundaries invalidate undo history — the prior player cannot rewind
+            // into the next player's turn.
+            _undoStack.Clear();
+            RefreshUndoButton();
+
             RefreshBoards();
             UpdateStatusUI();
 
@@ -320,6 +377,49 @@ namespace Magi.LedgeBoardGame
                 {
                     HighlightMovablePieces();
                 }
+            }
+        }
+
+        private void PushUndoSnapshot()
+        {
+            if (_gameState == null)
+                return;
+            _undoStack.Push(_gameState.Clone());
+        }
+
+        private void OnUndoClicked()
+        {
+            if (_undoStack.Count == 0 || _gameState == null)
+                return;
+
+            var snapshot = _undoStack.Pop();
+            _gameState.CopyFrom(snapshot);
+
+            _selectedSpace = null;
+            ClearHighlights();
+            RefreshBoards();
+            UpdateStatusUI();
+
+            if (!_gameState.GameOver)
+            {
+                if (_gameState.CurrentPhase == GamePhase.Placement)
+                {
+                    HighlightPlacementTargets();
+                }
+                else
+                {
+                    HighlightMovablePieces();
+                }
+            }
+
+            RefreshUndoButton();
+        }
+
+        private void RefreshUndoButton()
+        {
+            if (undoButton != null)
+            {
+                undoButton.interactable = _undoStack.Count > 0;
             }
         }
 
