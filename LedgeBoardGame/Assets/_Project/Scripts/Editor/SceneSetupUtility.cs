@@ -195,8 +195,24 @@ namespace Magi.LedgeBoardGame.Editor
                 multiBoardLayout = boardContainer.AddComponent<MultiBoardLayout>();
             }
 
+            // Find or create PlacementGhost
+            var placementGhost = Object.FindFirstObjectByType<PlacementGhost>();
+            if (placementGhost == null)
+            {
+                var ghostGO = new GameObject("PlacementGhost");
+                ghostGO.transform.SetParent(canvas.transform, false);
+                var ghostRect = ghostGO.AddComponent<RectTransform>();
+                ghostRect.anchorMin = new Vector2(0.5f, 0.5f);
+                ghostRect.anchorMax = new Vector2(0.5f, 0.5f);
+                ghostRect.pivot = new Vector2(0.5f, 0.5f);
+                ghostRect.sizeDelta = new Vector2(48f, 48f);
+                placementGhost = ghostGO.AddComponent<PlacementGhost>();
+                // Keep the ghost above board visuals but below HUD.
+                ghostGO.transform.SetSiblingIndex(Mathf.Max(0, canvas.transform.childCount - 2));
+            }
+
             // Wire up GameController references
-            WireGameControllerReferences(gameController, gameHud, multiBoardLayout);
+            WireGameControllerReferences(gameController, gameHud, multiBoardLayout, placementGhost);
 
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
             UnityEngine.Debug.Log("Scene hierarchy setup complete. Save the scene to persist changes.");
@@ -288,7 +304,7 @@ namespace Magi.LedgeBoardGame.Editor
             return button;
         }
 
-        private static void WireGameControllerReferences(GameController gameController, GameHud gameHud, MultiBoardLayout multiBoardLayout)
+        private static void WireGameControllerReferences(GameController gameController, GameHud gameHud, MultiBoardLayout multiBoardLayout, PlacementGhost placementGhost = null)
         {
             var so = new SerializedObject(gameController);
 
@@ -311,6 +327,16 @@ namespace Magi.LedgeBoardGame.Editor
 
             // Assign MultiBoardLayout
             so.FindProperty("multiBoardLayout").objectReferenceValue = multiBoardLayout;
+
+            // Assign PlacementGhost if provided
+            if (placementGhost != null)
+            {
+                var ghostProp = so.FindProperty("placementGhost");
+                if (ghostProp != null)
+                {
+                    ghostProp.objectReferenceValue = placementGhost;
+                }
+            }
 
             // Find and assign EndTurn button from GameHud
             var hudSO = new SerializedObject(gameHud);
@@ -379,6 +405,53 @@ namespace Magi.LedgeBoardGame.Editor
 
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
             UnityEngine.Debug.Log("Undo button added and wired. Save the scene to persist changes.");
+        }
+
+        [MenuItem("Ledge/Add Placement Ghost (patch existing scene)", false, 204)]
+        public static void AddPlacementGhostToExistingScene()
+        {
+            var canvas = Object.FindFirstObjectByType<Canvas>();
+            if (canvas == null)
+            {
+                UnityEngine.Debug.LogError("Canvas not found. Run 'Ledge/Setup Scene' first.");
+                return;
+            }
+
+            var placementGhost = Object.FindFirstObjectByType<PlacementGhost>();
+            if (placementGhost == null)
+            {
+                var ghostGO = new GameObject("PlacementGhost");
+                ghostGO.transform.SetParent(canvas.transform, false);
+                var ghostRect = ghostGO.AddComponent<RectTransform>();
+                ghostRect.anchorMin = new Vector2(0.5f, 0.5f);
+                ghostRect.anchorMax = new Vector2(0.5f, 0.5f);
+                ghostRect.pivot = new Vector2(0.5f, 0.5f);
+                ghostRect.sizeDelta = new Vector2(48f, 48f);
+                placementGhost = ghostGO.AddComponent<PlacementGhost>();
+                UnityEngine.Debug.Log("PlacementGhost created under Canvas.");
+            }
+            else
+            {
+                UnityEngine.Debug.Log("PlacementGhost already exists; rewiring.");
+            }
+
+            var gameController = Object.FindFirstObjectByType<GameController>();
+            if (gameController == null)
+            {
+                UnityEngine.Debug.LogError("GameController not found in scene.");
+                return;
+            }
+
+            var so = new SerializedObject(gameController);
+            var ghostProp = so.FindProperty("placementGhost");
+            if (ghostProp != null)
+            {
+                ghostProp.objectReferenceValue = placementGhost;
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
+
+            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            UnityEngine.Debug.Log("PlacementGhost added and wired. Save the scene to persist changes.");
         }
 
         private static GameObject CreateUIChild(GameObject parent, string name, Vector2 size)

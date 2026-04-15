@@ -65,6 +65,17 @@ namespace Magi.LedgeBoardGame.Models
             return true;
         }
 
+        /// How many chips of this tone can be lifted off this stack without violating the lock
+        /// invariant. Matches what a loop of `while (CanMove(tone)) RemoveOne(tone)` would take.
+        public int GetMovableCount(Tone tone)
+        {
+            int count = GetCount(tone);
+            if (count == 0) return 0;
+            if (BottomTone.HasValue && BottomTone.Value == tone)
+                return count - 1;
+            return count;
+        }
+
         public MoveResult ResolveEntry(Tone enteringTone, int enteringCount = 1)
         {
             if (IsEmpty)

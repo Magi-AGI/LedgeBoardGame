@@ -1,6 +1,3 @@
-// 9/29/2025 AI-Tag
-// This was created with the help of Assistant, a Unity Artificial Intelligence product.
-
 using UnityEngine;
 using System.Collections.Generic;
 using Magi.LedgeBoardGame.Models;
@@ -19,11 +16,8 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private float ring3Radius = 300f;
         [SerializeField] private float outerRadius = 400f;
         [SerializeField] private float ledgeRadius = 450f;
-        [Header("Highlighting")]
-        [SerializeField] private Color highlightColor = new Color(0.4f, 0.9f, 0.4f, 0.35f);
-        [SerializeField] private Color selectionColor = new Color(1f, 0.85f, 0.2f, 0.6f);
 
-        [Header("Background")]
+        [Header("Optional decoration (null by default)")]
         [SerializeField] private Sprite backgroundSprite;
         [SerializeField] private Color backgroundColor = Color.white;
         [SerializeField] private Vector3 backgroundScale = new Vector3(0.53f, 0.53f, 0.53f);
@@ -47,7 +41,14 @@ namespace Magi.LedgeBoardGame.Board
         private void EnsureBackground()
         {
             if (backgroundSprite == null)
+            {
+                if (_backgroundImage != null)
+                {
+                    Destroy(_backgroundImage.gameObject);
+                    _backgroundImage = null;
+                }
                 return;
+            }
 
             if (_backgroundImage == null)
             {
@@ -60,7 +61,6 @@ namespace Magi.LedgeBoardGame.Board
                 rect.anchoredPosition = Vector2.zero;
                 _backgroundImage = go.AddComponent<Image>();
                 _backgroundImage.raycastTarget = false;
-                // Sit behind any existing space views.
                 go.transform.SetSiblingIndex(0);
             }
 
@@ -68,8 +68,6 @@ namespace Magi.LedgeBoardGame.Board
             _backgroundImage.color = backgroundColor;
             _backgroundImage.preserveAspect = true;
 
-            // Use the sprite's native pixel size for sizeDelta and apply per-axis scale
-            // so artists can tune fit without the size drifting as radii change.
             var bgRect = _backgroundImage.rectTransform;
             bgRect.sizeDelta = new Vector2(backgroundSprite.rect.width, backgroundSprite.rect.height);
             bgRect.localScale = backgroundScale;
@@ -79,7 +77,6 @@ namespace Magi.LedgeBoardGame.Board
         {
             foreach (Transform child in transform)
             {
-                // Preserve the background if we already spawned it.
                 if (_backgroundImage != null && child == _backgroundImage.transform)
                     continue;
                 Destroy(child.gameObject);
@@ -96,7 +93,6 @@ namespace Magi.LedgeBoardGame.Board
                 var meta = kvp.Value;
 
                 var view = CreateSpaceView(spaceId, meta);
-                view.SetHighlightColor(highlightColor);
                 _spaceViews[spaceId] = view;
             }
         }
@@ -178,17 +174,14 @@ namespace Magi.LedgeBoardGame.Board
 
                 var stack = _boardState.GetStack(spaceId);
                 view.UpdateTokenDisplay(stack);
-                view.SetHighlight(false);
             }
         }
 
         public void HighlightValidMoves(List<SpaceId> spaces)
         {
-            // Clear all highlights first
-            foreach (var view in _spaceViews.Values)
+            foreach (var v in _spaceViews.Values)
             {
-                view.SetHighlightColor(highlightColor);
-                view.SetHighlight(false);
+                v.SetValidTarget(false);
             }
 
             if (spaces == null)
@@ -201,21 +194,55 @@ namespace Magi.LedgeBoardGame.Board
 
                 if (_spaceViews.TryGetValue(space.Id, out var view))
                 {
-                    view.SetHighlightColor(highlightColor);
-                    view.SetHighlight(true);
+                    view.SetValidTarget(true);
                 }
             }
         }
 
         public void HighlightSelection(SpaceId? selected)
         {
+            foreach (var v in _spaceViews.Values)
+            {
+                v.SetSelected(false);
+            }
+
             if (!selected.HasValue) return;
             if (selected.Value.BoardId != _boardState.BoardId) return;
 
             if (_spaceViews.TryGetValue(selected.Value.Id, out var view))
             {
-                view.SetHighlightColor(selectionColor);
-                view.SetHighlight(true);
+                view.SetSelected(true);
+            }
+        }
+
+        public void HighlightMovableSources(List<SpaceId> sources)
+        {
+            foreach (var v in _spaceViews.Values)
+            {
+                v.SetMovableSource(false);
+            }
+
+            if (sources == null) return;
+
+            foreach (var space in sources)
+            {
+                if (space.BoardId != _boardState.BoardId)
+                    continue;
+
+                if (_spaceViews.TryGetValue(space.Id, out var view))
+                {
+                    view.SetMovableSource(true);
+                }
+            }
+        }
+
+        public void ClearAllStates()
+        {
+            foreach (var view in _spaceViews.Values)
+            {
+                view.SetSelected(false);
+                view.SetValidTarget(false);
+                view.SetMovableSource(false);
             }
         }
     }

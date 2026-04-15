@@ -16,6 +16,8 @@ namespace Magi.LedgeBoardGame
         [SerializeField] private Button undoButton;
         [SerializeField] private GameHud gameHud;
         [SerializeField] private Board.MultiBoardLayout multiBoardLayout;
+        [SerializeField] private Board.PlacementGhost placementGhost;
+        [SerializeField] private Board.InHandGhost inHandGhost;
         [SerializeField] private Tone defaultMovementTone = Tone.Light;
 
         private GameState _gameState;
@@ -23,7 +25,11 @@ namespace Magi.LedgeBoardGame
         private readonly Dictionary<int, BoardPresenter> _boardPresenters = new Dictionary<int, BoardPresenter>();
         private SpaceId? _selectedSpace;
         private Tone _selectedTone = Tone.Light;
+        private int _pickedUpLight;
+        private int _pickedUpDark;
         private readonly Stack<GameState> _undoStack = new Stack<GameState>();
+        private bool _moveInProgress;
+        private const float MoveTweenDuration = 0.28f;
 
         private void Start()
         {
@@ -68,6 +74,8 @@ namespace Magi.LedgeBoardGame
             }
 
             CreateBoardPresenters();
+
+            EnsureInHandGhost();
 
             SpaceClickedEvent.Register(OnSpaceClicked);
 
@@ -131,6 +139,11 @@ namespace Magi.LedgeBoardGame
             if (view == null || _gameState == null)
                 return;
 
+            // Gate clicks during a move-tween so the player can't queue a second move
+            // before the current chip has landed.
+            if (_moveInProgress)
+                return;
+
             var boardId = FindBoardIdForView(view);
             if (boardId == null)
                 return;
@@ -158,6 +171,42 @@ namespace Magi.LedgeBoardGame
             }
 
             return null;
+        }
+
+        private SpaceView FindSpaceView(SpaceId id)
+        {
+            if (_boardPresenters.TryGetValue(id.BoardId, out var presenter) &&
+                presenter.SpaceViews.TryGetValue(id.Id, out var view))
+            {
+                return view;
+            }
+            return null;
+        }
+
+        private Transform ResolveOverlayParent(SpaceView fallbackView)
+        {
+            // Prefer the Canvas root so the overlay can cross boards on ledge hops without
+            // having to parent-hop mid-tween.
+            var canvas = fallbackView != null ? fallbackView.GetComponentInParent<Canvas>() : null;
+            if (canvas == null) canvas = GetComponentInParent<Canvas>();
+            if (canvas != null) return canvas.transform;
+            // Last resort: own transform. Positioning still works in world space.
+            return transform;
+        }
+
+        private void OnMoveTweenComplete()
+        {
+            _moveInProgress = false;
+            // Destination was held at its pre-move state during the tween so the chips
+            // read as arriving — now that they've landed, catch every board up to state.
+            RefreshBoards();
+            if (_gameState == null || _gameState.GameOver)
+            {
+                RefreshUndoButton();
+                return;
+            }
+            HighlightMovablePieces();
+            RefreshUndoButton();
         }
 
         private void HandlePlacementClick(SpaceId target)
@@ -217,71 +266,166 @@ namespace Magi.LedgeBoardGame
 
             if (_selectedSpace == null)
             {
-                // Selecting a source
-                var movablePieces = _rules.GetMovablePieces(_gameState, currentPlayer.Id);
-                if (!movablePieces.Contains(clicked))
-                    return;
-
-                var stack = _gameState.GetBoard(clicked.BoardId)?.GetStack(clicked.Id);
-                if (stack != null)
-                {
-                    // Re-pick tone each selection: prefer the default if movable, otherwise the other tone.
-                    // Without this, a prior fallback to Dark would stick and later Light-only stacks would appear stuck.
-                    if (stack.CanMove(defaultMovementTone))
-                    {
-                        _selectedTone = defaultMovementTone;
-                    }
-                    else
-                    {
-                        var other = defaultMovementTone == Tone.Light ? Tone.Dark : Tone.Light;
-                        _selectedTone = stack.CanMove(other) ? other : defaultMovementTone;
-                    }
-                }
-
-                _selectedSpace = clicked;
-                var targets = _rules.GetValidMoveTargets(_gameState, clicked, _selectedTone);
-                HighlightSpaces(targets);
-                HighlightSelectedSource();
+                SelectMovementSource(clicked, currentPlayer.Id);
             }
             else
             {
                 var from = _selectedSpace.Value;
-                var targets = _rules.GetValidMoveTargets(_gameState, from, _selectedTone);
+                var stack = _gameState.GetBoard(from.BoardId)?.GetStack(from.Id);
+                if (stack == null)
+                {
+                    ClearMovementSelection();
+                    HighlightMovablePieces();
+                    return;
+                }
+
+                var targets = GetStackValidTargets(from, stack);
                 if (targets.Contains(clicked))
                 {
-                    PushUndoSnapshot();
-                    var move = _rules.MoveToken(_gameState, from, clicked, _selectedTone);
-                    if (move != null)
-                    {
-                        _selectedSpace = null;
-                        ClearHighlights();
-                        RefreshBoards();
-                        HighlightMovablePieces();
-                        UpdateStatusUI();
-                        RefreshUndoButton();
-                    }
-                    else
-                    {
-                        _undoStack.Pop();
-                        RefreshUndoButton();
-                    }
+                    ExecuteStackMove(from, clicked);
                 }
                 else if (clicked.Equals(from))
                 {
                     // Tapping the same source deselects without further side effects.
-                    _selectedSpace = null;
-                    ClearHighlights();
+                    ClearMovementSelection();
                     HighlightMovablePieces();
                 }
                 else
                 {
-                    // Re-target: try treating the new click as a fresh source selection.
-                    _selectedSpace = null;
-                    ClearHighlights();
+                    // Re-target: treat the new click as a fresh source selection.
+                    ClearMovementSelection();
                     HighlightMovablePieces();
                     HandleMovementClick(clicked);
                 }
             }
+        }
+
+        private void SelectMovementSource(SpaceId clicked, int playerId)
+        {
+            var movablePieces = _rules.GetMovablePieces(_gameState, playerId);
+            if (!movablePieces.Contains(clicked))
+                return;
+
+            var stack = _gameState.GetBoard(clicked.BoardId)?.GetStack(clicked.Id);
+            if (stack == null)
+                return;
+
+            _pickedUpLight = stack.GetMovableCount(Tone.Light);
+            _pickedUpDark = stack.GetMovableCount(Tone.Dark);
+            if (_pickedUpLight + _pickedUpDark == 0)
+                return;
+
+            // _selectedTone kept for legacy call sites but not load-bearing — targets are
+            // identical across movable tones since reachability is positional, not tone-bound.
+            _selectedTone = _pickedUpLight > 0 ? Tone.Light : Tone.Dark;
+            _selectedSpace = clicked;
+
+            var targets = GetStackValidTargets(clicked, stack);
+            HighlightSpaces(targets);
+            HighlightSelectedSource();
+            NotifyInHandGhost();
+        }
+
+        private void ClearMovementSelection()
+        {
+            _selectedSpace = null;
+            _pickedUpLight = 0;
+            _pickedUpDark = 0;
+            ClearHighlights();
+            NotifyInHandGhost();
+        }
+
+        private List<SpaceId> GetStackValidTargets(SpaceId from, TokenStack stack)
+        {
+            // Reachability is positional — a stack's valid targets are the union across
+            // movable tones, but both tones yield the same adjacency/cross-board set
+            // when they can move, so whichever is movable suffices.
+            if (stack.CanMove(Tone.Light))
+                return _rules.GetValidMoveTargets(_gameState, from, Tone.Light);
+            if (stack.CanMove(Tone.Dark))
+                return _rules.GetValidMoveTargets(_gameState, from, Tone.Dark);
+            return new List<SpaceId>();
+        }
+
+        private void ExecuteStackMove(SpaceId from, SpaceId clicked)
+        {
+            var fromView = FindSpaceView(from);
+            var toView = FindSpaceView(clicked);
+            Vector3 fromPos = fromView != null ? fromView.transform.position : Vector3.zero;
+            Vector3 toPos = toView != null ? toView.transform.position : Vector3.zero;
+
+            int lightToMove = _pickedUpLight;
+            int darkToMove = _pickedUpDark;
+
+            PushUndoSnapshot();
+
+            int lightMoved = 0;
+            int darkMoved = 0;
+            for (int i = 0; i < lightToMove; i++)
+            {
+                if (_rules.MoveToken(_gameState, from, clicked, Tone.Light) == null) break;
+                lightMoved++;
+            }
+            for (int i = 0; i < darkToMove; i++)
+            {
+                if (_rules.MoveToken(_gameState, from, clicked, Tone.Dark) == null) break;
+                darkMoved++;
+            }
+
+            if (lightMoved + darkMoved == 0)
+            {
+                // Nothing landed — drop the speculative snapshot.
+                _undoStack.Pop();
+                RefreshUndoButton();
+                return;
+            }
+
+            ClearMovementSelection();
+
+            // Source view drains immediately so the "in hand" chips read as lifted; the
+            // destination stays at its pre-move state until the tween lands.
+            if (fromView != null)
+            {
+                var postMoveFrom = _gameState.GetBoard(from.BoardId)?.GetStack(from.Id);
+                if (postMoveFrom != null) fromView.UpdateTokenDisplay(postMoveFrom);
+            }
+            UpdateStatusUI();
+
+            _moveInProgress = true;
+            RefreshUndoButton();
+            var overlayParent = ResolveOverlayParent(fromView ?? toView);
+            MovingCounter.Play(overlayParent, fromPos, toPos, lightMoved, darkMoved, MoveTweenDuration, OnMoveTweenComplete);
+        }
+
+        private void NotifyInHandGhost()
+        {
+            if (inHandGhost == null) return;
+            inHandGhost.SetStack(_pickedUpLight, _pickedUpDark);
+        }
+
+        private void EnsureInHandGhost()
+        {
+            if (inHandGhost != null) return;
+            // Auto-spawn under the Canvas so existing scenes work without a setup patch.
+            var canvas = GetComponentInParent<Canvas>();
+            if (canvas == null)
+            {
+                foreach (var presenter in _boardPresenters.Values)
+                {
+                    canvas = presenter.GetComponentInParent<Canvas>();
+                    if (canvas != null) break;
+                }
+            }
+            if (canvas == null) return;
+
+            var go = new GameObject("InHandGhost", typeof(RectTransform));
+            var rt = (RectTransform)go.transform;
+            rt.SetParent(canvas.transform, false);
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(48f, 48f);
+            inHandGhost = go.AddComponent<InHandGhost>();
         }
 
         private void HighlightSelectedSource()
@@ -308,7 +452,7 @@ namespace Magi.LedgeBoardGame
         {
             foreach (var kvp in _boardPresenters)
             {
-                kvp.Value.HighlightValidMoves(null);
+                kvp.Value.ClearAllStates();
             }
         }
 
@@ -340,12 +484,21 @@ namespace Magi.LedgeBoardGame
                 return;
 
             var movable = _rules.GetMovablePieces(_gameState, currentPlayer.Id);
-            HighlightSpaces(movable);
+            // Source breathe, not destination pulse — readers can tell at a glance which
+            // stacks they can pick up vs. where a selected stack can go.
+            ClearHighlights();
+            foreach (var presenter in _boardPresenters.Values)
+            {
+                presenter.HighlightMovableSources(movable);
+            }
         }
 
         private void OnEndTurnClicked()
         {
             if (_gameState == null || _gameState.GameOver)
+                return;
+
+            if (_moveInProgress)
                 return;
 
             if (_gameState.CurrentPhase == GamePhase.Placement && !_gameState.IsPlacementComplete())
@@ -354,8 +507,7 @@ namespace Magi.LedgeBoardGame
                 return;
             }
 
-            _selectedSpace = null;
-            ClearHighlights();
+            ClearMovementSelection();
 
             _gameState.EndTurn();
 
@@ -392,11 +544,13 @@ namespace Magi.LedgeBoardGame
             if (_undoStack.Count == 0 || _gameState == null)
                 return;
 
+            if (_moveInProgress)
+                return;
+
             var snapshot = _undoStack.Pop();
             _gameState.CopyFrom(snapshot);
 
-            _selectedSpace = null;
-            ClearHighlights();
+            ClearMovementSelection();
             RefreshBoards();
             UpdateStatusUI();
 
@@ -419,13 +573,14 @@ namespace Magi.LedgeBoardGame
         {
             if (undoButton != null)
             {
-                undoButton.interactable = _undoStack.Count > 0;
+                undoButton.interactable = _undoStack.Count > 0 && !_moveInProgress;
             }
         }
 
         private void UpdateStatusUI()
         {
             gameHud?.UpdateHud(_gameState);
+            placementGhost?.Refresh(_gameState);
         }
     }
 }

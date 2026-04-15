@@ -55,8 +55,6 @@ MonoBehaviour:
   ring3Radius: 300
   outerRadius: 400
   ledgeRadius: 450
-  highlightColor: {r: 0.4, g: 0.9, b: 0.4, a: 0.35}
-  selectionColor: {r: 1, g: 0.85, b: 0.2, a: 0.6}
-  backgroundSprite: {fileID: 21300000, guid: 1d10fba4367d01c45b2baece9d47bf2b, type: 3}
+  backgroundSprite: {fileID: 0}
   backgroundColor: {r: 1, g: 1, b: 1, a: 1}
   backgroundScale: {x: 0.53, y: 0.53, z: 0.53}
