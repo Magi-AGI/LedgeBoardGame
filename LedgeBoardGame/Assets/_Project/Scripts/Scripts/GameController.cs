@@ -393,12 +393,10 @@ namespace Magi.LedgeBoardGame
             var fromView = FindSpaceView(from);
             var toView = FindSpaceView(clicked);
 
-            // Flying stack originates at the cursor — seamless handoff from the in-hand
-            // ghost (which sits at the cursor) to the MovingCounter. Fall back to the
-            // source view if the in-hand ghost isn't wired up.
-            Vector3 fromPos = (inHandGhost != null)
-                ? inHandGhost.transform.position
-                : (fromView != null ? fromView.transform.position : Vector3.zero);
+            // Fly from the source space's center (not the cursor) so the tween always
+            // travels a visible distance. With the cursor-anchored start, clicking the
+            // destination put fromPos right on toPos and the tween was effectively zero-length.
+            Vector3 fromPos = fromView != null ? fromView.transform.position : Vector3.zero;
             Vector3 toPos = toView != null ? toView.transform.position : Vector3.zero;
 
             int lightToMove = _pickedUpLight;
@@ -430,17 +428,21 @@ namespace Magi.LedgeBoardGame
                 return;
             }
 
+            // ClearMovementSelection drops the phantom and the in-hand ghost so the flying
+            // stack reads as the only moving object. Update the source view immediately to
+            // its post-move state (chips gone / locked anchor remaining) — destination stays
+            // at its pre-move state until OnMoveTweenComplete so the chips "arrive" there.
             ClearMovementSelection();
             UpdateStatusUI();
+            if (fromView != null)
+            {
+                var postMoveSource = _gameState.GetBoard(from.BoardId)?.GetStack(from.Id);
+                if (postMoveSource != null) fromView.UpdateTokenDisplay(postMoveSource);
+            }
 
             _moveInProgress = true;
             RefreshUndoButton();
-            // Keep the origin faded (still rendering the pre-move chips) during the tween;
-            // OnMoveTweenComplete clears the phantom and RefreshBoards snaps it to post-move.
-            SetSourcePhantom(fromView, lightToMove + darkToMove);
             var overlayParent = ResolveOverlayParent(fromView ?? toView);
-            // No MovingCounter phantom — the faded source already reads as the origin,
-            // so a translucent copy on top of it would double up.
             MovingCounter.Play(overlayParent, fromPos, toPos, lightMoved, darkMoved,
                 MoveTweenDuration, OnMoveTweenComplete, withPhantom: false);
         }
