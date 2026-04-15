@@ -81,7 +81,7 @@ packages:
 
   # Unity official MCP + chat
   - name: com.unity.ai.assistant
-    version: 2.5.0-pre.2
+    version: 2.6.0-pre.1
     source: registry
     policyException: development-tool
 
