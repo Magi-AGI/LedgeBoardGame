@@ -95,6 +95,50 @@ namespace Magi.LedgeBoardGame.Board
             UpdateTokenDisplay(stack);
         }
 
+        /// Fades the top `topCount` of the active chips down to `alpha`. Bottom chips —
+        /// including a locked chip at index 0 — keep full opacity so the origin still
+        /// reads as "this chip is still planted here." Called by GameController while a
+        /// movable stack is in-hand: the picked-up chips look spectral, the locked anchor
+        /// does not. A subsequent UpdateTokenDisplay rewrites alphas to opaque, which is
+        /// fine because phantom state is always re-applied by the selection flow.
+        public void SetPhantomChips(int topCount, float alpha)
+        {
+            if (_counterImages.Count == 0 || topCount <= 0) return;
+            int totalActive = 0;
+            for (int i = 0; i < _counterImages.Count; i++)
+            {
+                if (_counterImages[i] != null && _counterImages[i].gameObject.activeSelf)
+                    totalActive++;
+            }
+            if (totalActive == 0) return;
+
+            int clamped = Mathf.Clamp(topCount, 0, totalActive);
+            int fadeStart = totalActive - clamped;
+            for (int i = 0; i < totalActive; i++)
+            {
+                var img = _counterImages[i];
+                if (img == null) continue;
+                var c = img.color;
+                c.a = (i >= fadeStart) ? alpha : 1f;
+                img.color = c;
+            }
+        }
+
+        public void ClearPhantomChips()
+        {
+            for (int i = 0; i < _counterImages.Count; i++)
+            {
+                var img = _counterImages[i];
+                if (img == null) continue;
+                var c = img.color;
+                if (c.a < 1f)
+                {
+                    c.a = 1f;
+                    img.color = c;
+                }
+            }
+        }
+
         public void UpdateTokenDisplay(TokenStack stack)
         {
             EnsureVisuals();

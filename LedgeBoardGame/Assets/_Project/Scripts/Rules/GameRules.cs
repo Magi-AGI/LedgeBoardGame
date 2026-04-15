@@ -262,9 +262,14 @@ namespace Magi.LedgeBoardGame.Rules
             if (board.PlayerId == playerId)
                 return true;
 
+            // Control on an enemy board is earned by landing a chip — Lock or Stack.
+            // A Clear result means the entering chip clashed 1-to-1 with an opposing
+            // chip and did not land, so it confers no control even though the move
+            // targeted this space. ResolveEntry is always called with enteringCount=1
+            // by MoveToken, so Clear unambiguously means "0 chips landed from this move."
             foreach (var move in gameState.CurrentTurnMoves)
             {
-                if (move.To.Equals(space))
+                if (move.To.Equals(space) && move.Result != MoveResult.Clear)
                     return true;
             }
 

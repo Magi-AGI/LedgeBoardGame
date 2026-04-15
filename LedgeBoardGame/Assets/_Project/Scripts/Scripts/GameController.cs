@@ -338,10 +338,11 @@ namespace Magi.LedgeBoardGame
             _selectedTone = _pickedUpLight > 0 ? Tone.Light : Tone.Dark;
             _selectedSpace = clicked;
 
-            // Fade the source view so the origin reads as "these chips are in the player's
-            // hand." Chips remain rendered so the player still sees where they came from;
-            // the in-hand ghost (opaque) becomes the anchor point for where they are now.
-            SetSourcePhantom(FindSpaceView(clicked));
+            // Fade only the picked-up chips so the origin reads as "these are in the
+            // player's hand," while any locked chip at the bottom stays opaque — it
+            // didn't get picked up, so it shouldn't look spectral. The opaque in-hand
+            // ghost becomes the anchor for where the chips are now.
+            SetSourcePhantom(FindSpaceView(clicked), _pickedUpLight + _pickedUpDark);
 
             var targets = GetStackValidTargets(clicked, stack);
             HighlightSpaces(targets);
@@ -359,22 +360,19 @@ namespace Magi.LedgeBoardGame
             ClearSourcePhantom();
         }
 
-        private void SetSourcePhantom(SpaceView view)
+        private void SetSourcePhantom(SpaceView view, int topCount)
         {
             if (view == null) return;
             if (_sourcePhantomView != null && _sourcePhantomView != view)
                 ClearSourcePhantom();
-            var cg = view.GetComponent<CanvasGroup>();
-            if (cg == null) cg = view.gameObject.AddComponent<CanvasGroup>();
-            cg.alpha = SourcePhantomAlpha;
+            view.SetPhantomChips(topCount, SourcePhantomAlpha);
             _sourcePhantomView = view;
         }
 
         private void ClearSourcePhantom()
         {
             if (_sourcePhantomView == null) return;
-            var cg = _sourcePhantomView.GetComponent<CanvasGroup>();
-            if (cg != null) cg.alpha = 1f;
+            _sourcePhantomView.ClearPhantomChips();
             _sourcePhantomView = null;
         }
 
@@ -439,7 +437,7 @@ namespace Magi.LedgeBoardGame
             RefreshUndoButton();
             // Keep the origin faded (still rendering the pre-move chips) during the tween;
             // OnMoveTweenComplete clears the phantom and RefreshBoards snaps it to post-move.
-            SetSourcePhantom(fromView);
+            SetSourcePhantom(fromView, lightToMove + darkToMove);
             var overlayParent = ResolveOverlayParent(fromView ?? toView);
             // No MovingCounter phantom — the faded source already reads as the origin,
             // so a translucent copy on top of it would double up.

@@ -83,6 +83,13 @@ namespace Magi.LedgeBoardGame.Board
 
             SetTone(state.HasPlacedLight ? Tone.Dark : Tone.Light);
             SetVisible(true);
+            // Defensive: if SetVisible short-circuited because _visible was already true,
+            // force the image enabled and re-snap the cursor tracker anyway. Seen when
+            // advancing from Player 1's movement to Player 2's placement — the state
+            // bookkeeping thought the ghost was already shown, so the actual Image
+            // remained disabled until this explicit write.
+            if (counterImage != null) counterImage.enabled = true;
+            _hasCursorPos = false;
         }
 
         private void Update()
