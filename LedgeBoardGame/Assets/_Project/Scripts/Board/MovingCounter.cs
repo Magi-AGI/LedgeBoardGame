@@ -24,11 +24,15 @@ namespace Magi.LedgeBoardGame.Board
         private Action _onComplete;
 
         public static MovingCounter Play(Transform canvasParent, Vector3 fromWorld, Vector3 toWorld,
-            int lightCount, int darkCount, float duration, Action onComplete)
+            int lightCount, int darkCount, float duration, Action onComplete, bool withPhantom = true)
         {
             int total = Mathf.Max(1, lightCount + darkCount);
-            var phantom = BuildStack(canvasParent, "MovePhantom", lightCount, darkCount, PhantomAlpha);
-            phantom.transform.position = fromWorld;
+            GameObject phantom = null;
+            if (withPhantom)
+            {
+                phantom = BuildStack(canvasParent, "MovePhantom", lightCount, darkCount, PhantomAlpha);
+                phantom.transform.position = fromWorld;
+            }
 
             var flying = BuildStack(canvasParent, "MoveFlying", lightCount, darkCount, 1f);
             flying.transform.position = fromWorld;

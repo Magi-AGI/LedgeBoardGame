@@ -27,9 +27,20 @@ namespace Magi.LedgeBoardGame
         private Tone _selectedTone = Tone.Light;
         private int _pickedUpLight;
         private int _pickedUpDark;
-        private readonly Stack<GameState> _undoStack = new Stack<GameState>();
+        private readonly Stack<UndoFrame> _undoStack = new Stack<UndoFrame>();
         private bool _moveInProgress;
+        private SpaceId? _pendingRetarget;
         private const float MoveTweenDuration = 0.28f;
+
+        private struct UndoFrame
+        {
+            public GameState State;
+            public bool HasAnimation;
+            public SpaceId From;
+            public SpaceId To;
+            public int Light;
+            public int Dark;
+        }
 
         private void Start()
         {
@@ -232,7 +243,7 @@ namespace Magi.LedgeBoardGame
 
             if (_rules.CanPlaceToken(_gameState, target, toneToPlace))
             {
-                PushUndoSnapshot();
+                PushPlacementUndo();
                 var move = _rules.PlaceToken(_gameState, target, toneToPlace);
                 if (move != null)
                 {
@@ -286,16 +297,16 @@ namespace Magi.LedgeBoardGame
                 }
                 else if (clicked.Equals(from))
                 {
-                    // Tapping the same source deselects without further side effects.
-                    ClearMovementSelection();
-                    HighlightMovablePieces();
+                    // Tapping the same source returns the in-hand chips to their origin.
+                    DeselectWithReturnTween();
                 }
                 else
                 {
-                    // Re-target: treat the new click as a fresh source selection.
-                    ClearMovementSelection();
-                    HighlightMovablePieces();
-                    HandleMovementClick(clicked);
+                    // Re-target: queue the new source click to fire once the return
+                    // tween lands, so the player sees the chips come home before the
+                    // new stack gets picked up.
+                    _pendingRetarget = clicked;
+                    DeselectWithReturnTween();
                 }
             }
         }
@@ -320,6 +331,18 @@ namespace Magi.LedgeBoardGame
             _selectedTone = _pickedUpLight > 0 ? Tone.Light : Tone.Dark;
             _selectedSpace = clicked;
 
+            // Drain the source view immediately so the in-hand ghost + drained space
+            // read as "chips have been lifted." Model stays untouched; rules still see
+            // the full stack for MoveToken.
+            var fromView = FindSpaceView(clicked);
+            if (fromView != null)
+            {
+                var draining = stack.Clone();
+                for (int i = 0; i < _pickedUpLight; i++) draining.RemoveOne(Tone.Light);
+                for (int i = 0; i < _pickedUpDark; i++) draining.RemoveOne(Tone.Dark);
+                fromView.UpdateTokenDisplay(draining);
+            }
+
             var targets = GetStackValidTargets(clicked, stack);
             HighlightSpaces(targets);
             HighlightSelectedSource();
@@ -328,11 +351,21 @@ namespace Magi.LedgeBoardGame
 
         private void ClearMovementSelection()
         {
+            var prior = _selectedSpace;
             _selectedSpace = null;
             _pickedUpLight = 0;
             _pickedUpDark = 0;
             ClearHighlights();
             NotifyInHandGhost();
+
+            // Restore the source view if we drained it on pickup and are clearing
+            // without a return tween (e.g., failed execute, undo, end-turn).
+            if (prior.HasValue && _gameState != null)
+            {
+                var view = FindSpaceView(prior.Value);
+                var stack = _gameState.GetBoard(prior.Value.BoardId)?.GetStack(prior.Value.Id);
+                if (view != null && stack != null) view.UpdateTokenDisplay(stack);
+            }
         }
 
         private List<SpaceId> GetStackValidTargets(SpaceId from, TokenStack stack)
@@ -351,13 +384,19 @@ namespace Magi.LedgeBoardGame
         {
             var fromView = FindSpaceView(from);
             var toView = FindSpaceView(clicked);
-            Vector3 fromPos = fromView != null ? fromView.transform.position : Vector3.zero;
+
+            // Flying stack originates at the cursor — that's where the chips visually
+            // live once the source has drained on pickup. Fall back to the source view
+            // if the in-hand ghost isn't wired up (editor setups without auto-spawn).
+            Vector3 fromPos = (inHandGhost != null)
+                ? inHandGhost.transform.position
+                : (fromView != null ? fromView.transform.position : Vector3.zero);
             Vector3 toPos = toView != null ? toView.transform.position : Vector3.zero;
 
             int lightToMove = _pickedUpLight;
             int darkToMove = _pickedUpDark;
 
-            PushUndoSnapshot();
+            PushMoveUndo(from, clicked, lightToMove, darkToMove);
 
             int lightMoved = 0;
             int darkMoved = 0;
@@ -374,16 +413,20 @@ namespace Magi.LedgeBoardGame
 
             if (lightMoved + darkMoved == 0)
             {
-                // Nothing landed — drop the speculative snapshot.
+                // Nothing landed — drop the speculative frame and roll the source view
+                // + ghost back to their pre-pickup state.
                 _undoStack.Pop();
+                ClearMovementSelection();
                 RefreshUndoButton();
+                HighlightMovablePieces();
                 return;
             }
 
             ClearMovementSelection();
 
-            // Source view drains immediately so the "in hand" chips read as lifted; the
-            // destination stays at its pre-move state until the tween lands.
+            // Source view is already drained from SelectMovementSource; this repaint
+            // only matters if rules partially rejected (shouldn't happen today) so the
+            // view matches the model.
             if (fromView != null)
             {
                 var postMoveFrom = _gameState.GetBoard(from.BoardId)?.GetStack(from.Id);
@@ -394,7 +437,84 @@ namespace Magi.LedgeBoardGame
             _moveInProgress = true;
             RefreshUndoButton();
             var overlayParent = ResolveOverlayParent(fromView ?? toView);
-            MovingCounter.Play(overlayParent, fromPos, toPos, lightMoved, darkMoved, MoveTweenDuration, OnMoveTweenComplete);
+            // No phantom on the forward tween — the drained source already reads as
+            // "these chips have been lifted," so a translucent copy would double up.
+            MovingCounter.Play(overlayParent, fromPos, toPos, lightMoved, darkMoved,
+                MoveTweenDuration, OnMoveTweenComplete, withPhantom: false);
+        }
+
+        private void DeselectWithReturnTween()
+        {
+            if (!_selectedSpace.HasValue)
+            {
+                ClearMovementSelection();
+                return;
+            }
+            if (_pickedUpLight + _pickedUpDark == 0)
+            {
+                // Nothing visually lifted — fall back to an instant clear.
+                ClearMovementSelection();
+                HighlightMovablePieces();
+                return;
+            }
+
+            var from = _selectedSpace.Value;
+            var fromView = FindSpaceView(from);
+            int lightReturn = _pickedUpLight;
+            int darkReturn = _pickedUpDark;
+
+            Vector3 cursorPos = (inHandGhost != null)
+                ? inHandGhost.transform.position
+                : (fromView != null ? fromView.transform.position : Vector3.zero);
+            Vector3 toPos = fromView != null ? fromView.transform.position : cursorPos;
+
+            // Hand off the visual to the flying stack: hide the in-hand ghost and
+            // clear target highlights so the player's eye follows the chips home.
+            _pickedUpLight = 0;
+            _pickedUpDark = 0;
+            NotifyInHandGhost();
+            ClearHighlights();
+
+            _moveInProgress = true;
+            RefreshUndoButton();
+
+            var overlayParent = ResolveOverlayParent(fromView);
+            MovingCounter.Play(overlayParent, cursorPos, toPos, lightReturn, darkReturn,
+                MoveTweenDuration, OnReturnTweenComplete, withPhantom: false);
+        }
+
+        private void OnReturnTweenComplete()
+        {
+            _moveInProgress = false;
+
+            var prior = _selectedSpace;
+            _selectedSpace = null;
+
+            if (prior.HasValue && _gameState != null)
+            {
+                var view = FindSpaceView(prior.Value);
+                var stack = _gameState.GetBoard(prior.Value.BoardId)?.GetStack(prior.Value.Id);
+                if (view != null && stack != null) view.UpdateTokenDisplay(stack);
+            }
+
+            RefreshUndoButton();
+
+            if (_gameState == null || _gameState.GameOver)
+            {
+                _pendingRetarget = null;
+                return;
+            }
+
+            if (_pendingRetarget.HasValue)
+            {
+                var next = _pendingRetarget.Value;
+                _pendingRetarget = null;
+                HandleMovementClick(next);
+            }
+            else
+            {
+                HighlightMovablePieces();
+            }
         }
 
         private void NotifyInHandGhost()
@@ -532,11 +652,26 @@ namespace Magi.LedgeBoardGame
             }
         }
 
-        private void PushUndoSnapshot()
+        private void PushPlacementUndo()
         {
             if (_gameState == null)
                 return;
-            _undoStack.Push(_gameState.Clone());
+            _undoStack.Push(new UndoFrame { State = _gameState.Clone(), HasAnimation = false });
+        }
+
+        private void PushMoveUndo(SpaceId from, SpaceId to, int light, int dark)
+        {
+            if (_gameState == null)
+                return;
+            _undoStack.Push(new UndoFrame
+            {
+                State = _gameState.Clone(),
+                HasAnimation = true,
+                From = from,
+                To = to,
+                Light = light,
+                Dark = dark,
+            });
         }
 
         private void OnUndoClicked()
@@ -547,10 +682,66 @@ namespace Magi.LedgeBoardGame
             if (_moveInProgress)
                 return;
 
-            var snapshot = _undoStack.Pop();
-            _gameState.CopyFrom(snapshot);
+            var frame = _undoStack.Pop();
 
+            // Cancel any in-flight selection so its drained source + ghost don't
+            // linger through the reverse tween. The animation takes over from here.
             ClearMovementSelection();
+
+            if (frame.HasAnimation && !_gameState.GameOver)
+            {
+                PlayReverseMoveTween(frame);
+            }
+            else
+            {
+                ApplyUndoState(frame.State);
+            }
+
+            RefreshUndoButton();
+        }
+
+        private void PlayReverseMoveTween(UndoFrame frame)
+        {
+            var fromView = FindSpaceView(frame.From);
+            var toView = FindSpaceView(frame.To);
+            Vector3 startPos = toView != null ? toView.transform.position : Vector3.zero;
+            Vector3 endPos = fromView != null ? fromView.transform.position : startPos;
+
+            // Drain the moved chips off the destination view so the flying stack
+            // isn't visually duplicated by the still-visible chips at the destination.
+            // Capture moves restore their cleared opposing chips on landing via
+            // CopyFrom — a brief pop-in is acceptable for that edge case.
+            if (toView != null)
+            {
+                var destStack = _gameState.GetBoard(frame.To.BoardId)?.GetStack(frame.To.Id);
+                if (destStack != null)
+                {
+                    var draining = destStack.Clone();
+                    for (int i = 0; i < frame.Light; i++) draining.RemoveOne(Tone.Light);
+                    for (int i = 0; i < frame.Dark; i++) draining.RemoveOne(Tone.Dark);
+                    toView.UpdateTokenDisplay(draining);
+                }
+            }
+
+            _moveInProgress = true;
+            RefreshUndoButton();
+
+            var overlayParent = ResolveOverlayParent(toView ?? fromView);
+            var captured = frame;
+            MovingCounter.Play(overlayParent, startPos, endPos, frame.Light, frame.Dark,
+                MoveTweenDuration, () => OnUndoTweenComplete(captured), withPhantom: false);
+        }
+
+        private void OnUndoTweenComplete(UndoFrame frame)
+        {
+            _moveInProgress = false;
+            ApplyUndoState(frame.State);
+            RefreshUndoButton();
+        }
+
+        private void ApplyUndoState(GameState snapshot)
+        {
+            _gameState.CopyFrom(snapshot);
             RefreshBoards();
             UpdateStatusUI();
 
@@ -565,8 +756,6 @@ namespace Magi.LedgeBoardGame
                     HighlightMovablePieces();
                 }
             }
-
-            RefreshUndoButton();
         }
 
         private void RefreshUndoButton()
