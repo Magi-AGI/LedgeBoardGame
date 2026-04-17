@@ -87,10 +87,10 @@ namespace MagiGameServer.Contracts.Client
         event Action<StateEcho<TState>> OnPredictionDiverged;
 
         /// Fired on every seat when a takeback was granted, carrying the
-        /// post-rewind state already projected for `ForSeat`. The `Revision`
-        /// moves backward on this event — it is the only ISessionObserver
-        /// event where that happens, and dispatchers should treat it as a
-        /// branch cut rather than a forward advance.
+        /// post-rewind state already projected for `ForSeat`. The
+        /// `RevisionAfter` field moves backward on this event — it is the
+        /// only ISessionObserver event where that happens, and dispatchers
+        /// should treat it as a branch cut rather than a forward advance.
         event Action<TakebackBroadcast<TState>> OnTakebackBroadcast;
 
         /// Fired only for Denied / PendingConsent outcomes. Granted

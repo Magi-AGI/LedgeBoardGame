@@ -26,11 +26,12 @@ namespace MagiGameServer.Contracts.Protocol
         public string Reason { get; init; }
     }
 
-    /// Server-to-client: outcome of a takeback request. When Outcome=Granted,
-    /// the server has already rewound canonical state and sent a fresh
-    /// StateEcho to every affected seat carrying the post-takeback state; this
-    /// envelope is the notification that the rewind happened, not itself the
-    /// rewound state.
+    /// Server-to-client: outcome of a takeback request. Delivered only for
+    /// Denied / PendingConsent — Granted outcomes arrive as
+    /// TakebackBroadcast on every seat (including the requester) and
+    /// already carry the post-rewind state, so a TakebackResponse would be
+    /// redundant on the granted path. Dispatchers should wire this envelope
+    /// to ISessionObserver.OnTakebackReply.
     public sealed record TakebackResponse
     {
         public SessionId Session { get; init; }
