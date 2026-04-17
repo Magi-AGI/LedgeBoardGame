@@ -69,7 +69,7 @@ namespace Magi.LedgeBoardGame.Board
         private Color _frameBaseColor = LedgePalette.FrameIdle;
         private bool _hovered;
         private bool _selected;
-        private bool _validTarget;
+        private float _validTargetIntensity;
         private bool _movableSource;
         private bool _pulseVisible;
 
@@ -100,7 +100,7 @@ namespace Magi.LedgeBoardGame.Board
 
             _hovered = false;
             _selected = false;
-            _validTarget = false;
+            _validTargetIntensity = 0f;
             _movableSource = false;
             ApplyFrameVisual();
             UpdateFrameGlow(instant: true);
@@ -334,9 +334,20 @@ namespace Magi.LedgeBoardGame.Board
 
         public void SetValidTarget(bool valid)
         {
-            if (_validTarget == valid) return;
-            _validTarget = valid;
-            UpdateFrameGlow(instant: !valid);
+            SetValidTargetIntensity(valid ? 1f : 0f);
+        }
+
+        /// Multi-hop reach highlight: intensity scales the pulse alpha so distant
+        /// reachable spaces (farther out along the move path) read fainter than the
+        /// immediate neighbors. 0 disables the pulse; 1 is the full single-hop glow.
+        public void SetValidTargetIntensity(float intensity)
+        {
+            intensity = Mathf.Clamp01(intensity);
+            if (Mathf.Approximately(_validTargetIntensity, intensity)) return;
+            bool wasActive = _validTargetIntensity > 0f;
+            bool isActive = intensity > 0f;
+            _validTargetIntensity = intensity;
+            UpdateFrameGlow(instant: !isActive && !wasActive);
         }
 
         public void SetMovableSource(bool active)
@@ -395,10 +406,10 @@ namespace Magi.LedgeBoardGame.Board
 
             if (frameGlowImage == null) return;
 
-            if (_validTarget)
+            if (_validTargetIntensity > 0f)
             {
                 float t = Mathf.Sin(Time.unscaledTime * pulseFrequencyHz * 2f * Mathf.PI) * 0.5f + 0.5f;
-                float a = Mathf.Lerp(pulseMinAlpha, pulseMaxAlpha, t);
+                float a = Mathf.Lerp(pulseMinAlpha, pulseMaxAlpha, t) * _validTargetIntensity;
                 var baseCol = LedgePalette.FrameValidTargetAdd;
                 frameGlowImage.color = new Color(baseCol.r, baseCol.g, baseCol.b, a);
             }
@@ -581,12 +592,12 @@ namespace Magi.LedgeBoardGame.Board
         private void UpdateFrameGlow(bool instant)
         {
             if (frameGlowImage == null) return;
-            if (_validTarget)
+            if (_validTargetIntensity > 0f)
             {
                 if (instant)
                 {
                     var baseCol = LedgePalette.FrameValidTargetAdd;
-                    frameGlowImage.color = new Color(baseCol.r, baseCol.g, baseCol.b, pulseMinAlpha);
+                    frameGlowImage.color = new Color(baseCol.r, baseCol.g, baseCol.b, pulseMinAlpha * _validTargetIntensity);
                 }
             }
             else if (_movableSource)

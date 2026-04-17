@@ -2,6 +2,9 @@ using UnityEngine;
 using UnityEngine.UI;
 using System.Collections.Generic;
 using System.Linq;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 using Magi.LedgeBoardGame.Models;
 using Magi.LedgeBoardGame.Models.Spec;
 using Magi.LedgeBoardGame.Rules;
@@ -36,6 +39,11 @@ namespace Magi.LedgeBoardGame
         private bool _moveInProgress;
         private SpaceId? _pendingRetarget;
         private SpaceView _sourcePhantomView;
+        // Reach map for the currently selected stack: key = space, value = hop distance
+        // from source. Populated by SelectMovementSource and consumed by HandleMovementClick
+        // to distinguish single-hop from chained multi-hop destinations.
+        private Dictionary<SpaceId, int> _selectedReach;
+        private int _selectedReachMax;
         private const float MoveTweenDuration = 0.28f;
         // Alpha applied to the source SpaceView while its counters are "in hand," so the
         // origin reads as a faded placeholder while the opaque flying/in-hand stack
@@ -120,6 +128,17 @@ namespace Magi.LedgeBoardGame
         private void OnDestroy()
         {
             SpaceClickedEvent.Unregister(OnSpaceClicked);
+        }
+
+        private void Update()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current;
+            if (kb != null && kb.spaceKey.wasPressedThisFrame)
+            {
+                OnEndTurnClicked();
+            }
+#endif
         }
 
         private void CreateBoardPresenters()
@@ -271,23 +290,7 @@ namespace Magi.LedgeBoardGame
                 if (move != null)
                 {
                     LogEvent($"{currentPlayer.Name} placed {toneToPlace} at {FormatSpace(target)}");
-                    RefreshBoards();
-                    UpdateStatusUI();
-                    if (_gameState.CurrentPhase == GamePhase.Placement)
-                    {
-                        HighlightPlacementTargets();
-                    }
-                    else
-                    {
-                        // Placement just flipped to Movement. SBE itself is skipped here
-                        // (placement can't deadend or win per design), but the new Movement
-                        // phase is a valid moment to auto-skip if the player's whole board
-                        // is locked.
-                        ClearHighlights();
-                        if (!MaybeAutoSkipTurn())
-                            HighlightMovablePieces();
-                    }
-                    RefreshUndoButton();
+                    PlayPlacementTween(target, toneToPlace);
                 }
                 else
                 {
@@ -296,6 +299,56 @@ namespace Magi.LedgeBoardGame
                     RefreshUndoButton();
                 }
             }
+        }
+
+        /// Flies a single counter from the placement ghost's cursor-tracked position to
+        /// the target space. State has already been mutated; destination render is
+        /// deferred to OnPlacementTweenComplete so the counter visibly arrives.
+        private void PlayPlacementTween(SpaceId target, Tone tone)
+        {
+            var toView = FindSpaceView(target);
+            Vector3 fromPos = (placementGhost != null && placementGhost.gameObject.activeInHierarchy)
+                ? placementGhost.transform.position
+                : (toView != null ? toView.transform.position : Vector3.zero);
+            Vector3 toPos = toView != null ? toView.transform.position : fromPos;
+
+            // Hide the ghost during the tween so the flying counter is the only visual;
+            // OnPlacementTweenComplete calls UpdateStatusUI which re-shows the ghost with
+            // the next tone (or hides it permanently once both tones are placed).
+            placementGhost?.SetVisible(false);
+            ClearHighlights();
+
+            _moveInProgress = true;
+            RefreshUndoButton();
+
+            int light = tone == Tone.Light ? 1 : 0;
+            int dark = tone == Tone.Dark ? 1 : 0;
+
+            var overlayParent = ResolveOverlayParent(toView);
+            MovingCounter.Play(overlayParent, fromPos, toPos, light, dark,
+                MoveTweenDuration, OnPlacementTweenComplete, withPhantom: false);
+        }
+
+        private void OnPlacementTweenComplete()
+        {
+            _moveInProgress = false;
+            RefreshBoards();
+            UpdateStatusUI();
+            if (_gameState.CurrentPhase == GamePhase.Placement)
+            {
+                HighlightPlacementTargets();
+            }
+            else
+            {
+                // Placement just flipped to Movement. SBE itself is skipped here
+                // (placement can't deadend or win per design), but the new Movement
+                // phase is a valid moment to auto-skip if the player's whole board
+                // is locked.
+                ClearHighlights();
+                if (!MaybeAutoSkipTurn())
+                    HighlightMovablePieces();
+            }
+            RefreshUndoButton();
         }
 
         private void HandleMovementClick(SpaceId clicked)
@@ -319,8 +372,7 @@ namespace Magi.LedgeBoardGame
                     return;
                 }
 
-                var targets = GetStackValidTargets(from, stack);
-                if (targets.Contains(clicked))
+                if (_selectedReach != null && _selectedReach.ContainsKey(clicked))
                 {
                     ExecuteStackMove(from, clicked);
                 }
@@ -366,8 +418,10 @@ namespace Magi.LedgeBoardGame
             // ghost becomes the anchor for where the counters are now.
             SetSourcePhantom(FindSpaceView(clicked), _pickedUpLight + _pickedUpDark);
 
-            var targets = GetStackValidTargets(clicked, stack);
-            HighlightSpaces(targets);
+            int maxSteps = _pickedUpLight + _pickedUpDark;
+            _selectedReach = _rules.GetReachableTargets(_gameState, clicked, _selectedTone, maxSteps);
+            _selectedReachMax = maxSteps;
+            HighlightReachableSpaces(_selectedReach, maxSteps);
             HighlightSelectedSource();
             NotifyInHandGhost();
         }
@@ -377,6 +431,8 @@ namespace Magi.LedgeBoardGame
             _selectedSpace = null;
             _pickedUpLight = 0;
             _pickedUpDark = 0;
+            _selectedReach = null;
+            _selectedReachMax = 0;
             ClearHighlights();
             NotifyInHandGhost();
             ClearSourcePhantom();
@@ -412,37 +468,92 @@ namespace Magi.LedgeBoardGame
 
         private void ExecuteStackMove(SpaceId from, SpaceId clicked)
         {
+            // Resolve the path first. Single-hop destinations keep the direct tween path
+            // for continuity; multi-hop destinations replay as chained single-step moves
+            // (one MoveToken batch per hop) so the domain sees the same sequence it would
+            // have seen had the player clicked each intermediate space manually.
+            List<SpaceId> path;
+            if (_selectedReach != null && _selectedReach.TryGetValue(clicked, out var dist) && dist > 1)
+            {
+                path = _rules.FindShortestPath(_gameState, from, clicked, _selectedTone, _selectedReachMax);
+                if (path == null || path.Count == 0)
+                {
+                    // Reach claimed this space but no path resolved — bail to a clean state.
+                    ClearMovementSelection();
+                    HighlightMovablePieces();
+                    return;
+                }
+            }
+            else
+            {
+                path = new List<SpaceId> { clicked };
+            }
+
             var fromView = FindSpaceView(from);
             var toView = FindSpaceView(clicked);
 
-            // Fly from the source space's center (not the cursor) so the tween always
-            // travels a visible distance. With the cursor-anchored start, clicking the
-            // destination put fromPos right on toPos and the tween was effectively zero-length.
-            Vector3 fromPos = fromView != null ? fromView.transform.position : Vector3.zero;
-            Vector3 toPos = toView != null ? toView.transform.position : Vector3.zero;
+            int lightPickedUp = _pickedUpLight;
+            int darkPickedUp = _pickedUpDark;
 
-            int lightToMove = _pickedUpLight;
-            int darkToMove = _pickedUpDark;
+            PushMoveUndo(from, clicked, lightPickedUp, darkPickedUp);
 
-            PushMoveUndo(from, clicked, lightToMove, darkToMove);
+            int lightCarried = lightPickedUp;
+            int darkCarried = darkPickedUp;
+            int lightLeftOrigin = 0;
+            int darkLeftOrigin = 0;
+            var hopOrigin = from;
+            int successfulHops = 0;
 
-            int lightMoved = 0;
-            int darkMoved = 0;
-            for (int i = 0; i < lightToMove; i++)
+            // Per-waypoint stack sizes. Index 0 is the liftoff size; each subsequent
+            // entry is the carried size after landing at path[hop-1] — which includes
+            // any same-tone pickups and excludes counters lost to opposite-tone clashes.
+            var waypointStacks = new List<(int light, int dark)> { (lightPickedUp, darkPickedUp) };
+
+            for (int hop = 0; hop < path.Count; hop++)
             {
-                if (_rules.MoveToken(_gameState, from, clicked, Tone.Light) == null) break;
-                lightMoved++;
+                var hopTarget = path[hop];
+                int hopLight = 0;
+                int hopDark = 0;
+                for (int i = 0; i < lightCarried; i++)
+                {
+                    if (_rules.MoveToken(_gameState, hopOrigin, hopTarget, Tone.Light) == null) break;
+                    hopLight++;
+                }
+                for (int i = 0; i < darkCarried; i++)
+                {
+                    if (_rules.MoveToken(_gameState, hopOrigin, hopTarget, Tone.Dark) == null) break;
+                    hopDark++;
+                }
+
+                if (hopLight + hopDark == 0) break;
+
+                // Record how many left the original source at the first successful hop;
+                // subsequent hops carry forward whatever survived ResolveEntry clashes
+                // plus any same-tone counters picked up at each pass-through space.
+                if (hop == 0)
+                {
+                    lightLeftOrigin = hopLight;
+                    darkLeftOrigin = hopDark;
+                }
+
+                successfulHops = hop + 1;
+
+                // Carried count for the next hop is the full stack sitting at hopTarget —
+                // post-pickup, post-clash. Using board state here means a 3-stack passing
+                // through a same-tone 2-stack leaves the intermediate holding 5 and hops
+                // forward with 5, matching the reach-extension model in GetReachableTargets.
+                var targetBoard = _gameState.GetBoard(hopTarget.BoardId);
+                var targetStack = targetBoard?.GetStack(hopTarget.Id);
+                lightCarried = targetStack?.LightCount ?? hopLight;
+                darkCarried = targetStack?.DarkCount ?? hopDark;
+                waypointStacks.Add((lightCarried, darkCarried));
+                hopOrigin = hopTarget;
             }
-            for (int i = 0; i < darkToMove; i++)
-            {
-                if (_rules.MoveToken(_gameState, from, clicked, Tone.Dark) == null) break;
-                darkMoved++;
-            }
 
-            if (lightMoved + darkMoved == 0)
+            if (lightLeftOrigin + darkLeftOrigin == 0)
             {
-                // Nothing landed — drop the speculative frame and roll the source view
-                // + ghost back to their pre-pickup state.
+                // Nothing landed anywhere — drop the speculative frame and roll the
+                // source view + ghost back to their pre-pickup state.
                 _undoStack.Pop();
                 ClearMovementSelection();
                 RefreshUndoButton();
@@ -450,14 +561,17 @@ namespace Magi.LedgeBoardGame
                 return;
             }
 
-            // ClearMovementSelection drops the phantom and the in-hand ghost so the flying
-            // stack reads as the only moving object. Update the source view immediately to
-            // its post-move state (counters gone / locked anchor remaining) — destination stays
-            // at its pre-move state until OnMoveTweenComplete so the counters "arrive" there.
+            int lightMoved = lightLeftOrigin;
+            int darkMoved = darkLeftOrigin;
+
+            // Animation endpoint is wherever the chain actually terminated (final
+            // successful hop), not necessarily the clicked destination. If the chain
+            // failed partway, animate only up to the last successful hop.
+            var animationEnd = hopOrigin;
             var mover = _gameState.GetCurrentPlayer();
             if (mover != null)
             {
-                LogEvent($"{mover.Name} moved {FormatStackCounts(lightMoved, darkMoved)}: {FormatSpace(from)} → {FormatSpace(clicked)}");
+                LogEvent($"{mover.Name} moved {FormatStackCounts(lightMoved, darkMoved)}: {FormatSpace(from)} → {FormatSpace(animationEnd)}");
             }
             ClearMovementSelection();
             UpdateStatusUI();
@@ -469,9 +583,34 @@ namespace Magi.LedgeBoardGame
 
             _moveInProgress = true;
             RefreshUndoButton();
+
             var overlayParent = ResolveOverlayParent(fromView ?? toView);
-            MovingCounter.Play(overlayParent, fromPos, toPos, lightMoved, darkMoved,
-                MoveTweenDuration, OnMoveTweenComplete, withPhantom: false);
+
+            // Build the animation waypoints from source through each successful hop's
+            // center. Single-hop collapses to the legacy two-point tween.
+            Vector3 startPos = fromView != null ? fromView.transform.position : Vector3.zero;
+            if (successfulHops <= 1)
+            {
+                var endView = FindSpaceView(animationEnd);
+                Vector3 endPos = endView != null ? endView.transform.position : startPos;
+                MovingCounter.Play(overlayParent, startPos, endPos, lightMoved, darkMoved,
+                    MoveTweenDuration, OnMoveTweenComplete, withPhantom: false);
+            }
+            else
+            {
+                var waypoints = new List<Vector3> { startPos };
+                for (int i = 0; i < successfulHops; i++)
+                {
+                    var hopView = FindSpaceView(path[i]);
+                    waypoints.Add(hopView != null ? hopView.transform.position : startPos);
+                }
+                // Slice waypointStacks to the successful hops (index 0 + successfulHops).
+                var visualStacks = new List<(int light, int dark)>();
+                int maxVisualHops = Mathf.Min(successfulHops + 1, waypointStacks.Count);
+                for (int i = 0; i < maxVisualHops; i++) visualStacks.Add(waypointStacks[i]);
+                MovingCounter.PlayPath(overlayParent, waypoints, visualStacks,
+                    MoveTweenDuration, OnMoveTweenComplete);
+            }
         }
 
         private void DeselectWithReturnTween()
@@ -773,6 +912,15 @@ namespace Magi.LedgeBoardGame
             foreach (var kvp in _boardPresenters)
             {
                 kvp.Value.HighlightValidMoves(spaces);
+            }
+        }
+
+        private void HighlightReachableSpaces(Dictionary<SpaceId, int> distances, int maxDistance)
+        {
+            ClearHighlights();
+            foreach (var kvp in _boardPresenters)
+            {
+                kvp.Value.HighlightValidMovesWithDistance(distances, maxDistance);
             }
         }
 

@@ -212,6 +212,36 @@ namespace Magi.LedgeBoardGame.Board
             }
         }
 
+        /// Multi-hop reach highlight: each space pulses at an intensity tied to its
+        /// distance from the selected source. Step-1 neighbors get the full pulse and
+        /// farther hops fade toward `minIntensity`, so the player's eye reads the
+        /// brightest rings as the easiest/shortest moves and the dimmest as the
+        /// edge-of-range reach. Distance 0 (source itself) is not highlighted here —
+        /// HighlightSelection carries the source frame.
+        public void HighlightValidMovesWithDistance(Dictionary<SpaceId, int> distances, int maxDistance, float minIntensity = 0.35f)
+        {
+            foreach (var v in _spaceViews.Values)
+            {
+                v.SetValidTargetIntensity(0f);
+            }
+
+            if (distances == null || maxDistance <= 0) return;
+
+            foreach (var kvp in distances)
+            {
+                if (kvp.Key.BoardId != _boardState.BoardId) continue;
+                if (kvp.Value <= 0) continue;
+
+                if (_spaceViews.TryGetValue(kvp.Key.Id, out var view))
+                {
+                    float intensity = maxDistance == 1
+                        ? 1f
+                        : Mathf.Lerp(minIntensity, 1f, (maxDistance - kvp.Value) / (float)(maxDistance - 1));
+                    view.SetValidTargetIntensity(intensity);
+                }
+            }
+        }
+
         public void HighlightSelection(SpaceId? selected)
         {
             foreach (var v in _spaceViews.Values)

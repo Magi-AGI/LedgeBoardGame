@@ -22,6 +22,9 @@ namespace Magi.LedgeBoardGame.Board
         private Vector3 _to;
         private GameObject _phantom;
         private Action _onComplete;
+        private List<Vector3> _waypoints;
+        private List<(int light, int dark)> _waypointStacks;
+        private Transform _canvasParent;
 
         public static MovingCounter Play(Transform canvasParent, Vector3 fromWorld, Vector3 toWorld,
             int lightCount, int darkCount, float duration, Action onComplete, bool withPhantom = true)
@@ -45,6 +48,62 @@ namespace Magi.LedgeBoardGame.Board
             mc._phantom = phantom;
             mc._onComplete = onComplete;
             mc.StartCoroutine(mc.TweenRoutine());
+            return mc;
+        }
+
+        /// Plays a chained multi-hop animation: the flying stack tweens from the first
+        /// waypoint through each subsequent one, with `perHopDuration` spent on each
+        /// segment. Used by multi-step reach moves so the stack visibly hops through
+        /// intermediate spaces instead of teleporting or restarting between hops.
+        /// `waypoints` must contain at least two entries (start + one destination).
+        public static MovingCounter PlayPath(Transform canvasParent, List<Vector3> waypoints,
+            int lightCount, int darkCount, float perHopDuration, Action onComplete)
+        {
+            if (waypoints == null || waypoints.Count < 2)
+                return Play(canvasParent, Vector3.zero, Vector3.zero, lightCount, darkCount,
+                    perHopDuration, onComplete, withPhantom: false);
+
+            var flying = BuildStack(canvasParent, "MoveFlying", lightCount, darkCount, 1f);
+            flying.transform.position = waypoints[0];
+            flying.transform.SetAsLastSibling();
+
+            var mc = flying.AddComponent<MovingCounter>();
+            mc._waypoints = new List<Vector3>(waypoints);
+            mc._duration = Mathf.Max(0.05f, perHopDuration);
+            mc._onComplete = onComplete;
+            mc._canvasParent = canvasParent;
+            mc.StartCoroutine(mc.PathRoutine());
+            return mc;
+        }
+
+        /// Variant that rebuilds the flying stack at each waypoint to reflect pickups
+        /// (same-tone siphons grow the carried stack) or clashes (opposite-tone losses
+        /// shrink it). `waypointStacks[i]` is the (light, dark) size at `waypoints[i]`:
+        /// waypointStacks[0] is the initial liftoff size, and each subsequent entry is
+        /// what the stack looks like upon landing at that waypoint. If the collection is
+        /// null or wrong length, the stack size stays fixed at the initial value.
+        public static MovingCounter PlayPath(Transform canvasParent, List<Vector3> waypoints,
+            List<(int light, int dark)> waypointStacks, float perHopDuration, Action onComplete)
+        {
+            if (waypoints == null || waypoints.Count < 2)
+                return Play(canvasParent, Vector3.zero, Vector3.zero, 0, 0,
+                    perHopDuration, onComplete, withPhantom: false);
+
+            var initial = (waypointStacks != null && waypointStacks.Count > 0)
+                ? waypointStacks[0]
+                : (light: 0, dark: 0);
+
+            var flying = BuildStack(canvasParent, "MoveFlying", initial.light, initial.dark, 1f);
+            flying.transform.position = waypoints[0];
+            flying.transform.SetAsLastSibling();
+
+            var mc = flying.AddComponent<MovingCounter>();
+            mc._waypoints = new List<Vector3>(waypoints);
+            mc._waypointStacks = waypointStacks != null ? new List<(int, int)>(waypointStacks) : null;
+            mc._duration = Mathf.Max(0.05f, perHopDuration);
+            mc._onComplete = onComplete;
+            mc._canvasParent = canvasParent;
+            mc.StartCoroutine(mc.PathRoutine());
             return mc;
         }
 
@@ -135,6 +194,70 @@ namespace Magi.LedgeBoardGame.Board
             }
             cb?.Invoke();
             Destroy(gameObject);
+        }
+
+        private IEnumerator PathRoutine()
+        {
+            // Linear ease across the full path so intermediate hops don't stutter —
+            // the per-hop ease-out would decelerate into each waypoint and re-accelerate,
+            // producing a pulsing rhythm that obscures the hop cadence. Linear keeps
+            // the stack moving steadily, and the snap-to-waypoint at each boundary
+            // reads as the hop landing.
+            for (int i = 0; i < _waypoints.Count - 1; i++)
+            {
+                var segFrom = _waypoints[i];
+                var segTo = _waypoints[i + 1];
+                float elapsed = 0f;
+                while (elapsed < _duration)
+                {
+                    float t = elapsed / _duration;
+                    transform.position = Vector3.Lerp(segFrom, segTo, t);
+                    elapsed += Time.unscaledDeltaTime;
+                    yield return null;
+                }
+                transform.position = segTo;
+
+                // On arrival at an intermediate waypoint, rebuild the visual stack to
+                // reflect pickups/losses at that hop. Skip the final waypoint — it's
+                // destroyed at cleanup anyway, and the landed SpaceView will show the
+                // final count.
+                int landingIndex = i + 1;
+                if (_waypointStacks != null
+                    && landingIndex < _waypointStacks.Count
+                    && landingIndex < _waypoints.Count - 1)
+                {
+                    RebuildVisualStack(_waypointStacks[landingIndex]);
+                }
+            }
+
+            var cb = _onComplete;
+            _onComplete = null;
+            cb?.Invoke();
+            Destroy(gameObject);
+        }
+
+        private void RebuildVisualStack((int light, int dark) size)
+        {
+            var rt = (RectTransform)transform;
+            for (int i = rt.childCount - 1; i >= 0; i--)
+            {
+                Destroy(rt.GetChild(i).gameObject);
+            }
+
+            int total = size.light + size.dark;
+            if (total == 0) total = 1;
+            float baseY = -(total - 1) * StackOffset * 0.5f;
+            int idx = 0;
+            for (int d = 0; d < size.dark; d++)
+            {
+                BuildCounter(rt, LedgePalette.CounterDark, 1f, new Vector2(0f, baseY + idx * StackOffset));
+                idx++;
+            }
+            for (int l = 0; l < size.light; l++)
+            {
+                BuildCounter(rt, LedgePalette.CounterLight, 1f, new Vector2(0f, baseY + idx * StackOffset));
+                idx++;
+            }
         }
     }
 }
