@@ -37,8 +37,12 @@ namespace MagiGameServer.Core
             Id = id;
             _module = module;
             _rules = module.Rules;
-            _initialState = initialState;
-            _state = initialState;
+            // Snapshot on intake so the caller's reference into initialState
+            // can mutate afterwards without affecting us, and _initialState
+            // stays independent from the live _state across the session's
+            // lifetime. For immutable adapters SnapshotState is identity.
+            _initialState = _rules.SnapshotState(initialState);
+            _state = _rules.SnapshotState(initialState);
             SeatCount = seatCount;
             _revision = new ServerSeq(0);
         }
@@ -49,6 +53,10 @@ namespace MagiGameServer.Core
             if (envelope.Session != Id)
                 throw new ArgumentException(
                     $"Envelope session {envelope.Session} does not match session {Id}", nameof(envelope));
+            if (envelope.Seat.Value < 0 || envelope.Seat.Value >= SeatCount)
+                throw new ArgumentException(
+                    $"Envelope seat {envelope.Seat} out of range [0,{SeatCount}) for session {Id}",
+                    nameof(envelope));
 
             var outcome = _rules.Apply(_state, envelope.Action, out object nextState);
 
@@ -70,7 +78,10 @@ namespace MagiGameServer.Core
             {
                 _state = nextState;
                 _revision = _revision.Next();
-                _log.Add(new LogEntry(envelope, _state, _revision));
+                // Snapshot before logging so the log entry is independent of
+                // future mutations to _state. For mutable-state adapters this
+                // is the critical invariant; immutable adapters no-op.
+                _log.Add(new LogEntry(envelope, _rules.SnapshotState(_state), _revision));
                 stateAfter = _state;
                 revisionAfter = _revision;
             }
@@ -96,6 +107,10 @@ namespace MagiGameServer.Core
             if (request.Session != Id)
                 throw new ArgumentException(
                     $"Request session {request.Session} does not match session {Id}", nameof(request));
+            if (request.RequestingSeat.Value < 0 || request.RequestingSeat.Value >= SeatCount)
+                throw new ArgumentException(
+                    $"RequestingSeat {request.RequestingSeat} out of range [0,{SeatCount}) for session {Id}",
+                    nameof(request));
 
             int stepsAvailable = _log.Count;
             int stepsToRewind = Math.Min(Math.Max(0, request.StepsRequested), stepsAvailable);
@@ -126,7 +141,11 @@ namespace MagiGameServer.Core
             ServerSeq restoredRevision = targetIdx < 0 ? new ServerSeq(0) : _log[targetIdx].Revision;
 
             _log.RemoveRange(_log.Count - stepsToRewind, stepsToRewind);
-            _state = restoredState;
+            // Snapshot on restore so subsequent Apply mutations don't write
+            // through to the log entry (or _initialState) we just borrowed
+            // from. Without this, the first Apply after a rewind would
+            // silently mutate our own historical snapshot.
+            _state = _rules.SnapshotState(restoredState);
             _revision = restoredRevision;
 
             // Echoes carry Outcome=Applied because from the recipient's point

@@ -38,6 +38,10 @@ namespace MagiGameServer.Core.Tests
         public override long GetStateHash(CounterState state) => state.Value;
 
         public override CounterState ProjectStateFor(CounterState state, SeatId seat) => state;
+
+        // CounterState is immutable (init-only properties, no mutable fields),
+        // so the snapshot is just the reference.
+        public override CounterState SnapshotState(CounterState state) => state;
     }
 
     public sealed class CounterGameModule : IGameModule

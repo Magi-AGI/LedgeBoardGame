@@ -44,6 +44,17 @@ namespace MagiGameServer.Contracts.Rules
         /// opponent positions. Server calls this before sending state echoes so
         /// canonical state never leaves the trust boundary.
         object ProjectStateFor(object state, SeatId seat);
+
+        /// Returns a snapshot of `state` that is independent of any future
+        /// mutation through Apply. Immutable-state adapters (those whose Apply
+        /// always returns a fresh state object and never mutates the input)
+        /// may return the input reference as-is. Mutable-state adapters MUST
+        /// deep-clone — the server stores snapshots for takeback rewind and
+        /// would otherwise alias the live canonical state, causing every
+        /// rewind to silently "restore" the current mutated value. If this
+        /// method is ever ambiguous for a given game, implement it as a deep
+        /// clone; correctness wins over the cheap passthrough.
+        object SnapshotState(object state);
     }
 
     /// Strongly-typed counterpart. Game modules typically inherit from the
@@ -61,6 +72,7 @@ namespace MagiGameServer.Contracts.Rules
         long GetStateHash(TState state);
         long GetStateHashForSeat(TState state, SeatId seat);
         TState ProjectStateFor(TState state, SeatId seat);
+        TState SnapshotState(TState state);
     }
 
     /// Convenience base class that bridges the object-shape (non-generic) and
@@ -79,6 +91,13 @@ namespace MagiGameServer.Contracts.Rules
         public virtual long GetStateHashForSeat(TState state, SeatId seat)
             => GetStateHash(ProjectStateFor(state, seat));
 
+        /// Abstract rather than virtual-with-default. A default "return as-is"
+        /// would be a silent footgun: mutable-state adapters that forgot to
+        /// override would corrupt their own takeback log. Forcing every author
+        /// to answer "mutable or not?" up front catches the bug at compile
+        /// time. Immutable adapters implement as `=> state;`.
+        public abstract TState SnapshotState(TState state);
+
         ApplyOutcome IRulesAdapter.Apply(object state, object action, out object newState)
         {
             var outcome = Apply((TState)state, (TAction)action, out TState typed);
@@ -89,5 +108,6 @@ namespace MagiGameServer.Contracts.Rules
         long IRulesAdapter.GetStateHash(object state) => GetStateHash((TState)state);
         long IRulesAdapter.GetStateHashForSeat(object state, SeatId seat) => GetStateHashForSeat((TState)state, seat);
         object IRulesAdapter.ProjectStateFor(object state, SeatId seat) => ProjectStateFor((TState)state, seat);
+        object IRulesAdapter.SnapshotState(object state) => SnapshotState((TState)state);
     }
 }
