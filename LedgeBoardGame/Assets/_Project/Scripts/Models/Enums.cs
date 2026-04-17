@@ -10,7 +10,7 @@ namespace Magi.LedgeBoardGame.Models
     {
         Center,
         InnerBridge,
-        InnerStop,
+        InnerWall,
         Ring2,
         Ring3,
         OuterAdded

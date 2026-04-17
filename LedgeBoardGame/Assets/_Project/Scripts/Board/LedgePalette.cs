@@ -4,23 +4,22 @@ using UnityEngine;
 
 namespace Magi.LedgeBoardGame.Board
 {
-    /// Central color palette for the Ledge board visuals. Keeps the frame / fill / counter tints
-    /// in one place so artists can tune without touching SpaceView or BoardPresenter internals.
+    /// Central color palette for the Ledge board visuals. Spirit colors are the vibrant
+    /// 12-hue wheel pulled from the authoritative SVG; they render flat (no pastelize) so
+    /// the wheel reads with its intended saturation.
     public static class LedgePalette
     {
-        // Neutral fills for non-ledge spaces — a warm parchment for regular tiles and a slightly
-        // darker tone for the center so the hub reads as special.
+        // Neutral fallbacks for spaces that aren't on the color wheel.
         public static readonly Color NeutralSpaceFill = new Color(0.93f, 0.90f, 0.83f, 1f);
-        public static readonly Color CenterSpaceFill = new Color(0.82f, 0.78f, 0.68f, 1f);
+        public static readonly Color CenterSpaceFill = new Color(1f, 1f, 1f, 1f);
+        public static readonly Color WallGray = new Color(0.55f, 0.55f, 0.55f, 1f);
 
-        // Frame base + additive states. Hovered / Selected / ValidTarget compose additively on
-        // top of the base frame color so a hovered valid-target reads as both.
-        public static readonly Color FrameIdle = new Color(0.22f, 0.20f, 0.17f, 1f);
+        // Frame base + additive states. Hovered / Selected / ValidTarget compose additively
+        // on top of the base frame color so a hovered valid-target reads as both.
+        public static readonly Color FrameIdle = new Color(0.10f, 0.09f, 0.08f, 1f);
         public static readonly Color FrameHoverAdd = new Color(0.28f, 0.26f, 0.20f, 0f);
         public static readonly Color FrameSelectedAdd = new Color(0.75f, 0.55f, 0.05f, 0f);
         public static readonly Color FrameValidTargetAdd = new Color(0.25f, 0.65f, 0.28f, 0f);
-        // Softer amber breathe for stacks the current player can pick up — warm enough to
-        // say "come grab me" but clearly distinct from the saturated green valid-target pulse.
         public static readonly Color FrameMovableSourceAdd = new Color(0.95f, 0.72f, 0.30f, 0f);
 
         public static readonly Color CounterLight = new Color(0.97f, 0.95f, 0.88f, 1f);
@@ -28,38 +27,65 @@ namespace Magi.LedgeBoardGame.Board
         public static readonly Color GhostTint = new Color(1f, 1f, 1f, 0.55f);
 
         // 12 hex colors pulled from Ledge Wheel EN 20 (Board Game).svg arranged clockwise
-        // starting at 90° (top). Ledge names come from LedgeConfigConstants.LedgeColors.
-        private static readonly Dictionary<string, Color> LedgeColorsByLabel = new Dictionary<string, Color>
+        // starting at 90° (top). Wedge index 0..11 corresponds to angle = 90 - 30*index.
+        private static readonly Color[] SpiritByWedge =
         {
-            { "Ela",  HexToColor("C04040") }, // 90°
-            { "Biz",  HexToColor("C04080") }, // 60°
-            { "Yun",  HexToColor("C040BF") }, // 30°
-            { "Jutu", HexToColor("8040C0") }, // 0°
-            { "Glei", HexToColor("4040C0") }, // -30°
-            { "Sace", HexToColor("4080C0") }, // -60°
-            { "Rha",  HexToColor("40BFC0") }, // -90°
-            { "Dau",  HexToColor("40C080") }, // -120°
-            { "Wim",  HexToColor("40C040") }, // -150°
-            { "Pfi",  HexToColor("7FC040") }, // 180°
-            { "Quae", HexToColor("BDBF3F") }, // 150°
-            { "Vei",  HexToColor("C07F40") }, // 120°
+            HexToColor("C04040"), // 0  Ela   @ 90°
+            HexToColor("C04080"), // 1  Biz   @ 60°
+            HexToColor("C040BF"), // 2  Yun   @ 30°
+            HexToColor("8040C0"), // 3  Jutu  @ 0°
+            HexToColor("4040C0"), // 4  Glei  @ -30°
+            HexToColor("4080C0"), // 5  Sace  @ -60°
+            HexToColor("40BFC0"), // 6  Rha   @ -90°
+            HexToColor("40C080"), // 7  Dau   @ -120°
+            HexToColor("40C040"), // 8  Wim   @ -150°
+            HexToColor("7FC040"), // 9  Pfi   @ 180°
+            HexToColor("BDBF3F"), // 10 Quae  @ 150°
+            HexToColor("C07F40"), // 11 Vei   @ 120°
         };
+
+        private static readonly Dictionary<string, int> WedgeByLabel = new Dictionary<string, int>
+        {
+            { "Ela",  0 }, { "Biz",  1 }, { "Yun",  2 }, { "Jutu", 3 },
+            { "Glei", 4 }, { "Sace", 5 }, { "Rha",  6 }, { "Dau",  7 },
+            { "Wim",  8 }, { "Pfi",  9 }, { "Quae", 10 }, { "Vei",  11 },
+        };
+
+        public static Color GetSpiritColor(int wedgeIndex)
+        {
+            int i = ((wedgeIndex % 12) + 12) % 12;
+            return SpiritByWedge[i];
+        }
+
+        public static Color GetOppositeSpiritColor(int wedgeIndex)
+        {
+            return GetSpiritColor(wedgeIndex + 6);
+        }
+
+        /// Wedge angle in degrees (math convention: CCW from +X). Wedge 0 = 90°.
+        public static float GetWedgeAngleDeg(int wedgeIndex)
+        {
+            return 90f - 30f * wedgeIndex;
+        }
+
+        public static bool TryGetWedgeByLabel(string label, out int wedge)
+        {
+            if (!string.IsNullOrEmpty(label) && WedgeByLabel.TryGetValue(label, out wedge))
+                return true;
+            wedge = -1;
+            return false;
+        }
 
         public static Color GetFillColor(string colorLabel)
         {
-            if (string.IsNullOrEmpty(colorLabel))
-                return NeutralSpaceFill;
-            if (LedgeColorsByLabel.TryGetValue(colorLabel, out var c))
-                return Color.Lerp(c, Color.white, 0.35f); // Pastel-ize so counters and frame read on top.
+            if (TryGetWedgeByLabel(colorLabel, out var w))
+                return SpiritByWedge[w];
             return NeutralSpaceFill;
         }
 
         public static Color GetFrameBaseColor(string colorLabel)
         {
-            if (string.IsNullOrEmpty(colorLabel))
-                return FrameIdle;
-            if (LedgeColorsByLabel.TryGetValue(colorLabel, out var c))
-                return Color.Lerp(c, Color.black, 0.55f);
+            // Frames are uniformly dark now — the wheel's spirit colors carry the ID, not the frames.
             return FrameIdle;
         }
 

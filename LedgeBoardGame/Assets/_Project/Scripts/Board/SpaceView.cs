@@ -16,6 +16,7 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private Image frameImage;
         [SerializeField] private Image fillImage;
         [SerializeField] private Image frameGlowImage;
+        [SerializeField] private RectTransform shapeRoot;
         [SerializeField] private RectTransform countersRoot;
 
         [Header("Token Display (TMP, legacy — hidden by default now)")]
@@ -78,12 +79,8 @@ namespace Magi.LedgeBoardGame.Board
             EnsureVisuals();
             HideLegacyTextCounters();
 
-            var fillColor = LedgePalette.GetFillColor(meta.ColorLabel);
-            if (meta.Type == SpaceType.Center)
-                fillColor = LedgePalette.CenterSpaceFill;
-
-            SetFillColor(fillColor);
-            SetFrameBaseColor(LedgePalette.GetFrameBaseColor(meta.ColorLabel));
+            ApplyShapeAndFill(id, meta);
+            SetFrameBaseColor(LedgePalette.FrameIdle);
 
             _hovered = false;
             _selected = false;
@@ -97,10 +94,7 @@ namespace Magi.LedgeBoardGame.Board
 
         /// Fades the top `topCount` of the active chips down to `alpha`. Bottom chips —
         /// including a locked chip at index 0 — keep full opacity so the origin still
-        /// reads as "this chip is still planted here." Called by GameController while a
-        /// movable stack is in-hand: the picked-up chips look spectral, the locked anchor
-        /// does not. A subsequent UpdateTokenDisplay rewrites alphas to opaque, which is
-        /// fine because phantom state is always re-applied by the selection flow.
+        /// reads as "this chip is still planted here."
         public void SetPhantomChips(int topCount, float alpha)
         {
             if (_counterImages.Count == 0 || topCount <= 0) return;
@@ -154,8 +148,6 @@ namespace Magi.LedgeBoardGame.Board
                     _counterImages[i].gameObject.SetActive(false);
             }
 
-            // Dark on bottom, light on top — reads like physical chips stacked with the lighter
-            // ones sitting on the darker ones. Order doesn't matter for game rules.
             int index = 0;
             for (int d = 0; d < stack.DarkCount; d++)
                 LayoutCounter(_counterImages[index++], LedgePalette.CounterDark, d, totalNeeded);
@@ -209,8 +201,6 @@ namespace Magi.LedgeBoardGame.Board
             UpdateFrameGlow(instant: !active);
         }
 
-        /// Legacy shim — BoardPresenter.HighlightValidMoves still calls this to toggle the
-        /// valid-target glow. Selection highlight is routed via SetSelected.
         public void SetHighlight(bool active)
         {
             SetValidTarget(active);
@@ -224,8 +214,6 @@ namespace Magi.LedgeBoardGame.Board
             }
         }
 
-        /// Legacy shim — accepts a color hint but the frame-state model ignores it. Kept so
-        /// older call sites compile; BoardPresenter can migrate to SetSelected / SetValidTarget.
         public void SetHighlightColor(Color _) { }
 
         public void OnPointerClick(PointerEventData eventData)
@@ -282,40 +270,51 @@ namespace Magi.LedgeBoardGame.Board
             if (selfRect.sizeDelta.sqrMagnitude < 0.01f)
                 selfRect.sizeDelta = new Vector2(60f, 60f);
 
+            if (shapeRoot == null)
+            {
+                var go = new GameObject("ShapeRoot", typeof(RectTransform));
+                shapeRoot = (RectTransform)go.transform;
+                shapeRoot.SetParent(transform, false);
+                shapeRoot.anchorMin = new Vector2(0.5f, 0.5f);
+                shapeRoot.anchorMax = new Vector2(0.5f, 0.5f);
+                shapeRoot.pivot = new Vector2(0.5f, 0.5f);
+                shapeRoot.anchoredPosition = Vector2.zero;
+                shapeRoot.SetAsFirstSibling();
+            }
+            shapeRoot.sizeDelta = selfRect.sizeDelta;
+
+            // Legacy root Image (if present on prefab): disable it so stray white hexes don't render
+            // underneath our generated sprites.
+            var rootImg = GetComponent<Image>();
+            if (rootImg != null && rootImg != frameImage && rootImg != fillImage)
+                rootImg.enabled = false;
+
             if (fillImage == null)
             {
-                fillImage = CreateChildImage("Fill", sibling: 0, stretch: true);
+                fillImage = CreateShapeChild("Fill", sibling: 0);
                 fillImage.color = LedgePalette.NeutralSpaceFill;
             }
-            if (fillImage.sprite == null)
-                fillImage.sprite = LedgeSpriteFactory.Disc;
             fillImage.raycastTarget = true;
+            ((RectTransform)fillImage.transform).sizeDelta = selfRect.sizeDelta;
 
             if (frameImage == null)
             {
-                frameImage = GetComponent<Image>();
-                if (frameImage == null)
-                    frameImage = CreateChildImage("Frame", sibling: 1, stretch: true);
+                frameImage = CreateShapeChild("Frame", sibling: 1);
             }
-            // Always replace the frame sprite with the generated ring — the existing prefab
-            // uses Unity's default white UISprite which we want swapped out for the circular frame.
-            frameImage.sprite = LedgeSpriteFactory.Ring;
             frameImage.raycastTarget = true;
             frameImage.color = _frameBaseColor;
+            ((RectTransform)frameImage.transform).sizeDelta = selfRect.sizeDelta;
 
             if (frameGlowImage == null)
             {
-                // Ring-shaped glow so the pulse concentrates at the frame edge rather than
-                // washing over the entire fill.
-                frameGlowImage = CreateChildImage("FrameGlow", sibling: 2, stretch: true);
-                frameGlowImage.sprite = LedgeSpriteFactory.Ring;
-                frameGlowImage.color = new Color(LedgePalette.FrameValidTargetAdd.r, LedgePalette.FrameValidTargetAdd.g, LedgePalette.FrameValidTargetAdd.b, 0f);
+                frameGlowImage = CreateShapeChild("FrameGlow", sibling: 2);
+                frameGlowImage.color = new Color(
+                    LedgePalette.FrameValidTargetAdd.r,
+                    LedgePalette.FrameValidTargetAdd.g,
+                    LedgePalette.FrameValidTargetAdd.b, 0f);
                 frameGlowImage.raycastTarget = false;
-                var glowRect = (RectTransform)frameGlowImage.transform;
-                // Slightly larger than the frame so the glow visibly bleeds outward.
-                var selfSize = ((RectTransform)transform).sizeDelta;
-                glowRect.sizeDelta = selfSize * 1.18f;
             }
+            ((RectTransform)frameGlowImage.transform).sizeDelta = selfRect.sizeDelta * 1.18f;
 
             if (countersRoot == null)
             {
@@ -326,22 +325,22 @@ namespace Magi.LedgeBoardGame.Board
                 countersRoot.anchorMax = new Vector2(0.5f, 0.5f);
                 countersRoot.pivot = new Vector2(0.5f, 0.5f);
                 countersRoot.anchoredPosition = Vector2.zero;
-                countersRoot.sizeDelta = selfRect.sizeDelta;
             }
+            countersRoot.sizeDelta = selfRect.sizeDelta;
             countersRoot.SetAsLastSibling();
         }
 
-        private Image CreateChildImage(string name, int sibling, bool stretch)
+        private Image CreateShapeChild(string name, int sibling)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             var rect = (RectTransform)go.transform;
-            rect.SetParent(transform, false);
+            rect.SetParent(shapeRoot, false);
             rect.SetSiblingIndex(sibling);
             rect.anchorMin = new Vector2(0.5f, 0.5f);
             rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(0.5f, 0.5f);
             rect.anchoredPosition = Vector2.zero;
-            rect.sizeDelta = stretch ? ((RectTransform)transform).sizeDelta : new Vector2(32f, 32f);
+            rect.sizeDelta = ((RectTransform)transform).sizeDelta;
             var img = go.GetComponent<Image>();
             img.raycastTarget = false;
             return img;
@@ -368,7 +367,6 @@ namespace Magi.LedgeBoardGame.Board
             if (img == null) return;
             img.gameObject.SetActive(true);
             img.color = color;
-            // Stack from the bottom up: first chip sits lowest, each subsequent chip rises.
             float baseY = -(totalInStack - 1) * counterStackOffset * 0.5f;
             float y = baseY + indexInStack * counterStackOffset;
             var rect = (RectTransform)img.transform;
@@ -412,9 +410,152 @@ namespace Magi.LedgeBoardGame.Board
             }
         }
 
+        /// Shape + color dispatch. Called once per SetData. Assigns sprites for fill/frame/glow,
+        /// picks the right color rule per space type, and rotates non-hex shapes to align with
+        /// their wedge axis.
+        private void ApplyShapeAndFill(int id, SpaceMeta meta)
+        {
+            float rotZ = 0f;
+            Sprite fillSprite;
+            Sprite frameSprite;
+            Sprite glowSprite;
+
+            switch (meta.Type)
+            {
+                case SpaceType.InnerBridge:
+                {
+                    // Wedge is always even (outer axis). The authored bridge sprite is drawn
+                    // flipped relative to the rosette's convention, so we tessellate by adding 180°
+                    // to the wedge-aligned rotation.
+                    rotZ = 180f - 30f * meta.WedgeIndex;
+                    var outerColor = LedgePalette.GetSpiritColor(meta.WedgeIndex);
+                    var innerColor = LedgePalette.GetOppositeSpiritColor(meta.WedgeIndex);
+                    fillSprite = LedgeSpriteFactory.GetBridgeFill(outerColor, innerColor);
+                    frameSprite = LedgeSpriteFactory.BridgeFrame;
+                    glowSprite = LedgeSpriteFactory.BridgeFrameGlow;
+                    break;
+                }
+
+                case SpaceType.InnerWall:
+                {
+                    // Same authored-flip correction as InnerBridge.
+                    rotZ = 180f - 30f * meta.WedgeIndex;
+                    fillSprite = LedgeSpriteFactory.GetWallFill();
+                    frameSprite = LedgeSpriteFactory.WallFrame;
+                    glowSprite = LedgeSpriteFactory.WallFrameGlow;
+                    break;
+                }
+
+                case SpaceType.Center:
+                {
+                    fillSprite = LedgeSpriteFactory.GetHexFill(LedgePalette.CenterSpaceFill);
+                    frameSprite = LedgeSpriteFactory.HexFrame;
+                    glowSprite = LedgeSpriteFactory.HexFrameGlow;
+                    break;
+                }
+
+                case SpaceType.Ring2:
+                {
+                    var color = LedgePalette.GetSpiritColor(meta.WedgeIndex);
+                    fillSprite = LedgeSpriteFactory.GetHexFill(color);
+                    frameSprite = LedgeSpriteFactory.HexFrame;
+                    glowSprite = LedgeSpriteFactory.HexFrameGlow;
+                    break;
+                }
+
+                case SpaceType.Ring3:
+                {
+                    bool hasLabel = !string.IsNullOrEmpty(meta.ColorLabel);
+                    if (hasLabel)
+                    {
+                        // Ring3 vertex ledge: inner-half = own spirit, outer-half = opposite.
+                        fillSprite = BuildLedgeSplit(meta.WedgeIndex);
+                        rotZ = 180f - 60f * meta.WedgeIndex;
+                    }
+                    else
+                    {
+                        // Ring3-off rotation is tied to ledge-color arrow semantics and is
+                        // resolved elsewhere (or TODO). Leave at 0 for now.
+                        fillSprite = BuildRing3OffSplit(id, meta.WedgeIndex);
+                    }
+                    frameSprite = LedgeSpriteFactory.HexFrame;
+                    glowSprite = LedgeSpriteFactory.HexFrameGlow;
+                    break;
+                }
+
+                case SpaceType.OuterAdded:
+                {
+                    // Outer-axis ledge: same rule as Ring3 vertex.
+                    fillSprite = BuildLedgeSplit(meta.WedgeIndex);
+                    rotZ = 180f - 60f * meta.WedgeIndex;
+                    frameSprite = LedgeSpriteFactory.HexFrame;
+                    glowSprite = LedgeSpriteFactory.HexFrameGlow;
+                    break;
+                }
+
+                default:
+                {
+                    fillSprite = LedgeSpriteFactory.GetHexFill(LedgePalette.NeutralSpaceFill);
+                    frameSprite = LedgeSpriteFactory.HexFrame;
+                    glowSprite = LedgeSpriteFactory.HexFrameGlow;
+                    break;
+                }
+            }
+
+            if (fillImage != null)
+            {
+                fillImage.sprite = fillSprite;
+                fillImage.color = Color.white;
+                fillImage.transform.localRotation = Quaternion.Euler(0f, 0f, rotZ);
+            }
+            if (frameImage != null)
+            {
+                frameImage.sprite = frameSprite;
+                frameImage.transform.localRotation = Quaternion.Euler(0f, 0f, rotZ);
+            }
+            if (frameGlowImage != null)
+            {
+                frameGlowImage.sprite = glowSprite;
+                frameGlowImage.transform.localRotation = Quaternion.Euler(0f, 0f, rotZ);
+            }
+        }
+
+        private static Sprite BuildLedgeSplit(int wedgeIndex)
+        {
+            var own = LedgePalette.GetSpiritColor(wedgeIndex);
+            var opp = LedgePalette.GetOppositeSpiritColor(wedgeIndex);
+            // Split normal = radial direction (wedge angle). Pixel with dot > 0 is on the OUTER
+            // side of the hex (away from center) and gets the opposite color; inner side keeps
+            // own color.
+            float splitNormal = LedgePalette.GetWedgeAngleDeg(wedgeIndex);
+            return LedgeSpriteFactory.GetHexSplitFill(opp, own, splitNormal);
+        }
+
+        private static Sprite BuildRing3OffSplit(int id, int primaryWedgeIndex)
+        {
+            int offset = id - 25;
+            int k = offset / 2;
+            bool isCcw = (offset % 2) == 0;
+            int partnerWedge = 2 * k + 1;
+
+            var primary = LedgePalette.GetSpiritColor(primaryWedgeIndex);
+            var partner = LedgePalette.GetSpiritColor(partnerWedge);
+
+            // Split line runs radially through the hex center. Split normal = tangential (CCW).
+            // For ccwOff: space midway angle = halfway between wedges 2k and 2k+1 = (75 - 60k)°.
+            // For cwOff : space midway angle = halfway between wedges 2k+1 and 2k+2 = (45 - 60k)°.
+            float midwayAngle = isCcw ? (75f - 60f * k) : (45f - 60f * k);
+            float splitNormal = midwayAngle + 90f;
+
+            // CCW side (dot>0 with splitNormal) corresponds to the higher-angle neighbor.
+            // ccwOff: primary is the CCW neighbor (higher angle). cwOff: partner is the CCW neighbor.
+            Color sideA = isCcw ? primary : partner;
+            Color sideB = isCcw ? partner : primary;
+            return LedgeSpriteFactory.GetHexSplitFill(sideA, sideB, splitNormal);
+        }
+
         private static Color AddColor(Color baseColor, Color additive)
         {
-            // Add additive's rgb scaled by its own alpha so callers tune intensity via the alpha channel.
             float a = additive.a > 0f ? additive.a : 1f;
             return new Color(
                 Mathf.Clamp01(baseColor.r + additive.r * a),

@@ -22,7 +22,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
         }
 
         [Test]
-        public void InnerRing_HasSixBridgesConnectedToCenter_AndStopsNotConnected()
+        public void InnerRing_HasSixBridgesConnectedToCenter_AndWallsNotConnected()
         {
             var builder = BoardGraphBuilder.CreateHexagonalBoard();
             var board = builder.BuildBoard(0, 0);
@@ -32,47 +32,47 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                 .Select(kvp => kvp.Key)
                 .ToList();
 
-            var stopIds = board.SpaceMetadata
-                .Where(kvp => kvp.Value.Type == SpaceType.InnerStop)
+            var wallIds = board.SpaceMetadata
+                .Where(kvp => kvp.Value.Type == SpaceType.InnerWall)
                 .Select(kvp => kvp.Key)
                 .ToList();
 
             Assert.AreEqual(6, bridgeIds.Count, "There should be six inner bridge spaces.");
-            Assert.AreEqual(6, stopIds.Count, "There should be six inner stop spaces.");
+            Assert.AreEqual(6, wallIds.Count, "There should be six inner wall spaces.");
 
             foreach (var id in bridgeIds)
             {
                 Assert.Contains(0, board.GetAdjacentSpaces(id), "Bridge spaces should be adjacent to the center.");
             }
 
-            foreach (var id in stopIds)
+            foreach (var id in wallIds)
             {
-                CollectionAssert.DoesNotContain(board.GetAdjacentSpaces(id), 0, "Stop spaces should not be adjacent to the center.");
+                CollectionAssert.DoesNotContain(board.GetAdjacentSpaces(id), 0, "Wall spaces should not be adjacent to the center.");
             }
         }
 
         [Test]
-        public void InnerRing_FormsAlternatingBridgeStopTwelveCycle()
+        public void InnerRing_FormsAlternatingBridgeWallTwelveCycle()
         {
             var builder = BoardGraphBuilder.CreateHexagonalBoard();
             var board = builder.BuildBoard(0, 0);
 
-            // Every stop must connect to exactly two bridges (no center, no ring2-outer).
-            for (int stopId = 7; stopId <= 12; stopId++)
+            // Every wall must connect to exactly two bridges (no center, no ring2-outer).
+            for (int wallId = 7; wallId <= 12; wallId++)
             {
-                var bridges = board.GetAdjacentSpaces(stopId)
+                var bridges = board.GetAdjacentSpaces(wallId)
                     .Where(n => board.SpaceMetadata[n].Type == SpaceType.InnerBridge)
                     .ToList();
-                Assert.AreEqual(2, bridges.Count, $"Stop {stopId} should be flanked by exactly two bridges.");
+                Assert.AreEqual(2, bridges.Count, $"Wall {wallId} should be flanked by exactly two bridges.");
             }
 
-            // Every bridge must connect to exactly two stops on the inner ring (the 12-cycle neighbours).
+            // Every bridge must connect to exactly two walls on the inner ring (the 12-cycle neighbours).
             for (int bridgeId = 1; bridgeId <= 6; bridgeId++)
             {
-                var stops = board.GetAdjacentSpaces(bridgeId)
-                    .Where(n => board.SpaceMetadata[n].Type == SpaceType.InnerStop)
+                var walls = board.GetAdjacentSpaces(bridgeId)
+                    .Where(n => board.SpaceMetadata[n].Type == SpaceType.InnerWall)
                     .ToList();
-                Assert.AreEqual(2, stops.Count, $"Bridge {bridgeId} should be flanked by exactly two stops.");
+                Assert.AreEqual(2, walls.Count, $"Bridge {bridgeId} should be flanked by exactly two walls.");
             }
         }
 

@@ -100,6 +100,8 @@ namespace Magi.LedgeBoardGame.Board
         private SpaceView CreateSpaceView(int spaceId, SpaceMeta meta)
         {
             SpaceView viewInstance;
+            float hexSize = LedgeSpriteFactory.RectSizeForCircumradius(
+                BoardLayoutHelper.ComputeHexVisualRadius(BuildRadii()));
 
             if (spaceViewPrefab != null)
             {
@@ -113,11 +115,17 @@ namespace Magi.LedgeBoardGame.Board
                 go.transform.SetParent(transform, false);
 
                 var rect = go.AddComponent<RectTransform>();
-                rect.sizeDelta = new Vector2(60f, 60f);
+                rect.sizeDelta = new Vector2(hexSize, hexSize);
 
                 go.AddComponent<Image>();
 
                 viewInstance = go.AddComponent<SpaceView>();
+            }
+
+            var ownRect = viewInstance.GetComponent<RectTransform>();
+            if (ownRect != null)
+            {
+                ownRect.sizeDelta = new Vector2(hexSize, hexSize);
             }
 
             var stack = _boardState.GetStack(spaceId);
@@ -126,20 +134,22 @@ namespace Magi.LedgeBoardGame.Board
             return viewInstance;
         }
 
+        private BoardLayoutHelper.Radii BuildRadii() => new BoardLayoutHelper.Radii
+        {
+            Center = 0f,
+            Inner = innerRingRadius,
+            Ring2 = ring2Radius,
+            Ring3 = ring3Radius,
+            Outer = outerRadius,
+            Ledge = ledgeRadius
+        };
+
         private void PositionSpaceViews()
         {
             if (_boardState == null)
                 return;
 
-            var radii = new BoardLayoutHelper.Radii
-            {
-                Center = 0f,
-                Inner = innerRingRadius,
-                Ring2 = ring2Radius,
-                Ring3 = ring3Radius,
-                Outer = outerRadius,
-                Ledge = ledgeRadius
-            };
+            var radii = BuildRadii();
 
             foreach (var kvp in _spaceViews)
             {

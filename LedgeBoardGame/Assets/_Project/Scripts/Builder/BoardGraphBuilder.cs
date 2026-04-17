@@ -74,7 +74,7 @@ namespace Magi.LedgeBoardGame.Builder
             return board;
         }
 
-        // Builds the 49-space Ledge rosette graph: 1 center + 12 inner (6 bridges + 6 stops) +
+        // Builds the 49-space Ledge rosette graph: 1 center + 12 inner (6 bridges + 6 walls) +
         // 12 ring2 + 18 ring3 (6 vertices + 12 offs) + 6 outer-added.
         //
         // Wedges are 30° sectors numbered clockwise from the top (90°):
@@ -84,7 +84,7 @@ namespace Magi.LedgeBoardGame.Builder
         // SpaceId layout:
         //   0           Center
         //   1..6        InnerBridge, one per outer axis (wedge 2k)
-        //   7..12       InnerStop,   one per vertex axis (wedge 2k+1)
+        //   7..12       InnerWall,   one per vertex axis (wedge 2k+1)
         //   13..24      Ring2, one per wedge (13+w at wedge w)
         //   25..36      Ring3 "off" spaces, two per sector flanking each ring3-vertex
         //                 id = 25 + 2k + f, where k is the sector (0..5) and f is 0 (ccw flank) or 1 (cw flank)
@@ -108,11 +108,11 @@ namespace Magi.LedgeBoardGame.Builder
 
             for (int k = 0; k < 6; k++)
             {
-                builder.AddSpace(7 + k, new SpaceMeta(SpaceType.InnerStop, 1, k * 2 + 1, true));
+                builder.AddSpace(7 + k, new SpaceMeta(SpaceType.InnerWall, 1, k * 2 + 1, true));
             }
 
-            // Inner 12-cycle alternating bridge/stop, clockwise:
-            // bridge@90° - stop@60° - bridge@30° - stop@0° - ... - stop@120° - back to bridge@90°
+            // Inner 12-cycle alternating bridge/wall, clockwise:
+            // bridge@90° - wall@60° - bridge@30° - wall@0° - ... - wall@120° - back to bridge@90°
             int[] innerCycle = { 1, 7, 2, 8, 3, 9, 4, 10, 5, 11, 6, 12 };
             for (int i = 0; i < 12; i++)
             {
@@ -126,7 +126,7 @@ namespace Magi.LedgeBoardGame.Builder
             }
 
             // Inner ↔ Ring2 on the same axis. Bridges connect to outer-axis ring2 (even wedge),
-            // stops connect to vertex-axis ring2 (odd wedge).
+            // walls connect to vertex-axis ring2 (odd wedge).
             for (int k = 0; k < 6; k++)
             {
                 builder.AddBidirectionalEdge(1 + k, 13 + k * 2);
@@ -146,7 +146,7 @@ namespace Magi.LedgeBoardGame.Builder
                 builder.AddSpace(cwOff, new SpaceMeta(SpaceType.Ring3, 3, nextOuterWedge));
             }
 
-            // Ring3 vertices carry odd-indexed colors; they share a vertex axis with a stop.
+            // Ring3 vertices carry odd-indexed colors; they share a vertex axis with a wall.
             for (int k = 0; k < 6; k++)
             {
                 int wedge = k * 2 + 1;

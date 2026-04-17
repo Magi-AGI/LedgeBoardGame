@@ -32,7 +32,7 @@ This guide helps Unity AI Assistant create the visual layer for the Ledge board 
 - Center (1): Space ID 0
 - Inner Ring Split (12):
   - Bridge spaces (6): IDs 1-6 (adjacent to center)
-  - Stop spaces (6): IDs 7-12 (NOT adjacent to center)
+  - Wall spaces (6): IDs 7-12 (NOT adjacent to center)
 - Ring 2 (12): IDs 13-24
 - Ring 3 (18): IDs 25-42
 - Outer Added (6): IDs 43-48
@@ -41,7 +41,7 @@ This guide helps Unity AI Assistant create the visual layer for the Ledge board 
 
 ### Visual Layout
 - 12 wedges radiating from center
-- Split inner ring: alternating bridge/stop half-hexes
+- Split inner ring: alternating bridge/wall half-hexes
 - Ledge spaces on rim with color labels: Ela, Biz, Yun, Jutu, Glei, Sace, Rha, Dau, Wim, Pfi, Quae, Vei
 
 ## Scene Setup Tasks

@@ -98,6 +98,8 @@ namespace Magi.LedgeBoardGame.Board
         private GameObject CreateSpaceObject(int spaceId, SpaceMeta meta)
         {
             GameObject spaceObj;
+            float hexSize = LedgeSpriteFactory.RectSizeForCircumradius(
+                BoardLayoutHelper.ComputeHexVisualRadius(BuildRadii()));
 
             if (spacePrefab != null)
             {
@@ -111,7 +113,7 @@ namespace Magi.LedgeBoardGame.Board
 
                 // Add RectTransform for UI positioning
                 var rectTransform = spaceObj.AddComponent<RectTransform>();
-                rectTransform.sizeDelta = new Vector2(60, 60);
+                rectTransform.sizeDelta = new Vector2(hexSize, hexSize);
 
                 // Add basic visual
                 var image = spaceObj.AddComponent<UnityEngine.UI.Image>();
@@ -122,6 +124,12 @@ namespace Magi.LedgeBoardGame.Board
             }
 
             spaceObj.name = GetSpaceName(spaceId, meta);
+
+            var ownRect = spaceObj.GetComponent<RectTransform>();
+            if (ownRect != null)
+            {
+                ownRect.sizeDelta = new Vector2(hexSize, hexSize);
+            }
 
             // Add SpaceView component if not present
             var spaceView = spaceObj.GetComponent<SpaceView>();
@@ -137,6 +145,16 @@ namespace Magi.LedgeBoardGame.Board
             return spaceObj;
         }
 
+        private BoardLayoutHelper.Radii BuildRadii() => new BoardLayoutHelper.Radii
+        {
+            Center = centerRadius,
+            Inner = innerRingRadius,
+            Ring2 = ring2Radius,
+            Ring3 = ring3Radius,
+            Outer = outerRadius,
+            Ledge = ledgeRadius
+        };
+
         private void PositionSpaces()
         {
             foreach (var kvp in boardState.SpaceMetadata)
@@ -147,15 +165,7 @@ namespace Magi.LedgeBoardGame.Board
                 if (!spaceTransforms.ContainsKey(spaceId))
                     continue;
 
-                var radii = new BoardLayoutHelper.Radii
-                {
-                    Center = centerRadius,
-                    Inner = innerRingRadius,
-                    Ring2 = ring2Radius,
-                    Ring3 = ring3Radius,
-                    Outer = outerRadius,
-                    Ledge = ledgeRadius
-                };
+                var radii = BuildRadii();
 
                 Vector2 position = BoardLayoutHelper.ComputePosition(spaceId, meta, radii);
 
@@ -184,7 +194,7 @@ namespace Magi.LedgeBoardGame.Board
                     return Color.yellow;
                 case SpaceType.InnerBridge:
                     return new Color(0.5f, 0.7f, 1f); // Light blue
-                case SpaceType.InnerStop:
+                case SpaceType.InnerWall:
                     return new Color(0.7f, 0.7f, 0.7f); // Gray
                 default:
                     return new Color(0.9f, 0.9f, 0.9f); // Light gray

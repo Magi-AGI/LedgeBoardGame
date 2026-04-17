@@ -56,7 +56,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                 }
                 for (int i = 7; i <= 12; i++)
                 {
-                    board.SpaceMetadata[i] = new SpaceMeta(SpaceType.InnerStop, 1, i - 7, true);
+                    board.SpaceMetadata[i] = new SpaceMeta(SpaceType.InnerWall, 1, i - 7, true);
                 }
 
                 board.SpaceMetadata[37] = new SpaceMeta(SpaceType.Ring3, 3, 1, false, "Ela");

@@ -25,75 +25,117 @@ namespace Magi.LedgeBoardGame.Board
             Ledge = 450f
         };
 
-        // Native distance (in SVG units) from the board center to the outermost ring (OuterAdded).
-        // Used as the denominator when scaling the baked SVG positions to the caller's desired outer radius.
-        private const float NativeOuterRadius = 1080f;
+        // The rosette has six-fold rotational symmetry and every space sits on a
+        // pointy-top hex grid whose circumradius is R. Two neighbor distances follow:
+        //   flat-edge-shared neighbors (even "outer-axis" wedges) → R·√3
+        //   vertex-shared     neighbors (odd  "vertex"     wedges) → 2R
+        // Wedge index 0..11 corresponds to angle (90 − 30·w) degrees (CW from +Y).
+        // Even wedges 0,2,4,6,8,10 are the outer-axis directions (90°,30°,-30°,-90°,-150°,150°).
+        // Odd  wedges 1,3,5,7,9,11 are the vertex      directions (60°, 0°,-60°,-120°,180°,120°).
+        private const float Sqrt3   = 1.7320508f;
+        private const float Sqrt28  = 5.2915026f;           // |Ring3-off| = R·√28
+        private const float Ring3OffOffsetDeg = 19.106605f; // arctan(1/√27) off the vertex axis
 
-        // Baked positions extracted from the "Spaces" layer of Ledge Wheel EN 20 (Board Game).svg,
-        // normalized around the board center (2811.033, 2671.5459) and y-flipped for Unity UI (y-up).
-        // Index = SpaceId. See BoardGraphBuilder.CreateHexagonalBoard for the ID layout.
-        private static readonly Vector2[] SvgPositions =
-        {
-            new Vector2(   0.000f,    0.000f),   // 0  Center
-            new Vector2(   0.000f,  269.864f),   // 1  InnerBridge  @ 90°
-            new Vector2( 234.860f,  134.932f),   // 2  InnerBridge  @ 30°
-            new Vector2( 234.476f, -134.932f),   // 3  InnerBridge  @ -30°
-            new Vector2(  -1.253f, -269.864f),   // 4  InnerBridge  @ -90°
-            new Vector2(-233.709f, -134.932f),   // 5  InnerBridge  @ -150°
-            new Vector2(-234.093f,  134.932f),   // 6  InnerBridge  @ 150°
-            new Vector2( 157.538f,  269.876f),   // 7  InnerStop    @ 60°
-            new Vector2( 312.448f,    0.000f),   // 8  InnerStop    @ 0°
-            new Vector2( 156.574f, -269.864f),   // 9  InnerStop    @ -60°
-            new Vector2(-159.079f, -272.983f),   // 10 InnerStop    @ -120°
-            new Vector2(-311.935f,   -0.446f),   // 11 InnerStop    @ 180°
-            new Vector2(-155.806f,  269.864f),   // 12 InnerStop    @ 120°
-            new Vector2(   0.832f,  539.712f),   // 13 Ring2        @ 90°
-            new Vector2( 312.380f,  540.233f),   // 14 Ring2        @ 60°
-            new Vector2( 468.383f,  270.046f),   // 15 Ring2        @ 30°
-            new Vector2( 625.143f,    0.000f),   // 16 Ring2        @ 0°
-            new Vector2( 468.847f, -270.244f),   // 17 Ring2        @ -30°
-            new Vector2( 312.833f, -539.939f),   // 18 Ring2        @ -60°
-            new Vector2(   0.447f, -539.445f),   // 19 Ring2        @ -90°
-            new Vector2(-312.380f, -539.223f),   // 20 Ring2        @ -120°
-            new Vector2(-468.183f, -270.662f),   // 21 Ring2        @ -150°
-            new Vector2(-624.376f,    0.000f),   // 22 Ring2        @ 180°
-            new Vector2(-468.055f,  269.669f),   // 23 Ring2        @ 150°
-            new Vector2(-311.996f,  539.728f),   // 24 Ring2        @ 120°
-            new Vector2( 156.574f,  809.592f),   // 25 Ring3-off    @ 79°   (ccw of vertex 60°)
-            new Vector2( 624.892f,  540.125f),   // 26 Ring3-off    @ 41°   (cw  of vertex 60°)
-            new Vector2( 779.697f,  270.098f),   // 27 Ring3-off    @ 19°   (ccw of vertex 0°)
-            new Vector2( 781.588f, -269.757f),   // 28 Ring3-off    @ -19°  (cw  of vertex 0°)
-            new Vector2( 623.339f, -538.071f),   // 29 Ring3-off    @ -41°  (ccw of vertex -60°)
-            new Vector2( 156.905f, -809.605f),   // 30 Ring3-off    @ -79°  (cw  of vertex -60°)
-            new Vector2(-156.190f, -810.322f),   // 31 Ring3-off    @ -101° (ccw of vertex -120°)
-            new Vector2(-626.663f, -539.496f),   // 32 Ring3-off    @ -139° (cw  of vertex -120°)
-            new Vector2(-780.816f, -270.341f),   // 33 Ring3-off    @ -161° (ccw of vertex 180°)
-            new Vector2(-780.565f,  269.864f),   // 34 Ring3-off    @ 161°  (cw  of vertex 180°)
-            new Vector2(-624.615f,  540.242f),   // 35 Ring3-off    @ 139°  (ccw of vertex 120°)
-            new Vector2(-156.057f,  809.516f),   // 36 Ring3-off    @ 101°  (cw  of vertex 120°)
-            new Vector2( 468.953f,  809.292f),   // 37 Ring3-vertex @ 60°
-            new Vector2( 935.886f,   -0.679f),   // 38 Ring3-vertex @ 0°
-            new Vector2( 466.933f, -810.111f),   // 39 Ring3-vertex @ -60°
-            new Vector2(-468.820f, -809.087f),   // 40 Ring3-vertex @ -120°
-            new Vector2(-937.833f,   -0.477f),   // 41 Ring3-vertex @ 180°
-            new Vector2(-468.570f,  809.592f),   // 42 Ring3-vertex @ 120°
-            new Vector2(   0.384f, 1079.456f),   // 43 OuterAdded   @ 90°
-            new Vector2( 937.523f,  539.728f),   // 44 OuterAdded   @ 30°
-            new Vector2( 937.523f, -539.728f),   // 45 OuterAdded   @ -30°
-            new Vector2(   0.384f,-1079.456f),   // 46 OuterAdded   @ -90°
-            new Vector2(-936.755f, -539.728f),   // 47 OuterAdded   @ -150°
-            new Vector2(-938.104f,  540.350f),   // 48 OuterAdded   @ 150°
-        };
+        // InnerWall sits at 2.14·R, not the pure hex-grid 2·R. Walls must NOT touch the
+        // Center space — that is the definitional property of a wall. When the Bridges
+        // are oriented correctly their outer edges leave a gap at 2.14·R where the Walls
+        // tessellate against them.
+        private const float InnerWallRadiusFactor = 2.14f;
+
+        // Ledge radius in Radii is interpreted as the OuterAdded circumscribed radius.
+        // OuterAdded sits at 4·R·√3, so R = Ledge / (4·√3).
+        private const float OuterAddedRadiusFactor = 4f * Sqrt3;
 
         public static Vector2 ComputePosition(int spaceId, SpaceMeta meta, Radii radii)
         {
-            if (spaceId < 0 || spaceId >= SvgPositions.Length)
+            return ComputePositionForHexRadius(spaceId, ComputeHexLayoutUnit(radii));
+        }
+
+        /// Hex lattice unit used by ComputePositionForHexRadius. All center-to-center
+        /// neighbor distances in the rosette are either R·√3 (Center ↔ InnerBridge) or 2·R
+        /// (every pure-hex adjacency: Ring2, Ring3, OuterAdded).
+        public static float ComputeHexLayoutUnit(Radii radii)
+        {
+            return radii.Ledge > 0f ? radii.Ledge / OuterAddedRadiusFactor : 1f;
+        }
+
+        /// Circumradius for the drawn hex sprite, sized so that hex-type adjacencies at
+        /// center-distance 2·R_layout flat-edge-share (R_visual·√3 = 2·R_layout).
+        /// Center / InnerBridge / InnerWall use custom shapes; their overlap with their
+        /// larger-than-lattice-unit hex neighbors is intentional (bridge/wall geometry is
+        /// still being refined separately).
+        public static float ComputeHexVisualRadius(Radii radii)
+        {
+            return 2f * ComputeHexLayoutUnit(radii) / Sqrt3;
+        }
+
+        [System.Obsolete("Use ComputeHexLayoutUnit (for positions) or ComputeHexVisualRadius (for sprite sizing).")]
+        public static float ComputeHexCircumradius(Radii radii) => ComputeHexLayoutUnit(radii);
+
+        public static Vector2 ComputePositionForHexRadius(int spaceId, float R)
+        {
+            // Canonical space IDs (see BoardGraphBuilder.CreateHexagonalBoard):
+            //   0         Center
+            //   1  – 6    InnerBridge  on even wedges 0,2,4,6,8,10   at R·√3
+            //   7  – 12   InnerWall    on odd  wedges 1,3,5,7,9,11   at 2.14·R (gap, not 2R)
+            //   13 – 24   Ring2 per wedge, alternating (even: 2R·√3, odd: 4R)
+            //   25 – 36   Ring3-off, 6 pairs flanking vertex axes by ±19.107°, at R·√28
+            //   37 – 42   Ring3-vertex on odd wedges                 at 6R
+            //   43 – 48   OuterAdded   on even wedges                at 4R·√3
+            if (spaceId == 0) return Vector2.zero;
+
+            if (spaceId >= 1 && spaceId <= 6)
             {
-                return Vector2.zero;
+                int evenWedge = (spaceId - 1) * 2;
+                return Polar(R * Sqrt3, WedgeAngleDeg(evenWedge));
             }
 
-            float scale = radii.Ledge > 0f ? radii.Ledge / NativeOuterRadius : 1f;
-            return SvgPositions[spaceId] * scale;
+            if (spaceId >= 7 && spaceId <= 12)
+            {
+                int oddWedge = (spaceId - 7) * 2 + 1;
+                return Polar(InnerWallRadiusFactor * R, WedgeAngleDeg(oddWedge));
+            }
+
+            if (spaceId >= 13 && spaceId <= 24)
+            {
+                int wedge = spaceId - 13;
+                float rRing = (wedge & 1) == 0 ? 2f * R * Sqrt3 : 4f * R;
+                return Polar(rRing, WedgeAngleDeg(wedge));
+            }
+
+            if (spaceId >= 25 && spaceId <= 36)
+            {
+                // Pairs traverse the 6 vertex wedges in order (1,3,5,7,9,11);
+                // the even index in each pair is the CCW-of-vertex offset, odd is CW.
+                int index  = spaceId - 25;
+                int pairId = index / 2;
+                bool ccw   = (index & 1) == 0;
+                int oddWedge = pairId * 2 + 1;
+                float offset = ccw ? +Ring3OffOffsetDeg : -Ring3OffOffsetDeg;
+                return Polar(R * Sqrt28, WedgeAngleDeg(oddWedge) + offset);
+            }
+
+            if (spaceId >= 37 && spaceId <= 42)
+            {
+                int oddWedge = (spaceId - 37) * 2 + 1;
+                return Polar(6f * R, WedgeAngleDeg(oddWedge));
+            }
+
+            if (spaceId >= 43 && spaceId <= 48)
+            {
+                int evenWedge = (spaceId - 43) * 2;
+                return Polar(4f * R * Sqrt3, WedgeAngleDeg(evenWedge));
+            }
+
+            return Vector2.zero;
+        }
+
+        private static float WedgeAngleDeg(int wedge) => 90f - 30f * wedge;
+
+        private static Vector2 Polar(float r, float angleDeg)
+        {
+            float a = angleDeg * Mathf.Deg2Rad;
+            return new Vector2(r * Mathf.Cos(a), r * Mathf.Sin(a));
         }
     }
 }
