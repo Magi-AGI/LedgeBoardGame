@@ -137,3 +137,9 @@ Thumbs.db
 
 # Unity crash-recovery scenes (auto-generated, per-machine)
 **/_Recovery/
+
+# .NET build output (M1 extraction: LedgeBoardGame.Core + future MagiGameServer projects)
+# Unity auto-generates csproj/sln files at the project root and they're ignored above;
+# the hand-authored csproj for the extracted netstandard core needs to be tracked.
+**/bin/
+!LedgeBoardGame.Core/LedgeBoardGame.Core.csproj

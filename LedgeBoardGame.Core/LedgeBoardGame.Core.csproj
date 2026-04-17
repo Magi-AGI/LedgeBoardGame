@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <RootNamespace>Magi.LedgeBoardGame</RootNamespace>
+    <AssemblyName>Magi.LedgeBoardGame.Core</AssemblyName>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!--
+      LangVersion pinned to 9.0 to match Unity 6's Roslyn; netstandard2.1 is the
+      minimum TFM that still runs under .NET Framework-compatible hosts and,
+      critically, under Unity 6's mono runtime. The server host (MagiGameServer,
+      M3/M4) will target net8.0+ and reference this assembly directly, so any
+      language feature newer than 9.0 would break Unity consumption.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!--
+    Sources stay physically inside the Unity project so the Unity asmdef keeps
+    compiling them through its own folder scan; this csproj compiles the same
+    files through a second, Unity-free path to prove the domain is actually
+    extractable. The go/no-go check is whether `dotnet build` succeeds without
+    any UnityEngine/TMPro/InputSystem reference being pulled transitively.
+    Physical relocation (into a UPM package or shared repo) is deferred to M6.
+  -->
+  <ItemGroup>
+    <Compile Include="..\LedgeBoardGame\Assets\_Project\Scripts\Models\**\*.cs" />
+    <Compile Include="..\LedgeBoardGame\Assets\_Project\Scripts\Rules\**\*.cs" />
+    <Compile Include="..\LedgeBoardGame\Assets\_Project\Scripts\Builder\**\*.cs" />
+  </ItemGroup>
+
+</Project>
