@@ -26,6 +26,11 @@
 # Recordings can get excessive in size
 */[Rr]ecordings/
 
+# Ad-hoc screenshots and captures (MCP/editor debugging artifacts, not project content)
+**/[Cc]aptures/
+**/[Aa]ssets/[Ss]creenshots/
+**/[Aa]ssets/[Ss]creenshots.meta
+
 # Uncomment this line if you wish to ignore the asset store tools plugin
 # */[Aa]ssets/AssetStoreTools*
 
