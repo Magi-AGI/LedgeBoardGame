@@ -19,25 +19,44 @@ namespace MagiGameServer.Contracts.Client
     /// blur that boundary.
     public interface IActionSubmitter<TAction, TState>
     {
-        /// Submits an action. Non-blocking. The submitter is responsible for
-        /// stamping `Seq` and `PredictedStateHash`; callers pass just the
-        /// action payload and let the submitter wrap it.
+        /// Submits an action. Non-blocking. The submitter stamps `Seq` and
+        /// wraps the payload into an ActionEnvelope; the caller provides the
+        /// action plus the hash of its own post-apply projected state (the
+        /// submitter cannot compute that hash because it doesn't run the rules
+        /// — only the caller, which just applied the action optimistically,
+        /// has the post-state in hand). Predicting callers compute this via
+        /// adapter.GetStateHash(postApplyProjectedState); non-predicting
+        /// callers (e.g. bots with no optimistic layer) pass 0 to skip the
+        /// desync check.
         void Submit(TAction action, long predictedStateHash);
 
-        /// Fired when the server echoed back a matching applied state. `Seq`
-        /// names which submit is being acked so callers can match to their
+        /// Fired when the server echoed back a matching applied state —
+        /// Outcome=Applied and the server's post-projection hash matched the
+        /// client's PredictedStateHash. `AckedSeq` + `SubmittingSeat` name
+        /// which submit is being acked so callers can match to their
         /// optimistic stack.
         event Action<StateEcho<TState>> OnActionApplied;
 
         /// Fired when the server's post-state diverges from the client's
-        /// predicted state. The client should replace its optimistic state with
-        /// the echoed `State` rather than trying to apply further optimistic
-        /// actions on top of the stale prediction.
+        /// optimistic view and the client must snap to the echoed `State`.
+        /// This covers three cases: (1) Outcome=Rejected — the rules refused
+        /// the action, so the server's post-state equals the pre-action state
+        /// while the client already applied optimistically; (2) Outcome=Desynced
+        /// — the server applied but the post-projection hashes disagreed;
+        /// (3) broadcast receipt of an earlier takeback that rewound an action
+        /// the client had already rendered. In every case, the client should
+        /// replace its optimistic state with the echoed `State` rather than
+        /// trying to apply further optimistic actions on top of the stale
+        /// prediction.
         event Action<StateEcho<TState>> OnActionReconciled;
 
         /// Fired when the server rejected the protocol envelope entirely
-        /// (malformed, wrong seat, etc). Separate from rule rejections, which
-        /// come back as an Applied echo with Outcome=Rejected.
+        /// (malformed, wrong seat, no active session). Distinct from rule
+        /// rejections, which come back via OnActionReconciled with
+        /// Outcome=Rejected and a valid post-state attached. Protocol errors
+        /// don't carry a post-state because the server never reached the rules
+        /// adapter, so the client's optimistic prediction is the only state
+        /// it has — it must undo locally rather than snap to an echo.
         event Action<ErrorEnvelope> OnError;
     }
 }

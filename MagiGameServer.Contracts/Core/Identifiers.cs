@@ -58,6 +58,31 @@ namespace MagiGameServer.Contracts.Core
         public static bool operator >=(ClientSeq a, ClientSeq b) => a.Value >= b.Value;
     }
 
+    /// Server-stamped, globally monotonic revision number. Unlike ClientSeq —
+    /// which is per-client and only disambiguates within one submitter's own
+    /// optimistic stack — ServerSeq is authoritative across every seat in the
+    /// session and names a single position on the canonical timeline. Every
+    /// accepted action advances the revision by one; every takeback rewinds it.
+    /// Echoes broadcast to non-submitting seats use this field as the ordering
+    /// key, since AckedSeq is meaningless to anyone but the submitter.
+    public readonly struct ServerSeq : IEquatable<ServerSeq>, IComparable<ServerSeq>
+    {
+        public long Value { get; }
+        public ServerSeq(long value) { Value = value; }
+        public ServerSeq Next() => new ServerSeq(Value + 1);
+        public bool Equals(ServerSeq other) => Value == other.Value;
+        public int CompareTo(ServerSeq other) => Value.CompareTo(other.Value);
+        public override bool Equals(object obj) => obj is ServerSeq other && Equals(other);
+        public override int GetHashCode() => Value.GetHashCode();
+        public override string ToString() => $"rev:{Value}";
+        public static bool operator ==(ServerSeq a, ServerSeq b) => a.Equals(b);
+        public static bool operator !=(ServerSeq a, ServerSeq b) => !a.Equals(b);
+        public static bool operator <(ServerSeq a, ServerSeq b) => a.Value < b.Value;
+        public static bool operator >(ServerSeq a, ServerSeq b) => a.Value > b.Value;
+        public static bool operator <=(ServerSeq a, ServerSeq b) => a.Value <= b.Value;
+        public static bool operator >=(ServerSeq a, ServerSeq b) => a.Value >= b.Value;
+    }
+
     /// Outcome of applying an action on the server. `Applied` means the action
     /// was valid and the state advanced. `Rejected` means the rules refused
     /// (e.g. illegal move). `Desynced` means the client's predicted state

@@ -34,9 +34,17 @@ namespace MagiGameServer.Contracts.Protocol
     public sealed record TakebackResponse
     {
         public SessionId Session { get; init; }
+        public SeatId RequestingSeat { get; init; }
         public ClientSeq AckedRequestSeq { get; init; }
         public TakebackOutcome Outcome { get; init; }
         public int StepsGranted { get; init; }
+
+        /// Canonical timeline position after the rewind. Only meaningful when
+        /// Outcome=Granted; for PendingConsent/Denied the revision did not
+        /// move. Non-requesting seats watching the broadcast should reconcile
+        /// their own state toward whichever StateEcho carries this revision.
+        public ServerSeq RevisionAfter { get; init; }
+
         public string Message { get; init; }
     }
 

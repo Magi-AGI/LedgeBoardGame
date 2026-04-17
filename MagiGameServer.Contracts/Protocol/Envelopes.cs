@@ -21,13 +21,25 @@ namespace MagiGameServer.Contracts.Protocol
     /// projected for the receiving seat. Clients never see cross-seat hidden
     /// information — the hidden-info guarantee is enforced server-side inside
     /// ProjectStateFor, not by the client voluntarily ignoring fields.
-    /// `AckedSeq` names the client action this echo is answering; predicting
-    /// clients match echoes to their pending optimistic stack via this field.
+    ///
+    /// Ordering and identity: `Revision` is the server-authoritative timeline
+    /// position after this action and is meaningful to every recipient; it's
+    /// the field broadcast-receivers should order by. `AckedSeq` +
+    /// `SubmittingSeat` together identify the originating client action —
+    /// `AckedSeq` alone is ambiguous for broadcasts since ClientSeq is
+    /// per-client. A predicting client only matches an echo to its pending
+    /// optimistic stack when `SubmittingSeat == ForSeat`.
+    ///
+    /// `StateHash` is the hash of `State` as `ForSeat` sees it (i.e. the hash
+    /// of the already-projected state), matching what the submitting client
+    /// would have sent as PredictedStateHash.
     public sealed record StateEcho<TState>
     {
         public SessionId Session { get; init; }
         public SeatId ForSeat { get; init; }
+        public SeatId SubmittingSeat { get; init; }
         public ClientSeq AckedSeq { get; init; }
+        public ServerSeq Revision { get; init; }
         public TState State { get; init; }
         public long StateHash { get; init; }
         public ApplyOutcome Outcome { get; init; }
