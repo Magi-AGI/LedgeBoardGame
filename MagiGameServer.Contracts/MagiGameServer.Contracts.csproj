@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <RootNamespace>MagiGameServer.Contracts</RootNamespace>
+    <AssemblyName>MagiGameServer.Contracts</AssemblyName>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!--
+      Contracts is the wire + API surface shared by every MagiGameServer
+      consumer: the server host (net8.0+), the Unity client plugin
+      (netstandard2.1 under mono), and the Python paper server (via a
+      generated schema contract, not a direct reference). The TFM is the
+      common denominator. No Newtonsoft or JSON lib dependency — contracts
+      define shapes, not serialization; each host chooses its own codec.
+
+      Relocation note: lives inside the LedgeBoardGame repo during the M2
+      draft so the post-M1 shape can settle without a new repo rename
+      churn. M3 will lift this directory into its own sibling repo
+      (E:/GitHub/Magi-AGI/MagiGameServer/) alongside MagiUnityTools.
+    -->
+  </PropertyGroup>
+
+</Project>

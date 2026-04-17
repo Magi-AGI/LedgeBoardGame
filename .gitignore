@@ -143,3 +143,4 @@ Thumbs.db
 # the hand-authored csproj for the extracted netstandard core needs to be tracked.
 **/bin/
 !LedgeBoardGame.Core/LedgeBoardGame.Core.csproj
+!MagiGameServer.Contracts/MagiGameServer.Contracts.csproj
