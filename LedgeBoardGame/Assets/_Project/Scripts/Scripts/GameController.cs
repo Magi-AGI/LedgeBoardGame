@@ -123,6 +123,19 @@ namespace Magi.LedgeBoardGame
 
             UpdateStatusUI();
             RefreshUndoButton();
+
+            // Game begins in Placement. Without this, P1's very first Light placement
+            // has no ripple — highlights only started triggering after the first tween
+            // completed. Kick off the initial ripple so the player sees valid targets
+            // immediately on game start.
+            if (_gameState.CurrentPhase == GamePhase.Placement)
+            {
+                HighlightPlacementTargets();
+            }
+            else
+            {
+                HighlightMovablePieces();
+            }
         }
 
         private void OnDestroy()
@@ -421,7 +434,7 @@ namespace Magi.LedgeBoardGame
             int maxSteps = _pickedUpLight + _pickedUpDark;
             _selectedReach = _rules.GetReachableTargets(_gameState, clicked, _selectedTone, maxSteps);
             _selectedReachMax = maxSteps;
-            HighlightReachableSpaces(_selectedReach, maxSteps);
+            HighlightReachableSpaces(_selectedReach, maxSteps, _selectedTone);
             HighlightSelectedSource();
             NotifyInHandGhost();
         }
@@ -915,12 +928,12 @@ namespace Magi.LedgeBoardGame
             }
         }
 
-        private void HighlightReachableSpaces(Dictionary<SpaceId, int> distances, int maxDistance)
+        private void HighlightReachableSpaces(Dictionary<SpaceId, int> distances, int maxDistance, Tone tone)
         {
             ClearHighlights();
             foreach (var kvp in _boardPresenters)
             {
-                kvp.Value.HighlightValidMovesWithDistance(distances, maxDistance);
+                kvp.Value.HighlightValidMovesWithDistance(distances, maxDistance, tone);
             }
         }
 
@@ -947,7 +960,73 @@ namespace Magi.LedgeBoardGame
                 return;
 
             var targets = _rules.GetValidPlacementTargets(_gameState, currentPlayer.Id);
-            HighlightSpaces(targets);
+            if (targets == null || targets.Count == 0)
+            {
+                ClearHighlights();
+                return;
+            }
+
+            // Tone the placement ripple to whichever energy comes next: Light first, then
+            // Dark, mirroring HandlePlacementClick's fixed order.
+            Tone placementTone = _gameState.CurrentTurnPlacements.Exists(p => p.Tone == Tone.Light)
+                ? Tone.Dark
+                : Tone.Light;
+
+            var playerBoard = _gameState.GetBoardForPlayer(currentPlayer.Id);
+            if (playerBoard == null)
+            {
+                ClearHighlights();
+                return;
+            }
+
+            // BFS hop distances from the player's core (space 0) so the pulse ripples
+            // outward from the center during placement, matching the source-origin
+            // ripple used during movement.
+            var distancesFromCore = ComputeHopDistances(playerBoard, 0);
+            var targetDistances = new Dictionary<SpaceId, int>();
+            int maxDistance = 0;
+            foreach (var target in targets)
+            {
+                if (target.BoardId != playerBoard.BoardId) continue;
+                int dist = distancesFromCore.TryGetValue(target.Id, out var d) ? d : 1;
+                if (dist <= 0) dist = 1;
+                targetDistances[target] = dist;
+                if (dist > maxDistance) maxDistance = dist;
+            }
+            if (targetDistances.Count == 0 || maxDistance <= 0)
+            {
+                ClearHighlights();
+                return;
+            }
+
+            ClearHighlights();
+            foreach (var kvp in _boardPresenters)
+            {
+                kvp.Value.HighlightValidMovesWithDistance(targetDistances, maxDistance, placementTone, uniformIntensity: true);
+            }
+        }
+
+        /// BFS over a single board's adjacency, returning hop distance from `startSpaceId`
+        /// to every reachable space (including the start itself at distance 0). Used by
+        /// the placement ripple so targets pulse in rings outward from the core.
+        private static Dictionary<int, int> ComputeHopDistances(BoardState board, int startSpaceId)
+        {
+            var distances = new Dictionary<int, int> { { startSpaceId, 0 } };
+            var queue = new Queue<int>();
+            queue.Enqueue(startSpaceId);
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                int currentDist = distances[current];
+                if (!board.Adjacency.TryGetValue(current, out var neighbors)) continue;
+                foreach (var n in neighbors)
+                {
+                    if (distances.ContainsKey(n)) continue;
+                    distances[n] = currentDist + 1;
+                    queue.Enqueue(n);
+                }
+            }
+            return distances;
         }
 
         private void HighlightMovablePieces()

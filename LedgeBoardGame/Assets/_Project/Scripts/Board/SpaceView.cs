@@ -52,9 +52,23 @@ namespace Magi.LedgeBoardGame.Board
         private string _spaceLabel;
 
         [Header("Pulse")]
-        [SerializeField] private float pulseFrequencyHz = 1.4f;
+        [SerializeField] private float pulseFrequencyHz = 0.9f;
         [SerializeField] private float pulseMinAlpha = 0.25f;
         [SerializeField] private float pulseMaxAlpha = 0.85f;
+        // Inner-ring fills (Center/Wall/Bridge) are grey, so full white/black pulses
+        // there read as harsh white-outs or black-outs. Scale the pulse alpha down
+        // on those spaces so the tone still reads without overwhelming the fill.
+        [SerializeField, Range(0f, 1f)] private float innerRingPulseDamping = 0.5f;
+        // Hop-delay between pulse peaks on adjacent rings. Peaks travel outward from
+        // the origin (source during movement, core during placement) so the highlight
+        // reads as a ripple rather than a synchronized flash.
+        [SerializeField] private float radialPhasePerHop = 0.15f;
+        // Soft start/stop on selection so target-picking doesn't flash. Delay matches
+        // the hover-label's armed-reveal pattern (shorter here — half the hover delay —
+        // so the pulse appears quickly enough to feel connected to the pick-up, but
+        // not so fast it's jarring). The fade itself is a short ramp.
+        [SerializeField] private float validTargetFadeInDelay = 0.6f;
+        [SerializeField] private float validTargetFadeDuration = 0.35f;
 
         [Header("Movable-source breathe")]
         [SerializeField] private float sourceBreatheHz = 0.7f;
@@ -70,6 +84,11 @@ namespace Magi.LedgeBoardGame.Board
         private bool _hovered;
         private bool _selected;
         private float _validTargetIntensity;
+        private Tone? _validTargetTone;
+        private int _validTargetHopsFromOrigin;
+        private float _validTargetEnvelope;
+        private float _validTargetEnvelopeTarget;
+        private float _validTargetFadeDelayRemaining;
         private bool _movableSource;
         private bool _pulseVisible;
 
@@ -334,20 +353,41 @@ namespace Magi.LedgeBoardGame.Board
 
         public void SetValidTarget(bool valid)
         {
-            SetValidTargetIntensity(valid ? 1f : 0f);
+            SetValidTargetIntensity(valid ? 1f : 0f, null, 0);
         }
 
-        /// Multi-hop reach highlight: intensity scales the pulse alpha so distant
-        /// reachable spaces (farther out along the move path) read fainter than the
-        /// immediate neighbors. 0 disables the pulse; 1 is the full single-hop glow.
-        public void SetValidTargetIntensity(float intensity)
+        /// Multi-hop reach highlight. `intensity` scales pulse alpha (distant reaches
+        /// read fainter than neighbors); `tone` picks the pulse color (white for Light,
+        /// near-black for Dark, null reverts to the legacy green); `hopsFromOrigin`
+        /// phase-shifts the pulse so peaks travel outward from the selected source (or
+        /// the core during placement), making the highlight read as a ripple. A value
+        /// of 0 clears the pulse via a soft fade-out; a fresh activation starts after
+        /// `validTargetFadeInDelay` so target-picking doesn't flash on every click.
+        public void SetValidTargetIntensity(float intensity, Tone? tone = null, int hopsFromOrigin = 0)
         {
             intensity = Mathf.Clamp01(intensity);
-            if (Mathf.Approximately(_validTargetIntensity, intensity)) return;
             bool wasActive = _validTargetIntensity > 0f;
-            bool isActive = intensity > 0f;
+            bool willBeActive = intensity > 0f;
+
             _validTargetIntensity = intensity;
-            UpdateFrameGlow(instant: !isActive && !wasActive);
+            _validTargetTone = tone;
+            _validTargetHopsFromOrigin = Mathf.Max(0, hopsFromOrigin);
+
+            if (willBeActive && !wasActive)
+            {
+                // Fresh activation: fade in with delay; mid-fade re-activation skips the
+                // delay so a quick deselect/re-select doesn't strand the glow at partial
+                // visibility while the delay ticks down.
+                _validTargetEnvelopeTarget = 1f;
+                _validTargetFadeDelayRemaining = (_validTargetEnvelope <= 0f) ? validTargetFadeInDelay : 0f;
+            }
+            else if (!willBeActive && wasActive)
+            {
+                _validTargetEnvelopeTarget = 0f;
+                _validTargetFadeDelayRemaining = 0f;
+            }
+
+            UpdateFrameGlow(instant: !willBeActive && !wasActive);
         }
 
         public void SetMovableSource(bool active)
@@ -406,11 +446,17 @@ namespace Magi.LedgeBoardGame.Board
 
             if (frameGlowImage == null) return;
 
-            if (_validTargetIntensity > 0f)
+            TickValidTargetEnvelope();
+
+            if (_validTargetEnvelope > 0f)
             {
-                float t = Mathf.Sin(Time.unscaledTime * pulseFrequencyHz * 2f * Mathf.PI) * 0.5f + 0.5f;
-                float a = Mathf.Lerp(pulseMinAlpha, pulseMaxAlpha, t) * _validTargetIntensity;
-                var baseCol = LedgePalette.FrameValidTargetAdd;
+                // Phase shift by hop distance produces a wave that visibly travels
+                // outward from the origin space rather than all targets flashing in
+                // sync — the farther a space is, the later its pulse peak arrives.
+                float phaseOffset = _validTargetHopsFromOrigin * radialPhasePerHop;
+                float t = Mathf.Sin((Time.unscaledTime - phaseOffset) * pulseFrequencyHz * 2f * Mathf.PI) * 0.5f + 0.5f;
+                float a = Mathf.Lerp(pulseMinAlpha, pulseMaxAlpha, t) * _validTargetIntensity * _validTargetEnvelope * GetPulseDampingForMeta();
+                var baseCol = GetValidTargetPulseColor(_validTargetTone);
                 frameGlowImage.color = new Color(baseCol.r, baseCol.g, baseCol.b, a);
             }
             else if (_movableSource)
@@ -419,6 +465,59 @@ namespace Magi.LedgeBoardGame.Board
                 float a = Mathf.Lerp(sourceMinAlpha, sourceMaxAlpha, t);
                 var baseCol = LedgePalette.FrameMovableSourceAdd;
                 frameGlowImage.color = new Color(baseCol.r, baseCol.g, baseCol.b, a);
+            }
+            else
+            {
+                // Envelope finished fading out and no movable-source breathe is active —
+                // clear any residual alpha so the next state starts from zero.
+                var c = frameGlowImage.color;
+                if (c.a > 0f)
+                {
+                    c.a = 0f;
+                    frameGlowImage.color = c;
+                }
+            }
+        }
+
+        private void TickValidTargetEnvelope()
+        {
+            if (Mathf.Approximately(_validTargetEnvelope, _validTargetEnvelopeTarget))
+                return;
+            float dt = Time.unscaledDeltaTime;
+            if (_validTargetEnvelopeTarget > _validTargetEnvelope)
+            {
+                if (_validTargetFadeDelayRemaining > 0f)
+                {
+                    _validTargetFadeDelayRemaining -= dt;
+                    return;
+                }
+                float step = (validTargetFadeDuration <= 0f) ? 1f : dt / validTargetFadeDuration;
+                _validTargetEnvelope = Mathf.Min(_validTargetEnvelopeTarget, _validTargetEnvelope + step);
+            }
+            else
+            {
+                float step = (validTargetFadeDuration <= 0f) ? 1f : dt / validTargetFadeDuration;
+                _validTargetEnvelope = Mathf.Max(_validTargetEnvelopeTarget, _validTargetEnvelope - step);
+            }
+        }
+
+        private static Color GetValidTargetPulseColor(Tone? tone)
+        {
+            if (tone == Tone.Light) return LedgePalette.CounterLight;
+            if (tone == Tone.Dark) return LedgePalette.CounterDark;
+            return LedgePalette.FrameValidTargetAdd;
+        }
+
+        private float GetPulseDampingForMeta()
+        {
+            switch (_metadata.Type)
+            {
+                case SpaceType.Center:
+                case SpaceType.InnerBridge:
+                case SpaceType.InnerWall:
+                    return innerRingPulseDamping;
+                default:
+                    return 1f;
             }
         }
 

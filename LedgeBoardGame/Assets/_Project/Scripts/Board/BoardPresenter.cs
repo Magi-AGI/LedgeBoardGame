@@ -216,9 +216,16 @@ namespace Magi.LedgeBoardGame.Board
         /// distance from the selected source. Step-1 neighbors get the full pulse and
         /// farther hops fade toward `minIntensity`, so the player's eye reads the
         /// brightest rings as the easiest/shortest moves and the dimmest as the
-        /// edge-of-range reach. Distance 0 (source itself) is not highlighted here —
-        /// HighlightSelection carries the source frame.
-        public void HighlightValidMovesWithDistance(Dictionary<SpaceId, int> distances, int maxDistance, float minIntensity = 0.35f)
+        /// edge-of-range reach. `tone` paints the pulse white or near-black to match
+        /// the energy being moved/placed; the hop distance is also passed through so
+        /// SpaceView can phase-shift the pulse into an outward-traveling ripple.
+        /// Distance 0 (source itself) is not highlighted here — HighlightSelection
+        /// carries the source frame.
+        /// When `uniformIntensity` is true, every target pulses at full brightness
+        /// regardless of hop distance — use this for placement, where all open
+        /// spaces are equally valid and only the ripple's travel should signal
+        /// distance from the origin.
+        public void HighlightValidMovesWithDistance(Dictionary<SpaceId, int> distances, int maxDistance, Tone tone, float minIntensity = 0.35f, bool uniformIntensity = false)
         {
             foreach (var v in _spaceViews.Values)
             {
@@ -234,10 +241,12 @@ namespace Magi.LedgeBoardGame.Board
 
                 if (_spaceViews.TryGetValue(kvp.Key.Id, out var view))
                 {
-                    float intensity = maxDistance == 1
-                        ? 1f
-                        : Mathf.Lerp(minIntensity, 1f, (maxDistance - kvp.Value) / (float)(maxDistance - 1));
-                    view.SetValidTargetIntensity(intensity);
+                    float intensity;
+                    if (uniformIntensity || maxDistance == 1)
+                        intensity = 1f;
+                    else
+                        intensity = Mathf.Lerp(minIntensity, 1f, (maxDistance - kvp.Value) / (float)(maxDistance - 1));
+                    view.SetValidTargetIntensity(intensity, tone, kvp.Value);
                 }
             }
         }
