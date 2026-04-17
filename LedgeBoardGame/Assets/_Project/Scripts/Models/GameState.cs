@@ -348,11 +348,20 @@ namespace Magi.LedgeBoardGame.Models
                 GameOver = GameOver
             };
 
+            var turnMoves = CurrentTurnMoves
+                .Select(m => new Move(m.From, m.To, m.Tone, m.Count) { Result = m.Result })
+                .ToList();
+            var turnPlacements = CurrentTurnPlacements
+                .Select(p => new PlacementMove(p.Target, p.Tone, p.Count) { Result = p.Result })
+                .ToList();
+
             return new Spec.SpecGameState
             {
                 Players = specPlayers,
                 Ctx = ctx,
-                Data = data
+                Data = data,
+                CurrentTurnMoves = turnMoves,
+                CurrentTurnPlacements = turnPlacements
             };
         }
 
@@ -387,6 +396,24 @@ namespace Magi.LedgeBoardGame.Models
             else
             {
                 gameState = new GameState(players, null);
+            }
+
+            if (specState.CurrentTurnMoves != null)
+            {
+                foreach (var m in specState.CurrentTurnMoves)
+                {
+                    gameState.CurrentTurnMoves.Add(
+                        new Move(m.From, m.To, m.Tone, m.Count) { Result = m.Result });
+                }
+            }
+
+            if (specState.CurrentTurnPlacements != null)
+            {
+                foreach (var p in specState.CurrentTurnPlacements)
+                {
+                    gameState.CurrentTurnPlacements.Add(
+                        new PlacementMove(p.Target, p.Tone, p.Count) { Result = p.Result });
+                }
             }
 
             gameState.CurrentPlayerId = specState.Ctx != null && int.TryParse(specState.Ctx.CurrentPlayer, out var currentId)
