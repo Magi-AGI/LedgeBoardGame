@@ -56,6 +56,18 @@ packages:
     version: 17.4.0
     source: registry
 
+  # URP 17.4's URPCameraBinder.cs references VFX Graph types (VFXBinderBase,
+  # ExposedProperty, etc.). VFX Graph must be installed or URP fails to compile.
+  - name: com.unity.visualeffectgraph
+    version: 17.4.0
+    source: registry
+
+  # VFX Graph's Runtime asmdef hard-references Unity.Timeline; without it the
+  # VFX Graph runtime DLL fails to build, which in turn breaks URP's VFX bindings.
+  - name: com.unity.timeline
+    version: 1.8.7
+    source: registry
+
   # 2D — scene uses UI.Image backed by sprites
   - name: com.unity.2d.sprite
     version: 1.0.0

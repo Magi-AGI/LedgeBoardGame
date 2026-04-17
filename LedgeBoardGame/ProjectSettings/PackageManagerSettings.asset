@@ -52,13 +52,13 @@ MonoBehaviour:
     m_Compliance:
       m_Status: 0
       m_Violations: []
-  m_UserSelectedRegistryName: Unity
+  m_UserSelectedRegistryName: 
   m_UserAddingNewScopedRegistry: 0
   m_RegistryInfoDraft:
     m_Modified: 0
     m_ErrorMessage: 
     m_UserModificationsEntityId:
-      m_Data: -936
+      m_Data: -920
     m_OriginalEntityId:
-      m_Data: -938
+      m_Data: -922
   m_LoadAssets: 0

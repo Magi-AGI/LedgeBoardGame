@@ -564,6 +564,8 @@ MonoBehaviour:
   undoButton: {fileID: 621061313}
   gameHud: {fileID: 154640123}
   multiBoardLayout: {fileID: 794267577}
+  placementGhost: {fileID: 0}
+  inHandGhost: {fileID: 0}
   defaultMovementTone: 0
 --- !u!4 &306378765
 Transform:
