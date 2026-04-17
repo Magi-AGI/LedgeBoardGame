@@ -166,6 +166,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d88a67665f5fb3a4d91712c35c0cab52, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Magi.LedgeBoardGame::Magi.LedgeBoardGame.Board.SpaceView
+  frameImage: {fileID: 0}
+  fillImage: {fileID: 0}
+  frameGlowImage: {fileID: 0}
+  shapeRoot: {fileID: 0}
+  countersRoot: {fileID: 0}
   lightCountTMP: {fileID: 9220642711326379520}
   darkCountTMP: {fileID: 2741750434308674298}
   lightCountText: {fileID: 0}
@@ -173,6 +178,14 @@ MonoBehaviour:
   lockIndicator: {fileID: 3646524982064104423}
   highlightEffect: {fileID: 64034362828788552}
   highlightImage: {fileID: 514965703078776337}
+  counterSize: 60
+  counterStackOffset: 5
+  pulseFrequencyHz: 1.4
+  pulseMinAlpha: 0.25
+  pulseMaxAlpha: 0.85
+  sourceBreatheHz: 0.7
+  sourceMinAlpha: 0.15
+  sourceMaxAlpha: 0.55
   onClicked:
     m_PersistentCalls:
       m_Calls: []

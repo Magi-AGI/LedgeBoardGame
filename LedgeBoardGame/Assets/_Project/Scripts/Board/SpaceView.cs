@@ -33,8 +33,8 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private Image highlightImage;
 
         [Header("Counter Layout")]
-        [SerializeField] private float counterSize = 34f;
-        [SerializeField] private float counterStackOffset = 4f;
+        [SerializeField] private float counterSize = 60f;
+        [SerializeField] private float counterStackOffset = 5f;
 
         [Header("Pulse")]
         [SerializeField] private float pulseFrequencyHz = 1.4f;
@@ -59,6 +59,7 @@ namespace Magi.LedgeBoardGame.Board
         private bool _pulseVisible;
 
         private readonly List<Image> _counterImages = new List<Image>();
+        private readonly List<Image> _counterRims = new List<Image>();
 
         public int SpaceId => _spaceId;
         public SpaceMeta Metadata => _metadata;
@@ -112,9 +113,21 @@ namespace Magi.LedgeBoardGame.Board
             {
                 var img = _counterImages[i];
                 if (img == null) continue;
+                float a = (i >= fadeStart) ? alpha : 1f;
                 var c = img.color;
-                c.a = (i >= fadeStart) ? alpha : 1f;
+                c.a = a;
                 img.color = c;
+
+                if (i < _counterRims.Count)
+                {
+                    var rim = _counterRims[i];
+                    if (rim != null)
+                    {
+                        var rc = rim.color;
+                        rc.a = a;
+                        rim.color = rc;
+                    }
+                }
             }
         }
 
@@ -123,12 +136,25 @@ namespace Magi.LedgeBoardGame.Board
             for (int i = 0; i < _counterImages.Count; i++)
             {
                 var img = _counterImages[i];
-                if (img == null) continue;
-                var c = img.color;
-                if (c.a < 1f)
+                if (img != null)
                 {
-                    c.a = 1f;
-                    img.color = c;
+                    var c = img.color;
+                    if (c.a < 1f)
+                    {
+                        c.a = 1f;
+                        img.color = c;
+                    }
+                }
+                if (i < _counterRims.Count)
+                {
+                    var rim = _counterRims[i];
+                    if (rim == null) continue;
+                    var rc = rim.color;
+                    if (rc.a < 1f)
+                    {
+                        rc.a = 1f;
+                        rim.color = rc;
+                    }
                 }
             }
         }
@@ -150,9 +176,9 @@ namespace Magi.LedgeBoardGame.Board
 
             int index = 0;
             for (int d = 0; d < stack.DarkCount; d++)
-                LayoutCounter(_counterImages[index++], LedgePalette.CounterDark, d, totalNeeded);
+                LayoutCounter(index++, LedgePalette.CounterDark, d, totalNeeded);
             for (int l = 0; l < stack.LightCount; l++)
-                LayoutCounter(_counterImages[index++], LedgePalette.CounterLight, stack.DarkCount + l, totalNeeded);
+                LayoutCounter(index++, LedgePalette.CounterLight, stack.DarkCount + l, totalNeeded);
 
             if (lockIndicator != null)
             {
@@ -359,11 +385,28 @@ namespace Magi.LedgeBoardGame.Board
             img.sprite = LedgeSpriteFactory.Counter;
             img.raycastTarget = false;
             img.color = Color.white;
+
+            var rimGo = new GameObject("Rim", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var rimRect = (RectTransform)rimGo.transform;
+            rimRect.SetParent(rect, false);
+            rimRect.anchorMin = new Vector2(0.5f, 0.5f);
+            rimRect.anchorMax = new Vector2(0.5f, 0.5f);
+            rimRect.pivot = new Vector2(0.5f, 0.5f);
+            rimRect.anchoredPosition = Vector2.zero;
+            rimRect.sizeDelta = new Vector2(counterSize, counterSize);
+            var rimImg = rimGo.GetComponent<Image>();
+            rimImg.sprite = LedgeSpriteFactory.CounterRim;
+            rimImg.raycastTarget = false;
+            rimImg.color = Color.white;
+            _counterRims.Add(rimImg);
+
             return img;
         }
 
-        private void LayoutCounter(Image img, Color color, int indexInStack, int totalInStack)
+        private void LayoutCounter(int counterIndex, Color color, int indexInStack, int totalInStack)
         {
+            if (counterIndex < 0 || counterIndex >= _counterImages.Count) return;
+            var img = _counterImages[counterIndex];
             if (img == null) return;
             img.gameObject.SetActive(true);
             img.color = color;
@@ -372,6 +415,27 @@ namespace Magi.LedgeBoardGame.Board
             var rect = (RectTransform)img.transform;
             rect.anchoredPosition = new Vector2(0f, y);
             rect.SetAsLastSibling();
+
+            if (counterIndex < _counterRims.Count)
+            {
+                var rim = _counterRims[counterIndex];
+                if (rim != null)
+                {
+                    rim.gameObject.SetActive(true);
+                    // Opposite tone for contrast: dark chips get a light rim, light chips get a dark rim.
+                    bool isDark = ApproxEqual(color, LedgePalette.CounterDark);
+                    var rimColor = isDark ? LedgePalette.CounterLight : LedgePalette.CounterDark;
+                    rimColor.a = img.color.a;
+                    rim.color = rimColor;
+                }
+            }
+        }
+
+        private static bool ApproxEqual(Color a, Color b)
+        {
+            return Mathf.Abs(a.r - b.r) < 0.01f
+                && Mathf.Abs(a.g - b.g) < 0.01f
+                && Mathf.Abs(a.b - b.b) < 0.01f;
         }
 
         private void ApplyFrameVisual()

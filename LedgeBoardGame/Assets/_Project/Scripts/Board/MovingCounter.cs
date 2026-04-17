@@ -13,8 +13,8 @@ namespace Magi.LedgeBoardGame.Board
     /// this in ExecuteStackMove so picks-up-and-places read as physical, not numeric.
     public class MovingCounter : MonoBehaviour
     {
-        private const float ChipSize = 40f;
-        private const float StackOffset = 4f;
+        private const float ChipSize = 60f;
+        private const float StackOffset = 5f;
         private const float PhantomAlpha = 0.35f;
 
         private float _duration;
@@ -91,6 +91,25 @@ namespace Magi.LedgeBoardGame.Board
             img.sprite = LedgeSpriteFactory.Counter;
             img.color = new Color(color.r, color.g, color.b, alpha);
             img.raycastTarget = false;
+
+            // Rim uses the opposite tone so stacked dark chips stay countable.
+            bool isDark = Mathf.Approximately(color.r, LedgePalette.CounterDark.r)
+                && Mathf.Approximately(color.g, LedgePalette.CounterDark.g)
+                && Mathf.Approximately(color.b, LedgePalette.CounterDark.b);
+            var rimColor = isDark ? LedgePalette.CounterLight : LedgePalette.CounterDark;
+
+            var rimGo = new GameObject("Rim", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var rimRt = (RectTransform)rimGo.transform;
+            rimRt.SetParent(rt, false);
+            rimRt.anchorMin = new Vector2(0.5f, 0.5f);
+            rimRt.anchorMax = new Vector2(0.5f, 0.5f);
+            rimRt.pivot = new Vector2(0.5f, 0.5f);
+            rimRt.anchoredPosition = Vector2.zero;
+            rimRt.sizeDelta = new Vector2(ChipSize, ChipSize);
+            var rimImg = rimGo.GetComponent<Image>();
+            rimImg.sprite = LedgeSpriteFactory.CounterRim;
+            rimImg.color = new Color(rimColor.r, rimColor.g, rimColor.b, alpha);
+            rimImg.raycastTarget = false;
         }
 
         private IEnumerator TweenRoutine()

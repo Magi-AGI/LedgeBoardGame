@@ -13,7 +13,8 @@ namespace Magi.LedgeBoardGame.Board
     public class PlacementGhost : MonoBehaviour
     {
         [SerializeField] private Image counterImage;
-        [SerializeField] private float counterSize = 44f;
+        [SerializeField] private Image counterRimImage;
+        [SerializeField] private float counterSize = 60f;
         [SerializeField] private float alpha = 0.55f;
         [SerializeField] private float followSmoothing = 18f;
 
@@ -46,6 +47,21 @@ namespace Magi.LedgeBoardGame.Board
                 counterImage.raycastTarget = false;
             }
             counterImage.sprite = LedgeSpriteFactory.Counter;
+
+            if (counterRimImage == null)
+            {
+                var rimGo = new GameObject("GhostCounterRim", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                var rimRect = (RectTransform)rimGo.transform;
+                rimRect.SetParent(counterImage.transform, false);
+                rimRect.anchorMin = new Vector2(0.5f, 0.5f);
+                rimRect.anchorMax = new Vector2(0.5f, 0.5f);
+                rimRect.pivot = new Vector2(0.5f, 0.5f);
+                rimRect.anchoredPosition = Vector2.zero;
+                rimRect.sizeDelta = new Vector2(counterSize, counterSize);
+                counterRimImage = rimGo.GetComponent<Image>();
+                counterRimImage.raycastTarget = false;
+            }
+            counterRimImage.sprite = LedgeSpriteFactory.CounterRim;
         }
 
         public void SetTone(Tone tone)
@@ -53,6 +69,13 @@ namespace Magi.LedgeBoardGame.Board
             var baseColor = tone == Tone.Light ? LedgePalette.CounterLight : LedgePalette.CounterDark;
             baseColor.a = alpha;
             counterImage.color = baseColor;
+
+            if (counterRimImage != null)
+            {
+                var rimColor = tone == Tone.Light ? LedgePalette.CounterDark : LedgePalette.CounterLight;
+                rimColor.a = alpha;
+                counterRimImage.color = rimColor;
+            }
         }
 
         public void SetVisible(bool visible)
@@ -61,6 +84,8 @@ namespace Magi.LedgeBoardGame.Board
             _visible = visible;
             if (counterImage != null)
                 counterImage.enabled = visible;
+            if (counterRimImage != null)
+                counterRimImage.enabled = visible;
             // Reset smoothing state so the ghost snaps to the cursor on reveal instead of
             // sliding from its last-hidden position.
             if (visible) _hasCursorPos = false;
@@ -89,6 +114,7 @@ namespace Magi.LedgeBoardGame.Board
             // bookkeeping thought the ghost was already shown, so the actual Image
             // remained disabled until this explicit write.
             if (counterImage != null) counterImage.enabled = true;
+            if (counterRimImage != null) counterRimImage.enabled = true;
             _hasCursorPos = false;
         }
 

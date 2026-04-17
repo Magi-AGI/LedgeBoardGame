@@ -29,6 +29,7 @@ namespace Magi.LedgeBoardGame.Board
         private const int CounterShadowOffsetY = -3;
         private const float CounterShadowBlur = 3.5f;
         private const float CounterShadowStrength = 0.45f;
+        private const float CounterRimThicknessTexels = 5f;
 
         private static readonly Dictionary<string, Sprite> _cache = new Dictionary<string, Sprite>();
 
@@ -36,6 +37,7 @@ namespace Magi.LedgeBoardGame.Board
         public static Sprite Disc => GetOrBuild("disc", BuildDisc);
         public static Sprite Ring => GetOrBuild("ring", BuildRing);
         public static Sprite Counter => GetOrBuild("counter", BuildCounter);
+        public static Sprite CounterRim => GetOrBuild("counterrim", BuildCounterRim);
         public static Sprite FrameGlow => GetOrBuild("frameglow", BuildFrameGlow);
 
         // Space-shape singletons (tintable white-on-transparent).
@@ -558,6 +560,28 @@ namespace Magi.LedgeBoardGame.Board
                 }
             }
             return Finalize(px, "LedgeCounter");
+        }
+
+        private static Sprite BuildCounterRim()
+        {
+            var px = new Color32[Size * Size];
+            float cx = (Size - 1) * 0.5f;
+            float rOuter = Size * CounterRadiusFraction;
+            float rInner = rOuter - CounterRimThicknessTexels;
+            for (int y = 0; y < Size; y++)
+            {
+                for (int x = 0; x < Size; x++)
+                {
+                    float dx = x - cx;
+                    float dy = y - cx;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+                    float outerEdge = Mathf.Clamp01(rOuter - d);
+                    float innerEdge = Mathf.Clamp01(d - rInner);
+                    float a = Mathf.Clamp01(Mathf.Min(outerEdge, innerEdge));
+                    px[y * Size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+            return Finalize(px, "LedgeCounterRim");
         }
 
         private static Sprite BuildFrameGlow()

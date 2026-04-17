@@ -15,8 +15,8 @@ namespace Magi.LedgeBoardGame.Board
     [RequireComponent(typeof(RectTransform))]
     public class InHandGhost : MonoBehaviour
     {
-        [SerializeField] private float chipSize = 38f;
-        [SerializeField] private float stackOffset = 4f;
+        [SerializeField] private float chipSize = 60f;
+        [SerializeField] private float stackOffset = 5f;
         [SerializeField] private float alpha = 1f;
         [SerializeField] private float followSmoothing = 18f;
 
@@ -24,6 +24,7 @@ namespace Magi.LedgeBoardGame.Board
         private Canvas _canvas;
         private RectTransform _canvasRect;
         private readonly List<Image> _chips = new List<Image>();
+        private readonly List<Image> _chipRims = new List<Image>();
         private int _lightCount;
         private int _darkCount;
         private bool _visible;
@@ -82,6 +83,20 @@ namespace Magi.LedgeBoardGame.Board
             rt.anchoredPosition = new Vector2(0f, baseY + stackIndex * stackOffset);
             rt.sizeDelta = new Vector2(chipSize, chipSize);
             rt.SetAsLastSibling();
+
+            if (stackIndex < _chipRims.Count)
+            {
+                var rim = _chipRims[stackIndex];
+                if (rim != null)
+                {
+                    bool isDark = Mathf.Approximately(color.r, LedgePalette.CounterDark.r)
+                        && Mathf.Approximately(color.g, LedgePalette.CounterDark.g)
+                        && Mathf.Approximately(color.b, LedgePalette.CounterDark.b);
+                    var rimColor = isDark ? LedgePalette.CounterLight : LedgePalette.CounterDark;
+                    rimColor.a = alpha;
+                    rim.color = rimColor;
+                }
+            }
         }
 
         private Image CreateChip()
@@ -96,6 +111,20 @@ namespace Magi.LedgeBoardGame.Board
             var img = go.GetComponent<Image>();
             img.sprite = LedgeSpriteFactory.Counter;
             img.raycastTarget = false;
+
+            var rimGo = new GameObject("Rim", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var rimRt = (RectTransform)rimGo.transform;
+            rimRt.SetParent(rt, false);
+            rimRt.anchorMin = new Vector2(0.5f, 0.5f);
+            rimRt.anchorMax = new Vector2(0.5f, 0.5f);
+            rimRt.pivot = new Vector2(0.5f, 0.5f);
+            rimRt.anchoredPosition = Vector2.zero;
+            rimRt.sizeDelta = new Vector2(chipSize, chipSize);
+            var rimImg = rimGo.GetComponent<Image>();
+            rimImg.sprite = LedgeSpriteFactory.CounterRim;
+            rimImg.raycastTarget = false;
+            _chipRims.Add(rimImg);
+
             return img;
         }
 
@@ -114,6 +143,10 @@ namespace Magi.LedgeBoardGame.Board
             foreach (var c in _chips)
             {
                 if (c != null) c.enabled = visible;
+            }
+            foreach (var r in _chipRims)
+            {
+                if (r != null) r.enabled = visible;
             }
             // Snap to cursor on first reveal so there's no drift from the last hidden
             // position toward the new one.
