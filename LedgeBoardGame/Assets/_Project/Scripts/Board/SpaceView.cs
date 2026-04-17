@@ -301,7 +301,7 @@ namespace Magi.LedgeBoardGame.Board
             {
                 frameImage = CreateShapeChild("Frame", sibling: 1);
             }
-            frameImage.raycastTarget = true;
+            frameImage.raycastTarget = false;
             frameImage.color = _frameBaseColor;
             ((RectTransform)frameImage.transform).sizeDelta = selfRect.sizeDelta;
 
@@ -474,9 +474,8 @@ namespace Magi.LedgeBoardGame.Board
                     }
                     else
                     {
-                        // Ring3-off rotation is tied to ledge-color arrow semantics and is
-                        // resolved elsewhere (or TODO). Leave at 0 for now.
                         fillSprite = BuildRing3OffSplit(id, meta.WedgeIndex);
+                        rotZ = GetRing3OffRotation(id);
                     }
                     frameSprite = LedgeSpriteFactory.HexFrame;
                     glowSprite = LedgeSpriteFactory.HexFrameGlow;
@@ -507,6 +506,10 @@ namespace Magi.LedgeBoardGame.Board
                 fillImage.sprite = fillSprite;
                 fillImage.color = Color.white;
                 fillImage.transform.localRotation = Quaternion.Euler(0f, 0f, rotZ);
+                // Only painted (opaque) fill pixels should catch clicks — otherwise the bridge
+                // rect's empty corners steal clicks from neighbors, and the wall rect overlaps
+                // its bridges. Requires the fill texture to be readable (see LedgeSpriteFactory.Finalize).
+                fillImage.alphaHitTestMinimumThreshold = 0.5f;
             }
             if (frameImage != null)
             {
@@ -524,11 +527,31 @@ namespace Magi.LedgeBoardGame.Board
         {
             var own = LedgePalette.GetSpiritColor(wedgeIndex);
             var opp = LedgePalette.GetOppositeSpiritColor(wedgeIndex);
-            // Split normal = radial direction (wedge angle). Pixel with dot > 0 is on the OUTER
-            // side of the hex (away from center) and gets the opposite color; inner side keeps
-            // own color.
+            // Ring3-vertex and OuterAdded spaces are drawn corner-to-corner: the split line
+            // runs from one pointy-top vertex to the opposite vertex of the baked hex, then
+            // the whole fill rotates with rotZ to line up with the hex frame.
             float splitNormal = LedgePalette.GetWedgeAngleDeg(wedgeIndex);
             return LedgeSpriteFactory.GetHexSplitFill(opp, own, splitNormal);
+        }
+
+        // Per-space rotZ for Ring3-off hexes (ids 25..36). Baked to match the ledge-color
+        // arrow semantics authored by hand in the scene. Within each (ccw, cw) sector pair,
+        // the cw rotation equals the ccw rotation plus 180°.
+        private static readonly float[] Ring3OffRotZ = new float[]
+        {
+             60f, -120f,  // 25 (k=0 ccw), 26 (k=0 cw)
+            -120f,   60f, // 27 (k=1 ccw), 28 (k=1 cw)
+             180f,    0f, // 29 (k=2 ccw), 30 (k=2 cw)
+               0f, -180f, // 31 (k=3 ccw), 32 (k=3 cw)
+             -60f,  120f, // 33 (k=4 ccw), 34 (k=4 cw)
+             120f,  -60f, // 35 (k=5 ccw), 36 (k=5 cw)
+        };
+
+        private static float GetRing3OffRotation(int spaceId)
+        {
+            int idx = spaceId - 25;
+            if (idx < 0 || idx >= Ring3OffRotZ.Length) return 0f;
+            return Ring3OffRotZ[idx];
         }
 
         private static Sprite BuildRing3OffSplit(int id, int primaryWedgeIndex)
@@ -541,14 +564,15 @@ namespace Magi.LedgeBoardGame.Board
             var primary = LedgePalette.GetSpiritColor(primaryWedgeIndex);
             var partner = LedgePalette.GetSpiritColor(partnerWedge);
 
-            // Split line runs radially through the hex center. Split normal = tangential (CCW).
-            // For ccwOff: space midway angle = halfway between wedges 2k and 2k+1 = (75 - 60k)°.
-            // For cwOff : space midway angle = halfway between wedges 2k+1 and 2k+2 = (45 - 60k)°.
-            float midwayAngle = isCcw ? (75f - 60f * k) : (45f - 60f * k);
-            float splitNormal = midwayAngle + 90f;
+            // Ring3-off splits are midpoint-to-midpoint: splitNormal points along a vertex
+            // direction of the unrotated hex (30°, 90°, 150°, ...), so the dividing line
+            // passes through two opposite edge midpoints (0°, 60°, 120°, ...).
+            //   ccwOff k=0 (Space_25): splitNormal 210° → line TL→BR, primary on lower-left.
+            //   cwOff  k=0 (Space_26): splitNormal  90° → horizontal line, partner on top.
+            // The pattern rotates by -60° per sector k so successive sectors mirror the rosette's
+            // 60° rotational step. cwOff mirrors ccwOff across the sector's vertex axis.
+            float splitNormal = isCcw ? (210f - 60f * k) : (90f - 60f * k);
 
-            // CCW side (dot>0 with splitNormal) corresponds to the higher-angle neighbor.
-            // ccwOff: primary is the CCW neighbor (higher angle). cwOff: partner is the CCW neighbor.
             Color sideA = isCcw ? primary : partner;
             Color sideB = isCcw ? partner : primary;
             return LedgeSpriteFactory.GetHexSplitFill(sideA, sideB, splitNormal);

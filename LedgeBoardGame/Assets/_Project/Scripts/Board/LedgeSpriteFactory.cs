@@ -18,9 +18,11 @@ namespace Magi.LedgeBoardGame.Board
         /// The sprite inscribes its hex at HexRadiusFraction of the rect's half-size, so the rect
         /// must be larger than 2R by 1/HexRadiusFraction to compensate.
         public static float RectSizeForCircumradius(float R) => 2f * R / HexRadiusFraction;
-        private const float HexFrameThickness = 0.045f;    // fraction of apothem
-        private const float BridgeFrameThickness = 0.050f; // fraction of half-size
-        private const float WallFrameThickness = 0.050f;
+
+        // Single pen-weight so hex, bridge, and wall outlines all read at the same screen
+        // thickness when rendered in equally-sized rects. Expressed as a fraction of the
+        // sprite's texel size so it scales with Size if tweaked.
+        private const float FrameThicknessFraction = 0.037f; // ~4.7 texels on a 128 sprite
         private const float RingThicknessFraction = 0.14f; // legacy disc/ring (not used for spaces)
         private const float CounterRadiusFraction = 0.40f;
         private const int CounterShadowOffsetX = 2;
@@ -187,7 +189,7 @@ namespace Magi.LedgeBoardGame.Board
             float cx = (Size - 1) * 0.5f;
             float R = (Size * 0.5f - 0.5f) * HexRadiusFraction;
             float outerApothem = R * Mathf.Sqrt(3f) * 0.5f;
-            float thickness = outerApothem * HexFrameThickness / 0.5f; // interpret fraction against half-width
+            float thickness = Size * FrameThicknessFraction;
             float innerApothem = outerApothem - thickness;
             for (int y = 0; y < Size; y++)
             {
@@ -344,7 +346,7 @@ namespace Magi.LedgeBoardGame.Board
             var px = new Color32[Size * Size];
             float cx = (Size - 1) * 0.5f;
             float halfSize = cx;
-            float thicknessPx = Size * BridgeFrameThickness;
+            float thicknessPx = Size * FrameThicknessFraction;
             for (int y = 0; y < Size; y++)
             {
                 for (int x = 0; x < Size; x++)
@@ -450,7 +452,7 @@ namespace Magi.LedgeBoardGame.Board
             var px = new Color32[Size * Size];
             float cx = (Size - 1) * 0.5f;
             float halfSize = cx;
-            float thicknessPx = Size * WallFrameThickness;
+            float thicknessPx = Size * FrameThicknessFraction;
             for (int y = 0; y < Size; y++)
             {
                 for (int x = 0; x < Size; x++)
@@ -641,7 +643,7 @@ namespace Magi.LedgeBoardGame.Board
             var tex = NewTexture();
             tex.name = name + "Tex";
             tex.SetPixels32(pixels);
-            tex.Apply(updateMipmaps: false, makeNoLongerReadable: true);
+            tex.Apply(updateMipmaps: false, makeNoLongerReadable: false);
             var sprite = Sprite.Create(
                 tex,
                 new Rect(0, 0, Size, Size),
