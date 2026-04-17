@@ -51,12 +51,18 @@ namespace Magi.LedgeBoardGame.Board
             { "Wim",  8 }, { "Pfi",  9 }, { "Quae", 10 }, { "Vei",  11 },
         };
 
+        /// Returns the fill color for the hex at a given wedge. The visual scheme has
+        /// each wedge-hex rendered in its *opposite* wedge's spirit color (across the
+        /// wheel center), so labels stay canonical while the fill pairs its complement.
         public static Color GetSpiritColor(int wedgeIndex)
         {
-            int i = ((wedgeIndex % 12) + 12) % 12;
+            int i = ((((wedgeIndex + 6) % 12) + 12) % 12);
             return SpiritByWedge[i];
         }
 
+        /// Returns the complement of `GetSpiritColor(wedgeIndex)` — i.e., the original
+        /// "own" spirit color of that wedge. Used for the inner half of bridges and
+        /// ledges, which pair outer/inner from opposite sides of the wheel.
         public static Color GetOppositeSpiritColor(int wedgeIndex)
         {
             return GetSpiritColor(wedgeIndex + 6);
@@ -79,7 +85,7 @@ namespace Magi.LedgeBoardGame.Board
         public static Color GetFillColor(string colorLabel)
         {
             if (TryGetWedgeByLabel(colorLabel, out var w))
-                return SpiritByWedge[w];
+                return GetSpiritColor(w);
             return NeutralSpaceFill;
         }
 

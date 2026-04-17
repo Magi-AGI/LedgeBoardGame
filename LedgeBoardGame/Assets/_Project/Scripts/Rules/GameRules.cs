@@ -236,6 +236,19 @@ namespace Magi.LedgeBoardGame.Rules
             return gameState.WinnerId;
         }
 
+        /// True when the current player is in Movement phase with no legal sources to pick up —
+        /// every controllable counter is locked. Used to auto-advance the turn so a deadended
+        /// player isn't stuck staring at an unresponsive board. Placement-phase locks aren't
+        /// checked here because placement never deadends.
+        public bool ShouldAutoSkipTurn(GameState gameState)
+        {
+            if (gameState == null || gameState.GameOver) return false;
+            if (gameState.CurrentPhase != GamePhase.Movement) return false;
+            var player = gameState.GetCurrentPlayer();
+            if (player == null || player.IsEliminated) return false;
+            return GetMovablePieces(gameState, player.Id).Count == 0;
+        }
+
         private bool IsValidMove(GameState gameState, SpaceId from, SpaceId to)
         {
             if (from.BoardId == to.BoardId)
@@ -262,11 +275,11 @@ namespace Magi.LedgeBoardGame.Rules
             if (board.PlayerId == playerId)
                 return true;
 
-            // Control on an enemy board is earned by landing a chip — Lock or Stack.
-            // A Clear result means the entering chip clashed 1-to-1 with an opposing
-            // chip and did not land, so it confers no control even though the move
+            // Control on an enemy board is earned by landing a counter — Lock or Stack.
+            // A Clear result means the entering counter clashed 1-to-1 with an opposing
+            // counter and did not land, so it confers no control even though the move
             // targeted this space. ResolveEntry is always called with enteringCount=1
-            // by MoveToken, so Clear unambiguously means "0 chips landed from this move."
+            // by MoveToken, so Clear unambiguously means "0 counters landed from this move."
             foreach (var move in gameState.CurrentTurnMoves)
             {
                 if (move.To.Equals(space) && move.Result != MoveResult.Clear)

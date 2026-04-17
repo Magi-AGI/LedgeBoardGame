@@ -65,7 +65,7 @@ namespace Magi.LedgeBoardGame.Models
             return true;
         }
 
-        /// How many chips of this tone can be lifted off this stack without violating the lock
+        /// How many counters of this tone can be lifted off this stack without violating the lock
         /// invariant. Matches what a loop of `while (CanMove(tone)) RemoveOne(tone)` would take.
         public int GetMovableCount(Tone tone)
         {

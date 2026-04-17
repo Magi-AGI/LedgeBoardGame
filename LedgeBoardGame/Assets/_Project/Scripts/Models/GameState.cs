@@ -139,9 +139,18 @@ namespace Magi.LedgeBoardGame.Models
             CurrentPhase = GamePhase.Movement;
         }
 
-        public void EndTurn()
+        public StateBasedEffectsResult EndTurn()
         {
-            CheckEliminations();
+            int endingPlayerId = CurrentPlayerId;
+            // Overflow cap runs before elimination check so any exposed lock from
+            // trimming is seen in the same pass. In single-tone stacks the trim
+            // can't expose a new tone, but keeping the order explicit means a
+            // future rule change (e.g., mixed stacks) stays consistent.
+            var result = ApplyOverflowCap(endingPlayerId);
+            var sbe = ApplyStateBasedEffects();
+            result.NewlyEliminatedPlayerIds.AddRange(sbe.NewlyEliminatedPlayerIds);
+            result.GameEnded = sbe.GameEnded;
+            result.WinnerId = sbe.WinnerId;
 
             if (!GameOver)
             {
@@ -152,6 +161,40 @@ namespace Magi.LedgeBoardGame.Models
                 AdvanceToNextPlayer();
                 TurnNumber++;
             }
+            return result;
+        }
+
+        /// End-of-turn stack-size cap: any stack on the ending player's own board
+        /// with more than StackCap counters has the excess cleared (removed from the
+        /// top, so the bottom lock — if any — is preserved). Only the ending
+        /// player's board is affected; cross-board counters on enemy boards are
+        /// their owners' responsibility at their own end-of-turn.
+        private StateBasedEffectsResult ApplyOverflowCap(int endingPlayerId)
+        {
+            const int StackCap = 3;
+            var result = new StateBasedEffectsResult();
+            var board = Boards.FirstOrDefault(b => b.PlayerId == endingPlayerId);
+            if (board == null) return result;
+
+            foreach (var kvp in board.Spaces)
+            {
+                var stack = kvp.Value;
+                int excess = stack.TotalCount - StackCap;
+                if (excess <= 0) continue;
+
+                // Stacks are mono-tone under the clash rule, so exactly one of
+                // Light/Dark is nonzero when total > 0. Pick whichever has counters.
+                var tone = stack.LightCount > 0 ? Tone.Light : Tone.Dark;
+                for (int i = 0; i < excess; i++) stack.RemoveOne(tone);
+
+                result.OverflowTrims.Add(new OverflowTrim
+                {
+                    Space = new SpaceId(board.BoardId, kvp.Key),
+                    Tone = tone,
+                    RemovedCount = excess
+                });
+            }
+            return result;
         }
 
         private void AdvanceToNextPlayer()
@@ -164,14 +207,23 @@ namespace Magi.LedgeBoardGame.Models
             CurrentPlayerId = activePlayers[nextIndex].Id;
         }
 
-        private void CheckEliminations()
+        /// Runs the state-based effects pass: any player whose center carries a
+        /// Dark lock is eliminated (regardless of whose turn it is or who placed
+        /// the counter), and the game ends when only one — or zero — active players
+        /// remain. Returns a report of what changed so callers can narrate the
+        /// outcome. Callers should skip this during Placement phase.
+        public StateBasedEffectsResult ApplyStateBasedEffects()
         {
+            var result = new StateBasedEffectsResult();
+            bool wasGameOver = GameOver;
+
             foreach (var board in Boards)
             {
                 var player = Players.FirstOrDefault(p => p.BoardId == board.BoardId);
                 if (player != null && !player.IsEliminated && board.IsEliminated())
                 {
                     player.IsEliminated = true;
+                    result.NewlyEliminatedPlayerIds.Add(player.Id);
                 }
             }
 
@@ -185,6 +237,10 @@ namespace Magi.LedgeBoardGame.Models
             {
                 GameOver = true;
             }
+
+            result.GameEnded = GameOver && !wasGameOver;
+            result.WinnerId = WinnerId;
+            return result;
         }
 
         public List<SpaceId> GetCrossBoardTargets(SpaceId fromSpace)

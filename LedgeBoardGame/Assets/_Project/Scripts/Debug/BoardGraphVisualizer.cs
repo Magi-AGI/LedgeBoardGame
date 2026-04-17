@@ -15,6 +15,7 @@ namespace Magi.LedgeBoardGame.Debug
         [Header("Visualization Settings")]
         [SerializeField] private bool showAdjacency = true;
         [SerializeField] private bool showSpaceIds = true;
+        [SerializeField] private bool showSpaceNames = false;
         [SerializeField] private bool showSpaceTypes = false;
         [SerializeField] private bool highlightLedgeSpaces = true;
         [SerializeField] private bool showCrossBoardConnections = false;  // Reserved for future use
@@ -88,7 +89,7 @@ namespace Magi.LedgeBoardGame.Debug
 
         private void DrawSpaceLabels()
         {
-            if (!showSpaceIds && !showSpaceTypes)
+            if (!showSpaceIds && !showSpaceNames && !showSpaceTypes)
                 return;
 
             foreach (var kvp in spaceTransforms)
@@ -96,25 +97,27 @@ namespace Magi.LedgeBoardGame.Debug
                 int spaceId = kvp.Key;
                 Transform spaceTransform = kvp.Value;
 
-                string label = "";
+                var parts = new List<string>(3);
 
                 if (showSpaceIds)
                 {
-                    label = spaceId.ToString();
+                    parts.Add(spaceId.ToString());
                 }
 
-                if (showSpaceTypes && boardState.SpaceMetadata.ContainsKey(spaceId))
+                if (showSpaceNames && boardState.SpaceMetadata.TryGetValue(spaceId, out var nameMeta))
                 {
-                    var meta = boardState.SpaceMetadata[spaceId];
-                    if (showSpaceIds)
-                        label += "\n";
-                    label += meta.Type.ToString();
-
-                    if (!string.IsNullOrEmpty(meta.ColorLabel))
-                    {
-                        label += $"\n({meta.ColorLabel})";
-                    }
+                    parts.Add(SpaceNamer.Name(spaceId, nameMeta));
                 }
+
+                if (showSpaceTypes && boardState.SpaceMetadata.TryGetValue(spaceId, out var typeMeta))
+                {
+                    var typeLine = typeMeta.Type.ToString();
+                    if (!string.IsNullOrEmpty(typeMeta.ColorLabel))
+                        typeLine += $" ({typeMeta.ColorLabel})";
+                    parts.Add(typeLine);
+                }
+
+                string label = string.Join("\n", parts);
 
 #if UNITY_EDITOR
                 UnityEditor.Handles.Label(spaceTransform.position, label);

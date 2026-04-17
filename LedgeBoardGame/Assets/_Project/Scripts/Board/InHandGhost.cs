@@ -9,13 +9,13 @@ using Magi.LedgeBoardGame.Models;
 namespace Magi.LedgeBoardGame.Board
 {
     /// Translucent stack that follows the cursor with a soft lag while a movement source is
-    /// selected, visually representing the chips the player has "picked up." Hidden when no
+    /// selected, visually representing the counters the player has "picked up." Hidden when no
     /// stack is in hand. GameController drives it via SetStack(light, dark) on selection +
     /// deselection; the lag is pure cosmetics so a fast cursor flick doesn't feel rigid.
     [RequireComponent(typeof(RectTransform))]
     public class InHandGhost : MonoBehaviour
     {
-        [SerializeField] private float chipSize = 60f;
+        [SerializeField] private float counterSize = 60f;
         [SerializeField] private float stackOffset = 5f;
         [SerializeField] private float alpha = 1f;
         [SerializeField] private float followSmoothing = 18f;
@@ -23,8 +23,8 @@ namespace Magi.LedgeBoardGame.Board
         private RectTransform _selfRect;
         private Canvas _canvas;
         private RectTransform _canvasRect;
-        private readonly List<Image> _chips = new List<Image>();
-        private readonly List<Image> _chipRims = new List<Image>();
+        private readonly List<Image> _counters = new List<Image>();
+        private readonly List<Image> _counterRims = new List<Image>();
         private int _lightCount;
         private int _darkCount;
         private bool _visible;
@@ -45,32 +45,32 @@ namespace Magi.LedgeBoardGame.Board
             if (total == 0)
             {
                 SetVisible(false);
-                HideAllChips();
+                HideAllCounters();
                 return;
             }
-            RebuildChips();
+            RebuildCounters();
             SetVisible(true);
         }
 
-        private void RebuildChips()
+        private void RebuildCounters()
         {
             int total = _lightCount + _darkCount;
-            while (_chips.Count < total) _chips.Add(CreateChip());
-            for (int i = total; i < _chips.Count; i++)
+            while (_counters.Count < total) _counters.Add(CreateCounter());
+            for (int i = total; i < _counters.Count; i++)
             {
-                if (_chips[i] != null) _chips[i].gameObject.SetActive(false);
+                if (_counters[i] != null) _counters[i].gameObject.SetActive(false);
             }
 
             float baseY = -(total - 1) * stackOffset * 0.5f;
             int idx = 0;
             for (int d = 0; d < _darkCount; d++)
             {
-                Place(_chips[idx], LedgePalette.CounterDark, idx, baseY);
+                Place(_counters[idx], LedgePalette.CounterDark, idx, baseY);
                 idx++;
             }
             for (int l = 0; l < _lightCount; l++)
             {
-                Place(_chips[idx], LedgePalette.CounterLight, idx, baseY);
+                Place(_counters[idx], LedgePalette.CounterLight, idx, baseY);
                 idx++;
             }
         }
@@ -81,12 +81,12 @@ namespace Magi.LedgeBoardGame.Board
             img.color = new Color(color.r, color.g, color.b, alpha);
             var rt = (RectTransform)img.transform;
             rt.anchoredPosition = new Vector2(0f, baseY + stackIndex * stackOffset);
-            rt.sizeDelta = new Vector2(chipSize, chipSize);
+            rt.sizeDelta = new Vector2(counterSize, counterSize);
             rt.SetAsLastSibling();
 
-            if (stackIndex < _chipRims.Count)
+            if (stackIndex < _counterRims.Count)
             {
-                var rim = _chipRims[stackIndex];
+                var rim = _counterRims[stackIndex];
                 if (rim != null)
                 {
                     bool isDark = Mathf.Approximately(color.r, LedgePalette.CounterDark.r)
@@ -99,15 +99,15 @@ namespace Magi.LedgeBoardGame.Board
             }
         }
 
-        private Image CreateChip()
+        private Image CreateCounter()
         {
-            var go = new GameObject("HandChip", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var go = new GameObject("HandCounter", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             var rt = (RectTransform)go.transform;
             rt.SetParent(transform, false);
             rt.anchorMin = new Vector2(0.5f, 0.5f);
             rt.anchorMax = new Vector2(0.5f, 0.5f);
             rt.pivot = new Vector2(0.5f, 0.5f);
-            rt.sizeDelta = new Vector2(chipSize, chipSize);
+            rt.sizeDelta = new Vector2(counterSize, counterSize);
             var img = go.GetComponent<Image>();
             img.sprite = LedgeSpriteFactory.Counter;
             img.raycastTarget = false;
@@ -119,18 +119,18 @@ namespace Magi.LedgeBoardGame.Board
             rimRt.anchorMax = new Vector2(0.5f, 0.5f);
             rimRt.pivot = new Vector2(0.5f, 0.5f);
             rimRt.anchoredPosition = Vector2.zero;
-            rimRt.sizeDelta = new Vector2(chipSize, chipSize);
+            rimRt.sizeDelta = new Vector2(counterSize, counterSize);
             var rimImg = rimGo.GetComponent<Image>();
             rimImg.sprite = LedgeSpriteFactory.CounterRim;
             rimImg.raycastTarget = false;
-            _chipRims.Add(rimImg);
+            _counterRims.Add(rimImg);
 
             return img;
         }
 
-        private void HideAllChips()
+        private void HideAllCounters()
         {
-            foreach (var c in _chips)
+            foreach (var c in _counters)
             {
                 if (c != null) c.gameObject.SetActive(false);
             }
@@ -140,11 +140,11 @@ namespace Magi.LedgeBoardGame.Board
         {
             if (_visible == visible) return;
             _visible = visible;
-            foreach (var c in _chips)
+            foreach (var c in _counters)
             {
                 if (c != null) c.enabled = visible;
             }
-            foreach (var r in _chipRims)
+            foreach (var r in _counterRims)
             {
                 if (r != null) r.enabled = visible;
             }
@@ -173,7 +173,7 @@ namespace Magi.LedgeBoardGame.Board
             else
             {
                 // Exponential smoothing — higher followSmoothing = tighter follow. Default
-                // lands around "chip catches up in ~60ms", which feels like weight without lag.
+                // lands around "counter catches up in ~60ms", which feels like weight without lag.
                 float t = 1f - Mathf.Exp(-followSmoothing * Time.unscaledDeltaTime);
                 _cursorLocal = Vector2.Lerp(_cursorLocal, localPoint, t);
             }

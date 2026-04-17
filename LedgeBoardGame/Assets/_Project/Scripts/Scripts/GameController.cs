@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using System.Collections.Generic;
+using System.Linq;
 using Magi.LedgeBoardGame.Models;
 using Magi.LedgeBoardGame.Models.Spec;
 using Magi.LedgeBoardGame.Rules;
@@ -18,6 +19,10 @@ namespace Magi.LedgeBoardGame
         [SerializeField] private Board.MultiBoardLayout multiBoardLayout;
         [SerializeField] private Board.PlacementGhost placementGhost;
         [SerializeField] private Board.InHandGhost inHandGhost;
+        [SerializeField] private Board.StatusBanner statusBanner;
+        [SerializeField] private Board.StatusLog statusLog;
+        [Tooltip("When on, records placements/moves/turn-ends/undos to the on-screen log panel. Leave on for playtest/video; turn off to hide the panel during normal play.")]
+        [SerializeField] private bool showEventLog = true;
         [SerializeField] private Tone defaultMovementTone = Tone.Light;
 
         private GameState _gameState;
@@ -32,7 +37,7 @@ namespace Magi.LedgeBoardGame
         private SpaceId? _pendingRetarget;
         private SpaceView _sourcePhantomView;
         private const float MoveTweenDuration = 0.28f;
-        // Alpha applied to the source SpaceView while its chips are "in hand," so the
+        // Alpha applied to the source SpaceView while its counters are "in hand," so the
         // origin reads as a faded placeholder while the opaque flying/in-hand stack
         // becomes the player's visual anchor.
         private const float SourcePhantomAlpha = 0.35f;
@@ -93,6 +98,8 @@ namespace Magi.LedgeBoardGame
 
             EnsureInHandGhost();
             EnsurePlacementGhost();
+            EnsureStatusBanner();
+            EnsureStatusLog();
 
             SpaceClickedEvent.Register(OnSpaceClicked);
 
@@ -136,7 +143,8 @@ namespace Magi.LedgeBoardGame
                     presenterInstance = go.AddComponent<BoardPresenter>();
                 }
 
-                presenterInstance.Initialize(board);
+                var owner = _gameState.Players?.FirstOrDefault(p => p.Id == board.PlayerId);
+                presenterInstance.Initialize(board, owner?.Name);
                 _boardPresenters[board.BoardId] = presenterInstance;
             }
 
@@ -157,7 +165,7 @@ namespace Magi.LedgeBoardGame
                 return;
 
             // Gate clicks during a move-tween so the player can't queue a second move
-            // before the current chip has landed.
+            // before the current counter has landed.
             if (_moveInProgress)
                 return;
 
@@ -215,15 +223,23 @@ namespace Magi.LedgeBoardGame
         {
             _moveInProgress = false;
             ClearSourcePhantom();
-            // Destination was held at its pre-move state during the tween so the chips
+            // Destination was held at its pre-move state during the tween so the counters
             // read as arriving — now that they've landed, catch every board up to state.
             RefreshBoards();
+            // A move can lock an enemy center (elimination) or leave the active player
+            // with no legal responses. Run SBE before auto-skip so the narration reads
+            // elimination → game-over → skip in the order those effects actually occur.
+            RunStateBasedEffects();
+            UpdateStatusUI();
             if (_gameState == null || _gameState.GameOver)
             {
                 RefreshUndoButton();
                 return;
             }
-            HighlightMovablePieces();
+            if (!MaybeAutoSkipTurn())
+            {
+                HighlightMovablePieces();
+            }
             RefreshUndoButton();
         }
 
@@ -254,6 +270,7 @@ namespace Magi.LedgeBoardGame
                 var move = _rules.PlaceToken(_gameState, target, toneToPlace);
                 if (move != null)
                 {
+                    LogEvent($"{currentPlayer.Name} placed {toneToPlace} at {FormatSpace(target)}");
                     RefreshBoards();
                     UpdateStatusUI();
                     if (_gameState.CurrentPhase == GamePhase.Placement)
@@ -262,8 +279,13 @@ namespace Magi.LedgeBoardGame
                     }
                     else
                     {
+                        // Placement just flipped to Movement. SBE itself is skipped here
+                        // (placement can't deadend or win per design), but the new Movement
+                        // phase is a valid moment to auto-skip if the player's whole board
+                        // is locked.
                         ClearHighlights();
-                        HighlightMovablePieces();
+                        if (!MaybeAutoSkipTurn())
+                            HighlightMovablePieces();
                     }
                     RefreshUndoButton();
                 }
@@ -304,13 +326,13 @@ namespace Magi.LedgeBoardGame
                 }
                 else if (clicked.Equals(from))
                 {
-                    // Tapping the same source returns the in-hand chips to their origin.
+                    // Tapping the same source returns the in-hand counters to their origin.
                     DeselectWithReturnTween();
                 }
                 else
                 {
                     // Re-target: queue the new source click to fire once the return
-                    // tween lands, so the player sees the chips come home before the
+                    // tween lands, so the player sees the counters come home before the
                     // new stack gets picked up.
                     _pendingRetarget = clicked;
                     DeselectWithReturnTween();
@@ -338,10 +360,10 @@ namespace Magi.LedgeBoardGame
             _selectedTone = _pickedUpLight > 0 ? Tone.Light : Tone.Dark;
             _selectedSpace = clicked;
 
-            // Fade only the picked-up chips so the origin reads as "these are in the
-            // player's hand," while any locked chip at the bottom stays opaque — it
+            // Fade only the picked-up counters so the origin reads as "these are in the
+            // player's hand," while any locked counter at the bottom stays opaque — it
             // didn't get picked up, so it shouldn't look spectral. The opaque in-hand
-            // ghost becomes the anchor for where the chips are now.
+            // ghost becomes the anchor for where the counters are now.
             SetSourcePhantom(FindSpaceView(clicked), _pickedUpLight + _pickedUpDark);
 
             var targets = GetStackValidTargets(clicked, stack);
@@ -365,14 +387,14 @@ namespace Magi.LedgeBoardGame
             if (view == null) return;
             if (_sourcePhantomView != null && _sourcePhantomView != view)
                 ClearSourcePhantom();
-            view.SetPhantomChips(topCount, SourcePhantomAlpha);
+            view.SetPhantomCounters(topCount, SourcePhantomAlpha);
             _sourcePhantomView = view;
         }
 
         private void ClearSourcePhantom()
         {
             if (_sourcePhantomView == null) return;
-            _sourcePhantomView.ClearPhantomChips();
+            _sourcePhantomView.ClearPhantomCounters();
             _sourcePhantomView = null;
         }
 
@@ -430,8 +452,13 @@ namespace Magi.LedgeBoardGame
 
             // ClearMovementSelection drops the phantom and the in-hand ghost so the flying
             // stack reads as the only moving object. Update the source view immediately to
-            // its post-move state (chips gone / locked anchor remaining) — destination stays
-            // at its pre-move state until OnMoveTweenComplete so the chips "arrive" there.
+            // its post-move state (counters gone / locked anchor remaining) — destination stays
+            // at its pre-move state until OnMoveTweenComplete so the counters "arrive" there.
+            var mover = _gameState.GetCurrentPlayer();
+            if (mover != null)
+            {
+                LogEvent($"{mover.Name} moved {FormatStackCounts(lightMoved, darkMoved)}: {FormatSpace(from)} → {FormatSpace(clicked)}");
+            }
             ClearMovementSelection();
             UpdateStatusUI();
             if (fromView != null)
@@ -473,7 +500,7 @@ namespace Magi.LedgeBoardGame
             Vector3 toPos = fromView != null ? fromView.transform.position : cursorPos;
 
             // Hand off the visual to the flying stack: hide the in-hand ghost and
-            // clear target highlights so the player's eye follows the chips home.
+            // clear target highlights so the player's eye follows the counters home.
             _pickedUpLight = 0;
             _pickedUpDark = 0;
             NotifyInHandGhost();
@@ -541,6 +568,166 @@ namespace Magi.LedgeBoardGame
             rt.pivot = new Vector2(0.5f, 0.5f);
             rt.sizeDelta = new Vector2(48f, 48f);
             inHandGhost = go.AddComponent<InHandGhost>();
+        }
+
+        private void EnsureStatusBanner()
+        {
+            if (statusBanner != null) return;
+            var canvas = GetComponentInParent<Canvas>();
+            if (canvas == null)
+            {
+                foreach (var presenter in _boardPresenters.Values)
+                {
+                    canvas = presenter.GetComponentInParent<Canvas>();
+                    if (canvas != null) break;
+                }
+            }
+            if (canvas == null) return;
+
+            var go = new GameObject("StatusBanner", typeof(RectTransform), typeof(CanvasGroup));
+            var rt = (RectTransform)go.transform;
+            rt.SetParent(canvas.transform, false);
+            // Last child so the banner paints above boards/counters.
+            rt.SetAsLastSibling();
+            statusBanner = go.AddComponent<StatusBanner>();
+        }
+
+        private void EnsureStatusLog()
+        {
+            if (statusLog != null)
+            {
+                statusLog.SetVisible(showEventLog);
+                return;
+            }
+            if (!showEventLog) return;
+
+            var canvas = GetComponentInParent<Canvas>();
+            if (canvas == null)
+            {
+                foreach (var presenter in _boardPresenters.Values)
+                {
+                    canvas = presenter.GetComponentInParent<Canvas>();
+                    if (canvas != null) break;
+                }
+            }
+            if (canvas == null) return;
+
+            var go = new GameObject("StatusLog", typeof(RectTransform));
+            var rt = (RectTransform)go.transform;
+            rt.SetParent(canvas.transform, false);
+            rt.SetAsLastSibling();
+            statusLog = go.AddComponent<StatusLog>();
+        }
+
+        /// Runs SBE on the current state and narrates any eliminations or game-end. No-op
+        /// during Placement phase per design — placement can't deadend or win by itself.
+        private void RunStateBasedEffects()
+        {
+            if (_gameState == null) return;
+            if (_gameState.CurrentPhase == GamePhase.Placement) return;
+            var result = _gameState.ApplyStateBasedEffects();
+            NarrateStateBasedEffects(result);
+        }
+
+        /// Emits a banner message for end-of-turn overflow trimming. Called with
+        /// the player who JUST ended their turn (CurrentPlayer has already
+        /// advanced by this point).
+        private void NarrateOverflowCap(StateBasedEffectsResult result, Player endingPlayer)
+        {
+            if (result == null || result.OverflowTrims == null || result.OverflowTrims.Count == 0) return;
+            int total = 0;
+            foreach (var t in result.OverflowTrims) total += t.RemovedCount;
+            var name = endingPlayer != null ? endingPlayer.Name : "Player";
+            var noun = total == 1 ? "counter" : "counters";
+            ShowBanner($"{name}: {total} {noun} cleared (overflow cap)");
+            // Per-space detail goes to the log only — keeps the banner punchy while the
+            // log carries enough info to retrace which spaces actually overflowed.
+            foreach (var t in result.OverflowTrims)
+            {
+                LogEvent($"  ↳ {FormatSpace(t.Space)}: −{t.RemovedCount} {t.Tone}");
+            }
+        }
+
+        private void NarrateStateBasedEffects(StateBasedEffectsResult result)
+        {
+            if (result == null || !result.HasAnyEffect) return;
+            foreach (var pid in result.NewlyEliminatedPlayerIds)
+            {
+                var p = _gameState.Players.FirstOrDefault(x => x.Id == pid);
+                ShowBanner(p != null ? $"{p.Name} eliminated." : $"Player {pid} eliminated.");
+            }
+            if (result.GameEnded)
+            {
+                if (result.WinnerId.HasValue)
+                {
+                    var winner = _gameState.Players.FirstOrDefault(x => x.Id == result.WinnerId.Value);
+                    ShowBanner(winner != null ? $"{winner.Name} wins!" : $"Player {result.WinnerId.Value} wins!");
+                }
+                else
+                {
+                    ShowBanner("Game Over.");
+                }
+            }
+        }
+
+        /// Narrates and ends the turn if the current player has no legal moves. Returns
+        /// true if the turn was auto-skipped so the caller can skip its usual end-of-tick
+        /// highlight pass (OnEndTurnClicked does its own).
+        private bool MaybeAutoSkipTurn()
+        {
+            if (_rules == null || _gameState == null) return false;
+            if (!_rules.ShouldAutoSkipTurn(_gameState)) return false;
+            var p = _gameState.GetCurrentPlayer();
+            ShowBanner(p != null ? $"{p.Name} has no legal moves — turn skipped." : "Turn skipped.");
+            OnEndTurnClicked();
+            return true;
+        }
+
+        private void ShowBanner(string message)
+        {
+            if (statusBanner != null) statusBanner.Enqueue(message);
+            // Also append to the log so the persistent record is complete —
+            // banner fades out, but a playtest viewer may want to scroll back
+            // and re-read what happened.
+            LogEvent(message);
+        }
+
+        /// Routine event recording — placements, moves, turn-ends, undos — routed
+        /// to the persistent corner log rather than the fade-out banner. Critical
+        /// moments still go through ShowBanner so they grab attention.
+        private void LogEvent(string message)
+        {
+            if (!showEventLog) return;
+            if (statusLog != null) statusLog.Append(message);
+        }
+
+        /// Wheel-color-named space reference. Center uses "[Player] Core"; every
+        /// other space carries the board owner as a possessive prefix so cross-board
+        /// references are unambiguous (e.g., "Alice's Rha Bridge"). Falls back to the
+        /// raw "B{board}:{id}" form if state lookup fails — only happens before the
+        /// game is initialized.
+        private string FormatSpace(SpaceId id)
+        {
+            var board = _gameState?.GetBoard(id.BoardId);
+            if (board == null || !board.SpaceMetadata.TryGetValue(id.Id, out var meta))
+                return $"B{id.BoardId}:{id.Id}";
+
+            var owner = _gameState.Players?.FirstOrDefault(p => p.Id == board.PlayerId);
+            string ownerName = owner?.Name;
+
+            if (meta.Type == SpaceType.Center)
+                return SpaceNamer.Name(id.Id, meta, ownerName);
+
+            string spaceName = SpaceNamer.Name(id.Id, meta);
+            return string.IsNullOrEmpty(ownerName) ? spaceName : $"{ownerName}'s {spaceName}";
+        }
+
+        private static string FormatStackCounts(int light, int dark)
+        {
+            if (light > 0 && dark > 0) return $"{light}L+{dark}D";
+            if (light > 0) return $"{light}L";
+            if (dark > 0) return $"{dark}D";
+            return "0";
         }
 
         private void EnsurePlacementGhost()
@@ -650,7 +837,17 @@ namespace Magi.LedgeBoardGame
 
             ClearMovementSelection();
 
-            _gameState.EndTurn();
+            var endingPlayer = _gameState.GetCurrentPlayer();
+            var endOfTurn = _gameState.EndTurn();
+            NarrateOverflowCap(endOfTurn, endingPlayer);
+            var nextPlayer = _gameState.GetCurrentPlayer();
+            if (endingPlayer != null)
+            {
+                if (!_gameState.GameOver && nextPlayer != null && nextPlayer.Id != endingPlayer.Id)
+                    LogEvent($"{endingPlayer.Name} ended turn → {nextPlayer.Name}");
+                else if (!_gameState.GameOver)
+                    LogEvent($"{endingPlayer.Name} ended turn");
+            }
 
             // Turn boundaries invalidate undo history — the prior player cannot rewind
             // into the next player's turn.
@@ -704,6 +901,9 @@ namespace Magi.LedgeBoardGame
                 return;
 
             var frame = _undoStack.Pop();
+            LogEvent(frame.HasAnimation
+                ? $"Undo: {FormatStackCounts(frame.Light, frame.Dark)} {FormatSpace(frame.From)} ← {FormatSpace(frame.To)}"
+                : "Undo: placement");
 
             // Cancel any in-flight selection so its drained source + ghost don't
             // linger through the reverse tween. The animation takes over from here.
@@ -728,9 +928,9 @@ namespace Magi.LedgeBoardGame
             Vector3 startPos = toView != null ? toView.transform.position : Vector3.zero;
             Vector3 endPos = fromView != null ? fromView.transform.position : startPos;
 
-            // Drain the moved chips off the destination view so the flying stack
-            // isn't visually duplicated by the still-visible chips at the destination.
-            // Capture moves restore their cleared opposing chips on landing via
+            // Drain the moved counters off the destination view so the flying stack
+            // isn't visually duplicated by the still-visible counters at the destination.
+            // Capture moves restore their cleared opposing counters on landing via
             // CopyFrom — a brief pop-in is acceptable for that edge case.
             if (toView != null)
             {

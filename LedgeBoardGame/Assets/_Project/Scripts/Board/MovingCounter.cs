@@ -7,13 +7,13 @@ using Magi.LedgeBoardGame.Models;
 
 namespace Magi.LedgeBoardGame.Board
 {
-    /// Canvas-level overlay that plays a move as a multi-chip pantomime: a translucent
+    /// Canvas-level overlay that plays a move as a multi-counter pantomime: a translucent
     /// phantom stack remains at the source while an opaque stack tweens to the destination,
     /// then both are cleaned up and the onComplete callback fires. GameController drives
     /// this in ExecuteStackMove so picks-up-and-places read as physical, not numeric.
     public class MovingCounter : MonoBehaviour
     {
-        private const float ChipSize = 60f;
+        private const float CounterSize = 60f;
         private const float StackOffset = 5f;
         private const float PhantomAlpha = 0.35f;
 
@@ -56,7 +56,7 @@ namespace Magi.LedgeBoardGame.Board
             rt.anchorMin = new Vector2(0.5f, 0.5f);
             rt.anchorMax = new Vector2(0.5f, 0.5f);
             rt.pivot = new Vector2(0.5f, 0.5f);
-            rt.sizeDelta = new Vector2(ChipSize, ChipSize);
+            rt.sizeDelta = new Vector2(CounterSize, CounterSize);
 
             int total = lightCount + darkCount;
             if (total == 0) total = 1;
@@ -66,33 +66,33 @@ namespace Magi.LedgeBoardGame.Board
             // reads identically to the source's rendering.
             for (int d = 0; d < darkCount; d++)
             {
-                BuildChip(rt, LedgePalette.CounterDark, alpha, new Vector2(0f, baseY + idx * StackOffset));
+                BuildCounter(rt, LedgePalette.CounterDark, alpha, new Vector2(0f, baseY + idx * StackOffset));
                 idx++;
             }
             for (int l = 0; l < lightCount; l++)
             {
-                BuildChip(rt, LedgePalette.CounterLight, alpha, new Vector2(0f, baseY + idx * StackOffset));
+                BuildCounter(rt, LedgePalette.CounterLight, alpha, new Vector2(0f, baseY + idx * StackOffset));
                 idx++;
             }
             return root;
         }
 
-        private static void BuildChip(Transform parent, Color color, float alpha, Vector2 anchoredPos)
+        private static void BuildCounter(Transform parent, Color color, float alpha, Vector2 anchoredPos)
         {
-            var go = new GameObject("Chip", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var go = new GameObject("Counter", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             var rt = (RectTransform)go.transform;
             rt.SetParent(parent, false);
             rt.anchorMin = new Vector2(0.5f, 0.5f);
             rt.anchorMax = new Vector2(0.5f, 0.5f);
             rt.pivot = new Vector2(0.5f, 0.5f);
             rt.anchoredPosition = anchoredPos;
-            rt.sizeDelta = new Vector2(ChipSize, ChipSize);
+            rt.sizeDelta = new Vector2(CounterSize, CounterSize);
             var img = go.GetComponent<Image>();
             img.sprite = LedgeSpriteFactory.Counter;
             img.color = new Color(color.r, color.g, color.b, alpha);
             img.raycastTarget = false;
 
-            // Rim uses the opposite tone so stacked dark chips stay countable.
+            // Rim uses the opposite tone so stacked dark counters stay countable.
             bool isDark = Mathf.Approximately(color.r, LedgePalette.CounterDark.r)
                 && Mathf.Approximately(color.g, LedgePalette.CounterDark.g)
                 && Mathf.Approximately(color.b, LedgePalette.CounterDark.b);
@@ -105,7 +105,7 @@ namespace Magi.LedgeBoardGame.Board
             rimRt.anchorMax = new Vector2(0.5f, 0.5f);
             rimRt.pivot = new Vector2(0.5f, 0.5f);
             rimRt.anchoredPosition = Vector2.zero;
-            rimRt.sizeDelta = new Vector2(ChipSize, ChipSize);
+            rimRt.sizeDelta = new Vector2(CounterSize, CounterSize);
             var rimImg = rimGo.GetComponent<Image>();
             rimImg.sprite = LedgeSpriteFactory.CounterRim;
             rimImg.color = new Color(rimColor.r, rimColor.g, rimColor.b, alpha);
@@ -118,7 +118,7 @@ namespace Magi.LedgeBoardGame.Board
             while (elapsed < _duration)
             {
                 float t = elapsed / _duration;
-                // Ease-out quad: quick takeoff, soft landing — reads like a chip being placed.
+                // Ease-out quad: quick takeoff, soft landing — reads like a counter being placed.
                 float eased = 1f - (1f - t) * (1f - t);
                 transform.position = Vector3.Lerp(_from, _to, eased);
                 elapsed += Time.unscaledDeltaTime;

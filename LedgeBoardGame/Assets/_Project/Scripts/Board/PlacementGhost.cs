@@ -137,7 +137,7 @@ namespace Magi.LedgeBoardGame.Board
             }
             else
             {
-                // Exponential smoothing gives the chip a touch of inertia, suggesting weight.
+                // Exponential smoothing gives the counter a touch of inertia, suggesting weight.
                 float t = 1f - Mathf.Exp(-followSmoothing * Time.unscaledDeltaTime);
                 _cursorLocal = Vector2.Lerp(_cursorLocal, localPoint, t);
             }

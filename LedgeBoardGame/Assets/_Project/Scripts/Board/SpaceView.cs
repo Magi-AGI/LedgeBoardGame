@@ -36,6 +36,21 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private float counterSize = 60f;
         [SerializeField] private float counterStackOffset = 5f;
 
+        [Header("Hover Label")]
+        [SerializeField] private TextMeshProUGUI hoverLabelTMP;
+        [SerializeField] private float hoverLabelFontSize = 14f;
+        [SerializeField] private Color hoverLabelColor = Color.white;
+        [SerializeField] private Color hoverLabelBgColor = new Color(0f, 0f, 0f, 0.72f);
+        [SerializeField] private Vector2 hoverLabelPadding = new Vector2(4f, 3f);
+        [SerializeField] private float hoverLabelFadeSeconds = 0.25f;
+        [SerializeField] private float hoverLabelShowDelaySeconds = 1.25f;
+        private RectTransform _hoverLabelRoot;
+        private CanvasGroup _hoverLabelGroup;
+        private Image _hoverLabelBg;
+        private float _hoverLabelAlpha;
+        private float _hoverEnterTime = -1f;
+        private string _spaceLabel;
+
         [Header("Pulse")]
         [SerializeField] private float pulseFrequencyHz = 1.4f;
         [SerializeField] private float pulseMinAlpha = 0.25f;
@@ -93,10 +108,10 @@ namespace Magi.LedgeBoardGame.Board
             UpdateTokenDisplay(stack);
         }
 
-        /// Fades the top `topCount` of the active chips down to `alpha`. Bottom chips —
-        /// including a locked chip at index 0 — keep full opacity so the origin still
-        /// reads as "this chip is still planted here."
-        public void SetPhantomChips(int topCount, float alpha)
+        /// Fades the top `topCount` of the active counters down to `alpha`. Bottom counters —
+        /// including a locked counter at index 0 — keep full opacity so the origin still
+        /// reads as "this counter is still planted here."
+        public void SetPhantomCounters(int topCount, float alpha)
         {
             if (_counterImages.Count == 0 || topCount <= 0) return;
             int totalActive = 0;
@@ -131,7 +146,7 @@ namespace Magi.LedgeBoardGame.Board
             }
         }
 
-        public void ClearPhantomChips()
+        public void ClearPhantomCounters()
         {
             for (int i = 0; i < _counterImages.Count; i++)
             {
@@ -203,7 +218,111 @@ namespace Magi.LedgeBoardGame.Board
         {
             if (_hovered == hovered) return;
             _hovered = hovered;
+            if (hovered)
+                _hoverEnterTime = Time.unscaledTime;
+            else
+                _hoverEnterTime = -1f;
             ApplyFrameVisual();
+            ApplyHoverLabel();
+        }
+
+        public void SetSpaceLabel(string label)
+        {
+            _spaceLabel = label;
+            if (hoverLabelTMP != null)
+                hoverLabelTMP.text = label ?? string.Empty;
+            ApplyHoverLabel();
+        }
+
+        private void ApplyHoverLabel()
+        {
+            EnsureHoverLabel();
+            if (_hoverLabelRoot == null) return;
+            bool show = _hovered && !string.IsNullOrEmpty(_spaceLabel);
+            if (show)
+                _hoverLabelRoot.SetAsLastSibling();
+        }
+
+        private float HoverLabelTargetAlpha
+        {
+            get
+            {
+                if (!_hovered || string.IsNullOrEmpty(_spaceLabel))
+                    return 0f;
+                // Arm a delay on hover-enter: the label only begins fading in after
+                // `hoverLabelShowDelaySeconds`. Leaving before the delay elapses means
+                // target never goes above 0, so the label never appears — no flash.
+                if (hoverLabelShowDelaySeconds > 0f
+                    && Time.unscaledTime - _hoverEnterTime < hoverLabelShowDelaySeconds)
+                    return 0f;
+                return 1f;
+            }
+        }
+
+        private void EnsureHoverLabel()
+        {
+            if (_hoverLabelRoot != null && _hoverLabelGroup != null && hoverLabelTMP != null) return;
+
+            if (hoverLabelTMP == null)
+            {
+                // The TMP is its own root: we run ContentSizeFitter on it (height only) so
+                // it auto-sizes to the wrapped text. No backdrop — fade alpha via CanvasGroup.
+                var tmpGo = new GameObject("HoverLabel", typeof(RectTransform));
+                var tmpRect = (RectTransform)tmpGo.transform;
+                tmpRect.SetParent(transform, false);
+                tmpRect.anchorMin = new Vector2(0.5f, 0.5f);
+                tmpRect.anchorMax = new Vector2(0.5f, 0.5f);
+                tmpRect.pivot = new Vector2(0.5f, 0.5f);
+                tmpRect.anchoredPosition = Vector2.zero;
+
+                hoverLabelTMP = tmpGo.AddComponent<TextMeshProUGUI>();
+                hoverLabelTMP.alignment = TextAlignmentOptions.Center;
+                hoverLabelTMP.enableWordWrapping = true;
+                hoverLabelTMP.fontSize = hoverLabelFontSize;
+                hoverLabelTMP.color = hoverLabelColor;
+                hoverLabelTMP.raycastTarget = false;
+                hoverLabelTMP.text = _spaceLabel ?? string.Empty;
+
+                // Wrap cap well inside the hex so two-word names break onto two lines
+                // and the backdrop stays proportionally narrow.
+                var selfRect = (RectTransform)transform;
+                float cap = Mathf.Max(40f, selfRect.sizeDelta.x * 0.4f);
+                tmpRect.sizeDelta = new Vector2(cap, 0f);
+
+                var fitter = tmpGo.AddComponent<ContentSizeFitter>();
+                fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+                // Backdrop plate: sibling-first under the TMP so text renders on top.
+                // Stretches to the TMP's rect and extends outward by `hoverLabelPadding`.
+                var bgGo = new GameObject("Bg", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                var bgRect = (RectTransform)bgGo.transform;
+                bgRect.SetParent(tmpRect, false);
+                bgRect.anchorMin = Vector2.zero;
+                bgRect.anchorMax = Vector2.one;
+                bgRect.offsetMin = new Vector2(-hoverLabelPadding.x, -hoverLabelPadding.y);
+                bgRect.offsetMax = new Vector2(hoverLabelPadding.x, hoverLabelPadding.y);
+                bgRect.SetAsFirstSibling();
+                _hoverLabelBg = bgGo.GetComponent<Image>();
+                _hoverLabelBg.color = hoverLabelBgColor;
+                _hoverLabelBg.raycastTarget = false;
+
+                _hoverLabelGroup = tmpGo.AddComponent<CanvasGroup>();
+                _hoverLabelGroup.alpha = 0f;
+                _hoverLabelGroup.interactable = false;
+                _hoverLabelGroup.blocksRaycasts = false;
+
+                _hoverLabelRoot = tmpRect;
+                _hoverLabelAlpha = 0f;
+            }
+            else if (_hoverLabelRoot == null)
+            {
+                _hoverLabelRoot = hoverLabelTMP.rectTransform;
+                _hoverLabelGroup = hoverLabelTMP.GetComponent<CanvasGroup>();
+                if (_hoverLabelGroup == null)
+                    _hoverLabelGroup = hoverLabelTMP.gameObject.AddComponent<CanvasGroup>();
+                _hoverLabelAlpha = _hoverLabelGroup.alpha;
+            }
         }
 
         public void SetSelected(bool selected)
@@ -272,6 +391,8 @@ namespace Magi.LedgeBoardGame.Board
 
         private void Update()
         {
+            TickHoverLabelFade();
+
             if (frameGlowImage == null) return;
 
             if (_validTarget)
@@ -288,6 +409,16 @@ namespace Magi.LedgeBoardGame.Board
                 var baseCol = LedgePalette.FrameMovableSourceAdd;
                 frameGlowImage.color = new Color(baseCol.r, baseCol.g, baseCol.b, a);
             }
+        }
+
+        private void TickHoverLabelFade()
+        {
+            if (_hoverLabelGroup == null) return;
+            float target = HoverLabelTargetAlpha;
+            if (Mathf.Approximately(_hoverLabelAlpha, target)) return;
+            float step = (hoverLabelFadeSeconds <= 0f) ? 1f : Time.unscaledDeltaTime / hoverLabelFadeSeconds;
+            _hoverLabelAlpha = Mathf.MoveTowards(_hoverLabelAlpha, target, step);
+            _hoverLabelGroup.alpha = _hoverLabelAlpha;
         }
 
         private void EnsureVisuals()
@@ -422,7 +553,7 @@ namespace Magi.LedgeBoardGame.Board
                 if (rim != null)
                 {
                     rim.gameObject.SetActive(true);
-                    // Opposite tone for contrast: dark chips get a light rim, light chips get a dark rim.
+                    // Opposite tone for contrast: dark counters get a light rim, light counters get a dark rim.
                     bool isDark = ApproxEqual(color, LedgePalette.CounterDark);
                     var rimColor = isDark ? LedgePalette.CounterLight : LedgePalette.CounterDark;
                     rimColor.a = img.color.a;

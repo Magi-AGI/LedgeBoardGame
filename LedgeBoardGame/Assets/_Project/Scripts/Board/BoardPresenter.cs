@@ -23,15 +23,17 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private Vector3 backgroundScale = new Vector3(0.53f, 0.53f, 0.53f);
 
         private BoardState _boardState;
+        private string _ownerName;
         private Image _backgroundImage;
         private readonly Dictionary<int, SpaceView> _spaceViews = new Dictionary<int, SpaceView>();
 
         public BoardState BoardState => _boardState;
         public IReadOnlyDictionary<int, SpaceView> SpaceViews => _spaceViews;
 
-        public void Initialize(BoardState state)
+        public void Initialize(BoardState state, string ownerName = null)
         {
             _boardState = state;
+            _ownerName = ownerName;
             EnsureBackground();
             BuildSpaceViews();
             PositionSpaceViews();
@@ -130,6 +132,7 @@ namespace Magi.LedgeBoardGame.Board
 
             var stack = _boardState.GetStack(spaceId);
             viewInstance.SetData(spaceId, meta, stack);
+            viewInstance.SetSpaceLabel(SpaceNamer.Name(spaceId, meta, _ownerName));
 
             return viewInstance;
         }

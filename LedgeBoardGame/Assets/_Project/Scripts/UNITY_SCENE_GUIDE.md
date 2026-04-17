@@ -105,7 +105,7 @@ namespace Magi.LedgeBoardGame.Board
         private BoardState boardState;
         private Dictionary<int, SpaceView> spaceViews;
 
-        public void Initialize(BoardState state) { }
+        public void Initialize(BoardState state, string ownerName = null) { }
         public void UpdateView() { }
         public void HighlightValidMoves(List<SpaceId> spaces) { }
     }
