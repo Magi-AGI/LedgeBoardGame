@@ -92,9 +92,19 @@ namespace Magi.LedgeBoardGame.Board
         }
 
         /// Routed from GameController after every state change so the ghost reflects current phase.
-        public void Refresh(GameState state)
+        /// `localSeatId` is the player this client controls: the ghost only follows the cursor
+        /// when it's actually that seat's turn. In hot-seat localSeatId == state.CurrentPlayerId
+        /// always, so behavior is unchanged; in the online model the ghost stays hidden while
+        /// the remote opponent is acting.
+        public void Refresh(GameState state, int localSeatId)
         {
             if (state == null || state.GameOver || state.CurrentPhase != GamePhase.Placement)
+            {
+                SetVisible(false);
+                return;
+            }
+
+            if (state.CurrentPlayerId != localSeatId)
             {
                 SetVisible(false);
                 return;

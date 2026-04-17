@@ -30,6 +30,15 @@ namespace Magi.LedgeBoardGame
 
         private GameState _gameState;
         private GameRules _rules;
+
+        // The player ID this client controls. Distinct from GameState.CurrentPlayerId —
+        // which is "whose turn is it" (authoritative, server-set in the online model).
+        // In hot-seat every turn transition moves _localSeatId with the current player;
+        // in the online model it's pinned at session join and only the current player
+        // changes. UI that reads "can *I* act right now" must gate on IsLocalSeatsTurn(),
+        // not on CurrentPlayerId directly.
+        private int _localSeatId;
+
         private readonly Dictionary<int, BoardPresenter> _boardPresenters = new Dictionary<int, BoardPresenter>();
         private SpaceId? _selectedSpace;
         private Tone _selectedTone = Tone.Light;
@@ -59,6 +68,11 @@ namespace Magi.LedgeBoardGame
             public int Light;
             public int Dark;
         }
+
+        public int LocalSeatId => _localSeatId;
+
+        public bool IsLocalSeatsTurn() =>
+            _gameState != null && _gameState.CurrentPlayerId == _localSeatId;
 
         private void Start()
         {
@@ -92,6 +106,7 @@ namespace Magi.LedgeBoardGame
 
             _gameState = new GameState(players, runtimeConfig);
             _rules = new GameRules(useSpec ? runtimeConfig : null);
+            _localSeatId = _gameState.CurrentPlayerId;
 
             if (multiBoardLayout == null)
             {
@@ -1068,6 +1083,11 @@ namespace Magi.LedgeBoardGame
             var endOfTurn = _gameState.EndTurn();
             NarrateOverflowCap(endOfTurn, endingPlayer);
             var nextPlayer = _gameState.GetCurrentPlayer();
+
+            // Hot-seat: the local seat follows the active turn so the same keyboard/mouse
+            // drives whichever player is up. Online transport will stop firing this line
+            // (or it becomes a no-op when the seat is pinned at session join).
+            _localSeatId = _gameState.CurrentPlayerId;
             if (endingPlayer != null)
             {
                 if (!_gameState.GameOver && nextPlayer != null && nextPlayer.Id != endingPlayer.Id)
@@ -1119,12 +1139,25 @@ namespace Magi.LedgeBoardGame
             });
         }
 
+        /// Local mid-turn rewind. Only valid when this client holds the current turn
+        /// (IsLocalSeatsTurn()) — the undo stack is a per-seat, pre-submit buffer and
+        /// cannot rewind commits made by another player. Under the future server-
+        /// authoritative model even your own actions are server-committed by the time
+        /// you see them, so cross-turn or cross-client rollback routes through
+        /// RequestTakeback() instead; this path stays valid for pre-submit local-only
+        /// action batching.
         private void OnUndoClicked()
         {
             if (_undoStack.Count == 0 || _gameState == null)
                 return;
 
             if (_moveInProgress)
+                return;
+
+            // Controller-layer gate: undo only applies to the local seat's own
+            // in-flight actions. Hot-seat satisfies this trivially (local seat tracks
+            // current player); online mode will reject clicks during the remote turn.
+            if (!IsLocalSeatsTurn())
                 return;
 
             var frame = _undoStack.Pop();
@@ -1146,6 +1179,23 @@ namespace Magi.LedgeBoardGame
             }
 
             RefreshUndoButton();
+        }
+
+        /// Stub for the online takeback path. Unlike OnUndoClicked (which pops from
+        /// a local pre-submit buffer), a takeback request is addressed to the server
+        /// because under the server-authoritative model every action is already
+        /// committed by the time the client sees its effect. The server decides the
+        /// policy: auto-grant within the same turn, route to opponent for consent,
+        /// or reject outright. M0b leaves the wire call unbound — M5b/M6 will route
+        /// it through MagiSession. Kept here so the controller surfaces both paths
+        /// side-by-side and UI bindings can flip between them without hunting across
+        /// files.
+        public void RequestTakeback()
+        {
+#if UNITY_EDITOR
+            UnityEngine.Debug.LogWarning(
+                "GameController.RequestTakeback: not wired. Online takeback arrives with M5b/M6.");
+#endif
         }
 
         private void PlayReverseMoveTween(UndoFrame frame)
@@ -1210,14 +1260,17 @@ namespace Magi.LedgeBoardGame
         {
             if (undoButton != null)
             {
-                undoButton.interactable = _undoStack.Count > 0 && !_moveInProgress;
+                // Mirror the OnUndoClicked gate: the button is only interactable when
+                // this seat can actually rewind. Shared gate avoids divergence between
+                // "button says yes" and "controller says no" once online mode lands.
+                undoButton.interactable = _undoStack.Count > 0 && !_moveInProgress && IsLocalSeatsTurn();
             }
         }
 
         private void UpdateStatusUI()
         {
             gameHud?.UpdateHud(_gameState);
-            placementGhost?.Refresh(_gameState);
+            placementGhost?.Refresh(_gameState, _localSeatId);
         }
     }
 }
