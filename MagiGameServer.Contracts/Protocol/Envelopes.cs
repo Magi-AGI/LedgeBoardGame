@@ -57,4 +57,22 @@ namespace MagiGameServer.Contracts.Protocol
         public string Code { get; init; }
         public string Message { get; init; }
     }
+
+    /// Server-to-client: initial state handed to a seat when it joins (or
+    /// rejoins) a session. Distinct from StateEcho because the recipient
+    /// didn't trigger the snapshot — there is no `SubmittingSeat` or
+    /// `AckedSeq` to attach, and the dispatcher routing that classifies
+    /// echoes into OnStateAdvanced / OnPredictionMatched /
+    /// OnPredictionDiverged does not apply. `State` is already projected
+    /// for `ForSeat`; `StateHash` is the hash of the projected state and
+    /// matches what a predicting client would compute locally after
+    /// seeding its optimistic view.
+    public sealed record JoinSnapshot<TState>
+    {
+        public SessionId Session { get; init; }
+        public SeatId ForSeat { get; init; }
+        public ServerSeq Revision { get; init; }
+        public TState State { get; init; }
+        public long StateHash { get; init; }
+    }
 }

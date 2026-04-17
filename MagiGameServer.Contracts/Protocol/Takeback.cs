@@ -58,4 +58,32 @@ namespace MagiGameServer.Contracts.Protocol
         /// Server policy or opponent rejected the request.
         Denied
     }
+
+    /// Server-to-client: broadcast delivered to every seat (including the
+    /// requester) when a takeback was granted and canonical state was
+    /// rewound. Carries the post-rewind state already projected for
+    /// `ForSeat`, so receivers don't need to correlate this envelope with
+    /// a separate StateEcho — unlike ordinary actions, a granted takeback
+    /// does not also produce per-seat StateEchoes on the wire.
+    ///
+    /// `RevisionAfter` is lower than the revision each recipient was
+    /// holding before the broadcast; this is the one server-authored event
+    /// where the timeline moves backward, and dispatchers should treat it
+    /// as a branch cut: drop any pending optimistic stack entries whose
+    /// ClientSeq > `AckedRequestSeq` on the requesting seat, and reset the
+    /// optimistic stack entirely on non-requesting seats.
+    ///
+    /// Denied / PendingConsent outcomes do not produce a broadcast —
+    /// they arrive as TakebackResponse on OnTakebackReply instead.
+    public sealed record TakebackBroadcast<TState>
+    {
+        public SessionId Session { get; init; }
+        public SeatId ForSeat { get; init; }
+        public SeatId RequestingSeat { get; init; }
+        public ClientSeq AckedRequestSeq { get; init; }
+        public ServerSeq RevisionAfter { get; init; }
+        public int StepsRewound { get; init; }
+        public TState State { get; init; }
+        public long StateHash { get; init; }
+    }
 }
