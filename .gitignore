@@ -144,3 +144,5 @@ Thumbs.db
 **/bin/
 !LedgeBoardGame.Core/LedgeBoardGame.Core.csproj
 !MagiGameServer.Contracts/MagiGameServer.Contracts.csproj
+!MagiGameServer.Core/MagiGameServer.Core.csproj
+!MagiGameServer.Core.Tests/MagiGameServer.Core.Tests.csproj
