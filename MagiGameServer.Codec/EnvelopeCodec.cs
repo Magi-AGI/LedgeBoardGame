@@ -15,8 +15,11 @@ namespace MagiGameServer.Codec
     /// * Runtime-typed (server) API: `DeserializeActionEnvelope(json,
     ///   actionType)` — used by the server host where the concrete
     ///   TAction is only known after resolving the session's module.
-    ///   Internally builds ActionEnvelope&lt;TAction&gt; via reflection and
-    ///   hands it off to the same JsonSerializerOptions.
+    ///   Deserializes through ActionEnvelope&lt;JsonElement&gt; as an
+    ///   intermediate, then resolves the Action element against the
+    ///   module-supplied actionType and boxes into
+    ///   ActionEnvelope&lt;object&gt; — the exact non-generic shape
+    ///   Session.Apply consumes, with no reflection glue at the seam.
     ///
     /// Options are immutable and shared: enum-as-string,
     /// strong-typed-identifier converters, camelCase property naming.
