@@ -157,6 +157,8 @@ namespace Magi.LedgeBoardGame
             observer.OnServerMatched += HandleServerMatched;
             observer.OnServerDiverged += HandleServerDiverged;
             observer.OnServerError += HandleServerError;
+            observer.OnServerTakeback += HandleServerTakeback;
+            observer.OnServerTakebackReply += HandleServerTakebackReply;
         }
 
         private void UnsubscribeObserver(ILedgeSessionObserver observer)
@@ -166,6 +168,8 @@ namespace Magi.LedgeBoardGame
             observer.OnServerMatched -= HandleServerMatched;
             observer.OnServerDiverged -= HandleServerDiverged;
             observer.OnServerError -= HandleServerError;
+            observer.OnServerTakeback -= HandleServerTakeback;
+            observer.OnServerTakebackReply -= HandleServerTakebackReply;
         }
 
         private void HandleServerJoin(LedgeSessionJoinInfo info)
@@ -264,6 +268,92 @@ namespace Magi.LedgeBoardGame
                 ReleaseSubmissionIfLocal(info.SubscribingSeatIndex);
                 RefreshBoards();
                 UpdateStatusUI();
+            }
+        }
+
+        private void HandleServerTakeback(LedgeSessionTakebackInfo info)
+        {
+            if (Application.isEditor)
+                UnityEngine.Debug.Log(
+                    $"[net] takeback requestingSeat={info.RequestingSeatIndex} " +
+                    $"forSeat={info.ForSeatIndex} stepsRewound={info.StepsRewound} " +
+                    $"revisionAfter={info.RevisionAfter} hash=0x{info.ServerHash:X16} mode={networkMode}");
+
+            if (networkMode != NetworkMode.Network) return;
+
+            // The driver fans every seat's broadcast through this one
+            // controller (in-process test harness). Apply state only on the
+            // broadcast addressed to the local seat; otherwise ApplyServerState
+            // would overwrite _gameState N times.
+            if (info.ForSeatIndex == _localSeatId - 1)
+            {
+                // Takeback clears any pre-submit local selection — the rewind
+                // may have unwound the very action that selection was built
+                // against. Clearing mirrors the undo-path behavior from
+                // OnUndoClicked without a reverse tween (no animation; hard
+                // snap to post-rewind state).
+                ClearMovementSelection();
+                ClearHighlights();
+                ApplyServerStateAndRefresh(info.State);
+                LogEvent($"↶ takeback granted ({info.StepsRewound} step{(info.StepsRewound == 1 ? "" : "s")})");
+            }
+
+            // Only the requester's in-flight lock was this takeback; others
+            // never incremented theirs for it. Release it so the requester's
+            // UI unlocks. Done outside the ForSeatIndex==local branch because
+            // in the in-process harness the RequestingSeat broadcast arrives
+            // on every seat; we gate on RequestingSeatIndex instead.
+            if (info.RequestingSeatIndex == _localSeatId - 1
+                && info.ForSeatIndex == _localSeatId - 1)
+            {
+                if (_pendingSubmissions > 0) _pendingSubmissions--;
+                if (_pendingSubmissions == 0) RefreshUndoButton();
+            }
+        }
+
+        private void HandleServerTakebackReply(LedgeSessionTakebackReplyInfo info)
+        {
+            if (Application.isEditor)
+                UnityEngine.Debug.Log(
+                    $"[net] takeback reply seat={info.SubscribingSeatIndex} " +
+                    $"requestingSeat={info.RequestingSeatIndex} outcome={info.Outcome} " +
+                    $"stepsGranted={info.StepsGranted} seq={info.AckedRequestSeq} " +
+                    $"message={info.Message} mode={networkMode}");
+
+            if (networkMode != NetworkMode.Network) return;
+
+            // Granted outcomes never route here — they arrive as the
+            // LedgeSessionTakebackInfo broadcast. So a reply means Denied or
+            // PendingConsent, both of which leave authoritative state
+            // untouched; just surface the result and release the lock.
+            switch (info.Outcome)
+            {
+                case LedgeTakebackOutcome.Denied:
+                    LogEvent($"↶ takeback denied{(string.IsNullOrEmpty(info.Message) ? "" : $": {info.Message}")}");
+                    break;
+                case LedgeTakebackOutcome.PendingConsent:
+                    LogEvent("↶ takeback awaiting consent");
+                    break;
+                case LedgeTakebackOutcome.Granted:
+                    // Unexpected — the broadcast path should handle this.
+                    // Log and fall through to release the lock defensively.
+                    if (Application.isEditor)
+                        UnityEngine.Debug.LogWarning(
+                            "[net] takeback Granted outcome arrived via reply — expected broadcast");
+                    break;
+            }
+
+            // PendingConsent is the one outcome where the takeback isn't
+            // resolved yet — a follow-up Granted broadcast or Denied reply
+            // will arrive later. Releasing the lock now would let the player
+            // fire another action mid-consent; hold the lock and let the
+            // follow-up clear it.
+            if (info.Outcome == LedgeTakebackOutcome.PendingConsent) return;
+
+            if (info.RequestingSeatIndex == _localSeatId - 1)
+            {
+                if (_pendingSubmissions > 0) _pendingSubmissions--;
+                if (_pendingSubmissions == 0) RefreshUndoButton();
             }
         }
 
@@ -1626,17 +1716,25 @@ namespace Magi.LedgeBoardGame
         /// action batching.
         private void OnUndoClicked()
         {
-            if (_undoStack.Count == 0 || _gameState == null)
+            if (_gameState == null)
                 return;
 
             if (_moveInProgress)
                 return;
 
-            // Network mode has no pre-submit local buffer to rewind — every
-            // action is server-committed the instant it echoes back. Cross-
-            // commit rollback is what RequestTakeback is for; this button
-            // stays dormant while networkMode == Network.
+            // Network mode: the undo button is repurposed as the takeback
+            // trigger. Server-committed actions can't be popped from a local
+            // buffer, so the click submits a 1-step takeback request and the
+            // server decides (auto-grant same-turn, route for consent, or
+            // reject). RequestTakeback itself gates on _pendingSubmissions,
+            // sink readiness, and increments the UI lock.
             if (networkMode == NetworkMode.Network)
+            {
+                RequestTakeback();
+                return;
+            }
+
+            if (_undoStack.Count == 0)
                 return;
 
             // Controller-layer gate: undo only applies to the local seat's own
@@ -1666,21 +1764,47 @@ namespace Magi.LedgeBoardGame
             RefreshUndoButton();
         }
 
-        /// Stub for the online takeback path. Unlike OnUndoClicked (which pops from
-        /// a local pre-submit buffer), a takeback request is addressed to the server
-        /// because under the server-authoritative model every action is already
-        /// committed by the time the client sees its effect. The server decides the
-        /// policy: auto-grant within the same turn, route to opponent for consent,
-        /// or reject outright. M0b leaves the wire call unbound — M5b/M6 will route
-        /// it through MagiSession. Kept here so the controller surfaces both paths
-        /// side-by-side and UI bindings can flip between them without hunting across
-        /// files.
-        public void RequestTakeback()
+        /// Online takeback entry point. Unlike OnUndoClicked (which pops from
+        /// a local pre-submit buffer), a takeback request is addressed to the
+        /// server because every action is already committed by the time the
+        /// client sees its effect. The server decides policy: auto-grant
+        /// same-turn, route to opponent for consent, or reject outright. The
+        /// outcome lands as either an OnServerTakeback broadcast (granted —
+        /// carries post-rewind state) or an OnServerTakebackReply (denied /
+        /// pending). Returns silently in Local mode — undo already covers
+        /// that path from a pre-submit buffer.
+        public void RequestTakeback(int stepsRequested = 1, string reason = null)
         {
+            if (networkMode != NetworkMode.Network)
+            {
 #if UNITY_EDITOR
-            UnityEngine.Debug.LogWarning(
-                "GameController.RequestTakeback: not wired. Online takeback arrives with M5b/M6.");
+                UnityEngine.Debug.LogWarning(
+                    "GameController.RequestTakeback: ignored in Local mode — use Undo for pre-submit rewind.");
 #endif
+                return;
+            }
+
+            if (_shadowSink == null) return;
+
+            // Hold off while a prior action is still in flight — the server
+            // would see the takeback racing the pending echo and the ordering
+            // is ambiguous. A user pressing takeback twice would otherwise
+            // stack two submissions; this cap keeps the in-flight state
+            // single-entry.
+            if (_pendingSubmissions > 0) return;
+
+            int seatIndex = _localSeatId - 1;
+            if (_shadowSink.SubmitTakeback(seatIndex, stepsRequested, reason ?? string.Empty))
+            {
+                _pendingSubmissions++;
+                LogEvent($"↶ submit takeback (steps={stepsRequested})");
+                RefreshUndoButton();
+            }
+            else if (Application.isEditor)
+            {
+                UnityEngine.Debug.LogWarning(
+                    "[net] takeback submission dropped (sink null or not ready)");
+            }
         }
 
         private void PlayReverseMoveTween(UndoFrame frame)
@@ -1745,16 +1869,18 @@ namespace Magi.LedgeBoardGame
         {
             if (undoButton != null)
             {
-                // Mirror the OnUndoClicked gate: the button is only interactable when
-                // this seat can actually rewind. Shared gate avoids divergence between
-                // "button says yes" and "controller says no" once online mode lands.
-                // Network mode disables undo outright — takeback goes through
-                // RequestTakeback once that's wired to the session.
-                undoButton.interactable =
-                    networkMode == NetworkMode.Local
-                    && _undoStack.Count > 0
-                    && !_moveInProgress
-                    && IsLocalSeatsTurn();
+                // Mirror the OnUndoClicked gate so "button says yes" and
+                // "controller says no" never disagree.
+                //   Local mode: pre-submit undo stack must have entries and
+                //     this seat must hold the current turn.
+                //   Network mode: takeback request. Enable whenever a
+                //     submission isn't already in flight and the sink is
+                //     attached — turn ownership is a server policy call, not
+                //     a client-side gate.
+                bool canUndo = networkMode == NetworkMode.Local
+                    ? _undoStack.Count > 0 && IsLocalSeatsTurn()
+                    : _shadowSink != null && _pendingSubmissions == 0;
+                undoButton.interactable = canUndo && !_moveInProgress;
             }
             if (endTurnButton != null)
             {

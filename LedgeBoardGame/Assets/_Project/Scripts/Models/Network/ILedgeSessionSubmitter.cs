@@ -31,5 +31,13 @@ namespace Magi.LedgeBoardGame.Models.Network
         bool SubmitPlace(int seatIndex, SpaceId target, Tone tone);
         bool SubmitMove(int seatIndex, SpaceId from, SpaceId to, Tone tone);
         bool SubmitEndTurn(int seatIndex);
+
+        /// Cross-commit rollback. Unlike local undo (pre-submit buffer), a
+        /// takeback addresses already-echoed actions and requires server
+        /// authority to rewind — the server decides policy (auto-grant same
+        /// turn, route for consent, reject). Granted requests arrive as
+        /// OnServerTakeback broadcasts (carrying the post-rewind state);
+        /// denied/pending outcomes arrive as OnServerTakebackReply.
+        bool SubmitTakeback(int seatIndex, int stepsRequested, string reason);
     }
 }

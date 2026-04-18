@@ -74,6 +74,8 @@ namespace Magi.LedgeBoardGame.Net
         public event Action<LedgeSessionEchoInfo> OnServerMatched;
         public event Action<LedgeSessionEchoInfo> OnServerDiverged;
         public event Action<LedgeSessionErrorInfo> OnServerError;
+        public event Action<LedgeSessionTakebackInfo> OnServerTakeback;
+        public event Action<LedgeSessionTakebackReplyInfo> OnServerTakebackReply;
 
         public LedgeBoardSessionDriver(int seatCount)
         {
@@ -125,6 +127,8 @@ namespace Magi.LedgeBoardGame.Net
                 session.OnPredictionMatched += echo => RaiseMatched(seatIndex, echo);
                 session.OnPredictionDiverged += echo => RaiseDiverged(seatIndex, echo);
                 session.OnError += err => RaiseError(seatIndex, err);
+                session.OnTakebackBroadcast += bcast => RaiseTakeback(seatIndex, bcast);
+                session.OnTakebackReply += reply => RaiseTakebackReply(seatIndex, reply);
                 session.OnTransportError += ex => UnityEngine.Debug.LogError(
                     $"[shadow] transport error seat={seatIndex}: {ex}");
                 _transports.Add(transport);
@@ -166,6 +170,19 @@ namespace Magi.LedgeBoardGame.Net
 
         public bool SubmitEndTurn(int seatIndex)
             => SubmitAuthoritative(seatIndex, LedgeAction.EndTurn());
+
+        public bool SubmitTakeback(int seatIndex, int stepsRequested, string reason)
+        {
+            if (!ValidateSeat(seatIndex, "takeback")) return false;
+            if (stepsRequested < 1)
+            {
+                UnityEngine.Debug.LogError(
+                    $"[takeback] submit rejected: stepsRequested={stepsRequested} must be >= 1");
+                return false;
+            }
+            _sessions[seatIndex].SubmitTakeback(stepsRequested, reason);
+            return true;
+        }
 
         private void SubmitShadow(int seatIndex, SpecGameState localPostApplyState, LedgeAction action)
         {
@@ -272,6 +289,56 @@ namespace Magi.LedgeBoardGame.Net
                 message: err.Message);
             try { OnServerError?.Invoke(info); }
             catch (Exception ex) { UnityEngine.Debug.LogError($"[shadow] OnServerError subscriber threw seat={seatIndex}: {ex}"); }
+        }
+
+        private void RaiseTakeback(int seatIndex, TakebackBroadcast<SpecGameState> bcast)
+        {
+            UnityEngine.Debug.Log(
+                $"[takeback] broadcast seat={seatIndex} " +
+                $"requestingSeat={bcast.RequestingSeat.Value} forSeat={bcast.ForSeat.Value} " +
+                $"stepsRewound={bcast.StepsRewound} revisionAfter={bcast.RevisionAfter.Value} " +
+                $"hash=0x{bcast.StateHash:X16}");
+
+            var info = new LedgeSessionTakebackInfo(
+                requestingSeatIndex: bcast.RequestingSeat.Value,
+                forSeatIndex: bcast.ForSeat.Value,
+                ackedRequestSeq: bcast.AckedRequestSeq.Value,
+                revisionAfter: bcast.RevisionAfter.Value,
+                serverHash: bcast.StateHash,
+                stepsRewound: bcast.StepsRewound,
+                state: bcast.State);
+            try { OnServerTakeback?.Invoke(info); }
+            catch (Exception ex) { UnityEngine.Debug.LogError($"[takeback] OnServerTakeback subscriber threw seat={seatIndex}: {ex}"); }
+        }
+
+        private void RaiseTakebackReply(int seatIndex, TakebackResponse reply)
+        {
+            UnityEngine.Debug.Log(
+                $"[takeback] reply seat={seatIndex} " +
+                $"requestingSeat={reply.RequestingSeat.Value} outcome={reply.Outcome} " +
+                $"stepsGranted={reply.StepsGranted} seq={reply.AckedRequestSeq.Value} " +
+                $"message={reply.Message}");
+
+            var info = new LedgeSessionTakebackReplyInfo(
+                subscribingSeatIndex: seatIndex,
+                requestingSeatIndex: reply.RequestingSeat.Value,
+                ackedRequestSeq: reply.AckedRequestSeq.Value,
+                outcome: TranslateTakebackOutcome(reply.Outcome),
+                stepsGranted: reply.StepsGranted,
+                message: reply.Message);
+            try { OnServerTakebackReply?.Invoke(info); }
+            catch (Exception ex) { UnityEngine.Debug.LogError($"[takeback] OnServerTakebackReply subscriber threw seat={seatIndex}: {ex}"); }
+        }
+
+        private static LedgeTakebackOutcome TranslateTakebackOutcome(TakebackOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case TakebackOutcome.Granted: return LedgeTakebackOutcome.Granted;
+                case TakebackOutcome.PendingConsent: return LedgeTakebackOutcome.PendingConsent;
+                case TakebackOutcome.Denied: return LedgeTakebackOutcome.Denied;
+                default: return LedgeTakebackOutcome.Denied;
+            }
         }
 
         private static LedgeSessionEchoInfo BuildEchoInfo(StateEcho<SpecGameState> echo)

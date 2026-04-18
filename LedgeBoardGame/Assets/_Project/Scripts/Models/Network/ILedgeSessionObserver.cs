@@ -94,10 +94,83 @@ namespace Magi.LedgeBoardGame.Models.Network
         }
     }
 
+    /// Domain mirror of MagiGameServer.Contracts.Protocol.TakebackOutcome.
+    public enum LedgeTakebackOutcome
+    {
+        Granted = 0,
+        PendingConsent = 1,
+        Denied = 2,
+    }
+
+    /// Granted takeback broadcast fanned per-seat. State is the post-rewind
+    /// state projected for ForSeatIndex — receivers apply it directly; no
+    /// separate StateEcho accompanies a granted takeback. Revision moves
+    /// backward compared to the previous echo, which is the one server-
+    /// authored event where the timeline regresses.
+    public readonly struct LedgeSessionTakebackInfo
+    {
+        public int RequestingSeatIndex { get; }
+        public int ForSeatIndex { get; }
+        public long AckedRequestSeq { get; }
+        public long RevisionAfter { get; }
+        public long ServerHash { get; }
+        public int StepsRewound { get; }
+        public SpecGameState State { get; }
+
+        public LedgeSessionTakebackInfo(
+            int requestingSeatIndex,
+            int forSeatIndex,
+            long ackedRequestSeq,
+            long revisionAfter,
+            long serverHash,
+            int stepsRewound,
+            SpecGameState state)
+        {
+            RequestingSeatIndex = requestingSeatIndex;
+            ForSeatIndex = forSeatIndex;
+            AckedRequestSeq = ackedRequestSeq;
+            RevisionAfter = revisionAfter;
+            ServerHash = serverHash;
+            StepsRewound = stepsRewound;
+            State = state;
+        }
+    }
+
+    /// Denied / PendingConsent takeback reply. Granted outcomes do NOT route
+    /// here — they arrive as LedgeSessionTakebackInfo broadcasts instead.
+    /// SubscribingSeatIndex is the seat whose MagiSession raised the reply,
+    /// which is the requester (replies fan only to the requester).
+    public readonly struct LedgeSessionTakebackReplyInfo
+    {
+        public int SubscribingSeatIndex { get; }
+        public int RequestingSeatIndex { get; }
+        public long AckedRequestSeq { get; }
+        public LedgeTakebackOutcome Outcome { get; }
+        public int StepsGranted { get; }
+        public string Message { get; }
+
+        public LedgeSessionTakebackReplyInfo(
+            int subscribingSeatIndex,
+            int requestingSeatIndex,
+            long ackedRequestSeq,
+            LedgeTakebackOutcome outcome,
+            int stepsGranted,
+            string message)
+        {
+            SubscribingSeatIndex = subscribingSeatIndex;
+            RequestingSeatIndex = requestingSeatIndex;
+            AckedRequestSeq = ackedRequestSeq;
+            Outcome = outcome;
+            StepsGranted = stepsGranted;
+            Message = message;
+        }
+    }
+
     /// Observer surface fanned out from the driver's per-seat MagiSession
     /// events. In M6c3b-1 GameController subscribes for diagnostics only;
     /// M6c3b-2 starts feeding authoritative State into ApplyServerState;
-    /// M6c3b-3 makes it the primary state source.
+    /// M6c3b-3 makes it the primary state source; M6c3b-4 adds the takeback
+    /// broadcast/reply stream.
     ///
     /// Events fire on the Unity main thread — the driver subscribes inside
     /// its own Tick() via SessionDispatcher dispatch, and LedgeShadowBootstrap
@@ -109,6 +182,8 @@ namespace Magi.LedgeBoardGame.Models.Network
         event Action<LedgeSessionEchoInfo> OnServerMatched;
         event Action<LedgeSessionEchoInfo> OnServerDiverged;
         event Action<LedgeSessionErrorInfo> OnServerError;
+        event Action<LedgeSessionTakebackInfo> OnServerTakeback;
+        event Action<LedgeSessionTakebackReplyInfo> OnServerTakebackReply;
     }
 
     /// Combined sink + submitter + observer surface so GameController
