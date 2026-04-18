@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.WebSockets;
 using System.Text;
@@ -32,7 +33,12 @@ namespace MagiGameServer.Host.Session
         private readonly IGameModule _module;
         private readonly ILogger<SessionRuntime> _logger;
         private readonly Channel<IWorkItem> _work;
-        private readonly Dictionary<int, SeatConnection> _seats = new Dictionary<int, SeatConnection>();
+        // ConcurrentDictionary because the dispatcher task writes attach/
+        // detach entries while per-seat send loops (running on separate
+        // tasks spawned by Program.cs) read the same map to resolve their
+        // outbound Channel. A plain Dictionary would be undefined behavior
+        // under that access pattern even if tests don't hit it.
+        private readonly ConcurrentDictionary<int, SeatConnection> _seats = new ConcurrentDictionary<int, SeatConnection>();
         private readonly Task _dispatcherTask;
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
 
@@ -123,12 +129,11 @@ namespace MagiGameServer.Host.Session
 
         private void HandleAttach(AttachWork work)
         {
-            if (_seats.ContainsKey(work.Seat.Value))
+            if (!_seats.TryAdd(work.Seat.Value, work.Connection))
             {
                 work.Completion.TrySetResult(false);
                 return;
             }
-            _seats[work.Seat.Value] = work.Connection;
             _logger.LogInformation("Seat {Seat} attached to session {Session}", work.Seat, Id);
 
             var snapshot = BuildJoinSnapshot(work.Seat);
@@ -139,10 +144,9 @@ namespace MagiGameServer.Host.Session
 
         private void HandleDetach(DetachWork work)
         {
-            if (_seats.TryGetValue(work.Seat.Value, out var conn))
+            if (_seats.TryRemove(work.Seat.Value, out var conn))
             {
                 conn.Outgoing.Writer.TryComplete();
-                _seats.Remove(work.Seat.Value);
                 _logger.LogInformation("Seat {Seat} detached from session {Session}", work.Seat, Id);
             }
         }
@@ -155,7 +159,7 @@ namespace MagiGameServer.Host.Session
                 var root = doc.RootElement;
                 if (!root.TryGetProperty("kind", out var kindEl))
                 {
-                    SendError(work.Seat, "malformed_frame", "Frame missing 'kind' discriminator");
+                    SendError(work.Seat, "malformed_frame", "Frame missing 'kind' discriminator", default);
                     return;
                 }
                 var kindStr = kindEl.GetString();
@@ -169,13 +173,13 @@ namespace MagiGameServer.Host.Session
                 }
                 else
                 {
-                    SendError(work.Seat, "unknown_kind", $"Unknown frame kind '{kindStr}'");
+                    SendError(work.Seat, "unknown_kind", $"Unknown frame kind '{kindStr}'", default);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to dispatch frame on session {Session} seat {Seat}", Id, work.Seat);
-                SendError(work.Seat, "frame_error", ex.Message);
+                SendError(work.Seat, "frame_error", ex.Message, default);
             }
         }
 
@@ -183,13 +187,20 @@ namespace MagiGameServer.Host.Session
         {
             if (!root.TryGetProperty("action", out var payload) || payload.ValueKind == JsonValueKind.Null)
             {
-                SendError(seat, "malformed_frame", "Action frame missing 'action' payload");
+                SendError(seat, "malformed_frame", "Action frame missing 'action' payload", default);
                 return;
             }
+            // Peek the seq before calling the codec so seat-mismatch and
+            // other envelope-rejection paths can carry AckedSeq back to
+            // the client. Without this, OnError can't retire the matching
+            // optimistic entry in the dispatcher (SessionDispatcher only
+            // clears pending predictions by error.AckedSeq).
+            ClientSeq peekedSeq = TryReadSeq(payload);
+
             ActionEnvelope<object> envelope = EnvelopeCodec.DeserializeActionEnvelope(payload.GetRawText(), _module.ActionType);
             if (envelope == null || envelope.Seat != seat)
             {
-                SendError(seat, "seat_mismatch", "Envelope seat does not match connection seat");
+                SendError(seat, "seat_mismatch", "Envelope seat does not match connection seat", peekedSeq);
                 return;
             }
 
@@ -201,7 +212,7 @@ namespace MagiGameServer.Host.Session
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Apply threw on session {Session}", Id);
-                SendError(seat, "apply_failed", ex.Message);
+                SendError(seat, "apply_failed", ex.Message, envelope.Seq);
                 return;
             }
 
@@ -223,9 +234,11 @@ namespace MagiGameServer.Host.Session
         {
             if (!root.TryGetProperty("takeback", out var payload) || payload.ValueKind == JsonValueKind.Null)
             {
-                SendError(seat, "malformed_frame", "Takeback frame missing 'takeback' payload");
+                SendError(seat, "malformed_frame", "Takeback frame missing 'takeback' payload", default);
                 return;
             }
+            ClientSeq peekedSeq = TryReadProperty(payload, "seqAtRequestTime");
+
             TakebackRequest request;
             try
             {
@@ -233,12 +246,12 @@ namespace MagiGameServer.Host.Session
             }
             catch (JsonException ex)
             {
-                SendError(seat, "malformed_frame", ex.Message);
+                SendError(seat, "malformed_frame", ex.Message, peekedSeq);
                 return;
             }
             if (request == null || request.RequestingSeat != seat)
             {
-                SendError(seat, "seat_mismatch", "Takeback request seat does not match connection seat");
+                SendError(seat, "seat_mismatch", "Takeback request seat does not match connection seat", peekedSeq);
                 return;
             }
 
@@ -250,7 +263,7 @@ namespace MagiGameServer.Host.Session
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Takeback threw on session {Session}", Id);
-                SendError(seat, "takeback_failed", ex.Message);
+                SendError(seat, "takeback_failed", ex.Message, request.SeqAtRequestTime);
                 return;
             }
 
@@ -370,16 +383,38 @@ namespace MagiGameServer.Host.Session
             }
         }
 
-        private void SendError(SeatId seat, string code, string message)
+        private void SendError(SeatId seat, string code, string message, ClientSeq acked)
         {
             var err = new ErrorEnvelope
             {
                 Session = Id,
-                AckedSeq = new ClientSeq(0),
+                AckedSeq = acked,
                 Code = code,
                 Message = message,
             };
             SendTo(seat, WrapServerFrame(ServerFrameKind.Error, error: err));
+        }
+
+        /// Emit a protocol-level error on a seat without going through the
+        /// dispatcher. Safe to call from the transport read loop when the
+        /// inbound bytes don't parse as JSON at all — we still want the
+        /// client's OnError to fire so it can retire the matching pending
+        /// prediction by AckedSeq (zero when we couldn't peek one).
+        public void SendProtocolError(SeatId seat, string code, string message, ClientSeq acked)
+            => SendError(seat, code, message, acked);
+
+        private static ClientSeq TryReadSeq(JsonElement payload) => TryReadProperty(payload, "seq");
+
+        private static ClientSeq TryReadProperty(JsonElement payload, string propertyName)
+        {
+            if (payload.ValueKind == JsonValueKind.Object
+                && payload.TryGetProperty(propertyName, out var seqEl)
+                && seqEl.ValueKind == JsonValueKind.Number
+                && seqEl.TryGetInt64(out var v))
+            {
+                return new ClientSeq(v);
+            }
+            return default;
         }
 
         public async ValueTask DisposeAsync()

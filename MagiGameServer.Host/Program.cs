@@ -198,11 +198,15 @@ namespace MagiGameServer.Host
                 {
                     doc = JsonDocument.Parse(bytes);
                 }
-                catch (JsonException)
+                catch (JsonException ex)
                 {
-                    // Malformed frame — keep the socket alive; the runtime
-                    // will emit an ErrorEnvelope the moment the client
-                    // sends well-formed input again.
+                    // Malformed bytes never reach the dispatcher, but the
+                    // contracts say OnError is the client's cue to retire
+                    // a matching optimistic entry — we emit one here
+                    // (with AckedSeq=0 since we couldn't peek a seq out
+                    // of unparseable bytes) rather than silently dropping
+                    // the frame.
+                    runtime.SendProtocolError(seat, "malformed_frame", ex.Message, default);
                     continue;
                 }
                 await runtime.SubmitAsync(seat, doc, ct).ConfigureAwait(false);

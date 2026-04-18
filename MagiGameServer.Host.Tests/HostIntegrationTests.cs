@@ -224,6 +224,65 @@ namespace MagiGameServer.Host.Tests
             Assert.That(ex.Message, Does.Contain("400"));
         }
 
+        private static async Task SendRawAsync(WebSocket socket, byte[] bytes, CancellationToken ct)
+            => await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct);
+
+        [Test]
+        public async Task SeatMismatchAction_EmitsErrorWithOriginalSeq()
+        {
+            var session = await OpenAsync(seatCount: 2);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            var ws0 = await ConnectAsync(session.Session, 0, cts.Token);
+            await ReceiveFrameAsync(ws0, cts.Token); // JoinSnapshot
+
+            // Seat 0 sends a frame claiming seat 1 as its submitter — should
+            // be rejected with an ErrorEnvelope whose AckedSeq matches the
+            // originally-submitted seq, so the client's OnError can retire
+            // the matching optimistic entry.
+            var frame = new ClientFrame<CounterAction>
+            {
+                Kind = ClientFrameKind.Action,
+                Action = new ActionEnvelope<CounterAction>
+                {
+                    Session = session.Session,
+                    Seat = new SeatId(1),          // wrong seat
+                    Seq = new ClientSeq(42),
+                    Action = new CounterAction { Delta = 5 },
+                    PredictedStateHash = 0,
+                },
+            };
+            await SendRawAsync(ws0, JsonSerializer.SerializeToUtf8Bytes(frame, EnvelopeCodec.Options), cts.Token);
+
+            var received = await ReceiveFrameAsync(ws0, cts.Token);
+            Assert.That(received.Kind, Is.EqualTo(ServerFrameKind.Error));
+            Assert.That(received.Error.Code, Is.EqualTo("seat_mismatch"));
+            Assert.That(received.Error.AckedSeq.Value, Is.EqualTo(42),
+                "ErrorEnvelope.AckedSeq must carry the original seq so the dispatcher can retire the matching optimistic entry");
+
+            await ws0.CloseAsync(WebSocketCloseStatus.NormalClosure, null, cts.Token);
+        }
+
+        [Test]
+        public async Task MalformedJsonFrame_EmitsMalformedFrameError()
+        {
+            var session = await OpenAsync(seatCount: 2);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            var ws0 = await ConnectAsync(session.Session, 0, cts.Token);
+            await ReceiveFrameAsync(ws0, cts.Token); // JoinSnapshot
+
+            // Send bytes that aren't valid JSON at all.
+            await SendRawAsync(ws0, Encoding.UTF8.GetBytes("{not json"), cts.Token);
+
+            var received = await ReceiveFrameAsync(ws0, cts.Token);
+            Assert.That(received.Kind, Is.EqualTo(ServerFrameKind.Error),
+                "malformed bytes must surface as ErrorEnvelope, not be silently dropped");
+            Assert.That(received.Error.Code, Is.EqualTo("malformed_frame"));
+
+            await ws0.CloseAsync(WebSocketCloseStatus.NormalClosure, null, cts.Token);
+        }
+
         [Test]
         public async Task ConcurrentActions_AreSerializedNotRaced()
         {
