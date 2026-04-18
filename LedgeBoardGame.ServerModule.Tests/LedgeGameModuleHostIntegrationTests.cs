@@ -156,5 +156,72 @@ namespace Magi.LedgeBoardGame.ServerModule.Tests
             Assert.That(finalState.Ctx.CurrentPlayer, Is.Not.EqualTo("1"),
                 "EndTurn must advance the current-player pointer");
         }
+
+        [Test]
+        public void Seat0_EndTurnWithIncompletePlacement_IsRejectedAndRevisionStays()
+        {
+            // Server-auth EndTurn gate: Placement phase requires both tones to be
+            // placed before the turn ends. An adversarial client that sends
+            // EndTurn directly must see Rejected and both seats must see the
+            // session revision stay pinned so their optimistic state rolls back.
+            var (session, _) = NewHostedSession(seatCount: 2);
+            var result = session.Apply(new ActionEnvelope<object>
+            {
+                Session = session.Id,
+                Seat = new SeatId(0),
+                Seq = new ClientSeq(1),
+                Action = LedgeAction.EndTurn(),
+                PredictedStateHash = 0,
+            });
+
+            Assert.That(result.Outcome, Is.EqualTo(ApplyOutcome.Rejected));
+            Assert.That(result.Revision.Value, Is.EqualTo(0),
+                "rejected EndTurn must not advance session revision");
+            Assert.That(result.Echoes, Has.Count.EqualTo(2));
+            foreach (var echo in result.Echoes)
+            {
+                Assert.That(echo.Outcome, Is.EqualTo(ApplyOutcome.Rejected));
+                var echoedState = (SpecGameState)echo.State;
+                Assert.That(echoedState.CurrentTurnPlacements, Is.Empty,
+                    "rejected echo carries the pre-action state (still at zero placements)");
+            }
+        }
+
+        [Test]
+        public void CreateSessionFromSpecOptions_CarriesConfigIntoEveryEcho()
+        {
+            // Codex reviewer blocker: spec-driven clients must see spec-driven rules
+            // on the server. This is the end-to-end proof that GameConfig.Options
+            // flows: spec JSON → LedgeGameModule.CreateInitialState → SpecGameState.Config
+            // → RulesExecutor → echo to every seat.
+            var module = new LedgeGameModule();
+            var options = new System.Collections.Generic.Dictionary<string, string>
+            {
+                [LedgeGameModule.SpecJsonOptionKey] = LedgeRulesAdapterTests.LoadCanonicalSpecJson(),
+            };
+            var gameConfig = LedgeGameModule.DefaultConfig(seatCount: 2, options: options);
+            var initial = module.CreateInitialState(gameConfig);
+            var session = new Session(new SessionId("ledge-spec-test"), module, initial, 2);
+
+            var target = FirstValidPlacementFor(session);
+            var result = session.Apply(new ActionEnvelope<object>
+            {
+                Session = session.Id,
+                Seat = new SeatId(0),
+                Seq = new ClientSeq(1),
+                Action = LedgeAction.PlaceToken(target, Tone.Light),
+                PredictedStateHash = 0,
+            });
+
+            Assert.That(result.Outcome, Is.EqualTo(ApplyOutcome.Applied));
+            foreach (var echo in result.Echoes)
+            {
+                var echoedState = (SpecGameState)echo.State;
+                Assert.That(echoedState.Config, Is.Not.Null,
+                    "every echo must carry the spec-driven runtime config");
+                Assert.That(echoedState.Config.MinPlayers, Is.EqualTo(2));
+                Assert.That(echoedState.Config.MaxPlayers, Is.EqualTo(4));
+            }
+        }
     }
 }

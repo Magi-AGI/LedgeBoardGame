@@ -22,6 +22,25 @@ namespace Magi.LedgeBoardGame.Models.Spec
         // same remaining budget the original turn had.
         public List<Move> CurrentTurnMoves { get; set; }
         public List<PlacementMove> CurrentTurnPlacements { get; set; }
+
+        // Runtime config snapshot. Travels with state so server-mode Apply
+        // can reconstruct the same GameRules the local path would use. Null
+        // means "defaults" (matches the legacy no-spec local path).
+        public SpecLedgeRuntimeConfig Config { get; set; }
+    }
+
+    // Wire-friendly mirror of LedgeRuntimeConfig. The runtime type is
+    // ctor-initialized with get-only properties; this DTO exists so the
+    // config round-trips cleanly through any serializer without depending
+    // on Newtonsoft's ctor-binding heuristics.
+    public class SpecLedgeRuntimeConfig
+    {
+        public int MinPlayers { get; set; }
+        public int MaxPlayers { get; set; }
+        public int PlacementMinMoves { get; set; }
+        public int PlacementMaxMoves { get; set; }
+        public int MovementMinMoves { get; set; }
+        public int MovementMaxMoves { get; set; }
     }
 
     public class SpecPlayer

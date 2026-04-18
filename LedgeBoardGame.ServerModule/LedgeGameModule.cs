@@ -22,6 +22,13 @@ namespace Magi.LedgeBoardGame.ServerModule
     /// concern, not a module-shape concern.
     public sealed class LedgeGameModule : IGameModule
     {
+        // Convention: pass the verbatim ledge spec JSON under this key in
+        // GameConfig.Options to bind server adjudication to the same spec
+        // the client loads locally. Omitting the key is legal and produces
+        // an initial state with Config=null, which matches the legacy
+        // no-spec local path (GameInitializer with no spec assigned).
+        public const string SpecJsonOptionKey = "ledgeSpecJson";
+
         public string GameId => "ledge-board";
         public string DisplayName => "Ledge Board Game";
         public int MinSeats => 2;
@@ -36,16 +43,49 @@ namespace Magi.LedgeBoardGame.ServerModule
             if (seatCount < MinSeats || seatCount > MaxSeats)
                 throw new ArgumentException($"LedgeBoardGame requires {MinSeats}-{MaxSeats} seats (got {seatCount}).");
 
+            LedgeRuntimeConfig runtimeConfig = TryLoadRuntimeConfig(config);
+
             // Build players via GameState's constructor, which also builds the
             // canonical boards + cross-board ledge edges. ToSpecState then
             // projects down to the wire shape the server will persist and
             // echo. Seed is accepted here but unused at start-of-session;
             // LedgeBoardGame's initial state is fully deterministic from the
             // seat count. Future variants (scenario seeds, starting piece
-            // placement) would consume Seed/Options at this point.
+            // placement) would consume Seed at this point.
             var players = BuildPlayers(seatCount);
-            var gs = new GameState(players);
-            return gs.ToSpecState();
+            var gs = new GameState(players, runtimeConfig);
+            var state = gs.ToSpecState();
+            // Persist the runtime config on the wire so every RulesExecutor.TryApply
+            // downstream rebuilds GameRules from the same spec, not its defaults.
+            state.Config = runtimeConfig?.ToSpec();
+            return state;
+        }
+
+        private static LedgeRuntimeConfig TryLoadRuntimeConfig(GameConfig config)
+        {
+            if (config?.Options == null) return null;
+            if (!config.Options.TryGetValue(SpecJsonOptionKey, out var json)) return null;
+            if (string.IsNullOrWhiteSpace(json)) return null;
+
+            LedgeGameSpec spec;
+            try
+            {
+                spec = LedgeGameSpecLoader.LoadFromJson(json);
+            }
+            catch (Exception ex)
+            {
+                // Newtonsoft throws JsonReaderException / JsonSerializationException
+                // on malformed payloads. Surface as ArgumentException so the caller
+                // sees a single expected failure type regardless of serializer choice.
+                throw new ArgumentException(
+                    $"LedgeBoardGame: '{SpecJsonOptionKey}' did not parse as a valid ledge spec.", ex);
+            }
+            if (spec == null)
+                throw new ArgumentException(
+                    $"LedgeBoardGame: '{SpecJsonOptionKey}' did not parse as a valid ledge spec.");
+
+            LedgeSpecValidator.Validate(spec);
+            return LedgeRuntimeConfig.FromSpec(spec);
         }
 
         private static List<Player> BuildPlayers(int seatCount)

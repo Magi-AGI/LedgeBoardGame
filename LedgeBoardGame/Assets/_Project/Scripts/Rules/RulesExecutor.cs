@@ -35,7 +35,14 @@ namespace Magi.LedgeBoardGame.Rules
             }
 
             var gs = GameState.FromSpecState(state);
-            var rules = new GameRules();
+            // Honour the runtime config carried on the wire. Server mode loads it
+            // from the spec JSON in GameConfig.Options; local mode today leaves
+            // Config null, which keeps GameRules on its built-in defaults (same as
+            // the legacy `new GameRules()` call). Threading config here is what
+            // guarantees server adjudication can't drift from the local spec-driven
+            // rules (placement/movement max-moves in particular).
+            var runtimeConfig = LedgeRuntimeConfig.FromSpec(state.Config);
+            var rules = new GameRules(runtimeConfig);
 
             bool applied;
             switch (action.Kind)
@@ -61,6 +68,11 @@ namespace Magi.LedgeBoardGame.Rules
             }
 
             newState = gs.ToSpecState();
+            // Config is not stored on GameState, so ToSpecState can't re-emit it.
+            // Reattach here so every echo downstream still carries the authoritative
+            // config — new seats joining mid-session see the same rules the session
+            // was created with.
+            newState.Config = state.Config;
             return true;
         }
 
@@ -80,12 +92,14 @@ namespace Magi.LedgeBoardGame.Rules
 
         private static bool ApplyEndTurn(GameState gs)
         {
-            // EndTurn is unconditional in GameState today — no explicit guard
-            // against calling it in the wrong phase. M6 mirrors current local
-            // behaviour. A future rules pass could add a phase check here;
-            // for now the client gates the "End Turn" button on phase, so
-            // malformed EndTurn actions are a test/adversarial concern only.
             if (gs.GameOver) return false;
+            // Mirror the local client's EndTurn gate (GameController.OnEndTurnClicked):
+            // during Placement, both tones must be placed before the turn can end.
+            // Server-auth needs this check in the rules path itself — without it, an
+            // adversarial client could bypass the placement budget by skipping the
+            // button and sending a raw EndTurn action.
+            if (gs.CurrentPhase == GamePhase.Placement && !gs.IsPlacementComplete())
+                return false;
             gs.EndTurn();
             return true;
         }

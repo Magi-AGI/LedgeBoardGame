@@ -26,6 +26,29 @@ namespace Magi.LedgeBoardGame.Models.Spec
             MovementMaxMoves = movementMaxMoves;
         }
 
+        public SpecLedgeRuntimeConfig ToSpec()
+            => new SpecLedgeRuntimeConfig
+            {
+                MinPlayers = MinPlayers,
+                MaxPlayers = MaxPlayers,
+                PlacementMinMoves = PlacementMinMoves,
+                PlacementMaxMoves = PlacementMaxMoves,
+                MovementMinMoves = MovementMinMoves,
+                MovementMaxMoves = MovementMaxMoves,
+            };
+
+        public static LedgeRuntimeConfig FromSpec(SpecLedgeRuntimeConfig spec)
+        {
+            if (spec == null) return null;
+            return new LedgeRuntimeConfig(
+                spec.MinPlayers,
+                spec.MaxPlayers,
+                spec.PlacementMinMoves,
+                spec.PlacementMaxMoves,
+                spec.MovementMinMoves,
+                spec.MovementMaxMoves);
+        }
+
         public static LedgeRuntimeConfig FromSpec(LedgeGameSpec spec)
         {
             if (spec == null || spec.Config == null)
