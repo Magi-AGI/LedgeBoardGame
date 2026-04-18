@@ -272,29 +272,52 @@ namespace MagiGameServer.Codec.Tests
         // -------------------------------------------------------------
 
         [Test]
-        public void DeserializeActionEnvelope_ByType_RoundTrips()
+        public void DeserializeActionEnvelope_ByType_ReturnsActionEnvelopeOfObject()
         {
             // This is the exact path the server host uses: it receives a
             // JSON blob with an unknown-at-compile-time TAction, resolves
             // the session's module to a Type, and hands that Type to the
-            // codec. The resulting object is ActionEnvelope<DemoAction>
-            // boxed as object.
+            // codec. The return type MUST be ActionEnvelope<object> —
+            // the shape Session.Apply consumes — because C# generic
+            // types are invariant: ActionEnvelope<DemoAction> would not
+            // be assignment-compatible, forcing the host into reflection
+            // glue. Action is boxed as its concrete runtime type so the
+            // non-generic IRulesAdapter can cast it back downstream.
             var env = new ActionEnvelope<DemoAction>
             {
                 Session = new SessionId("s"),
                 Seat = new SeatId(0),
                 Seq = new ClientSeq(1),
                 Action = new DemoAction { Delta = 5 },
-                PredictedStateHash = 0,
+                PredictedStateHash = 42,
             };
             var json = EnvelopeCodec.SerializeToString(env);
 
-            var round = EnvelopeCodec.DeserializeActionEnvelope(json, typeof(DemoAction));
+            // The very fact that this compiles is part of the test —
+            // declaring the receiver as ActionEnvelope<object> proves
+            // the seam is assignment-compatible with Session.Apply.
+            ActionEnvelope<object> forCore = EnvelopeCodec.DeserializeActionEnvelope(json, typeof(DemoAction));
 
-            Assert.That(round, Is.InstanceOf<ActionEnvelope<DemoAction>>());
-            var typed = (ActionEnvelope<DemoAction>)round;
-            Assert.That(typed.Session, Is.EqualTo(env.Session));
-            Assert.That(typed.Action.Delta, Is.EqualTo(5));
+            Assert.That(forCore.Session, Is.EqualTo(env.Session));
+            Assert.That(forCore.Seat, Is.EqualTo(env.Seat));
+            Assert.That(forCore.Seq, Is.EqualTo(env.Seq));
+            Assert.That(forCore.PredictedStateHash, Is.EqualTo(42));
+            Assert.That(forCore.Action, Is.InstanceOf<DemoAction>(),
+                "Action must be the concrete runtime type so the non-generic " +
+                "IRulesAdapter can cast it downstream");
+            Assert.That(((DemoAction)forCore.Action).Delta, Is.EqualTo(5));
+        }
+
+        [Test]
+        public void DeserializeActionEnvelope_NullActionJson_ReturnsNullAction()
+        {
+            // Edge case: a malformed client might send "action":null. The
+            // server-side codec shouldn't crash — it should pass null
+            // through so Session.Apply can reject it via its own
+            // null-action path.
+            var json = "{\"session\":\"s\",\"seat\":0,\"seq\":1,\"action\":null,\"predictedStateHash\":0}";
+            var forCore = EnvelopeCodec.DeserializeActionEnvelope(json, typeof(DemoAction));
+            Assert.That(forCore.Action, Is.Null);
         }
 
         [Test]

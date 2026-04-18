@@ -56,24 +56,50 @@ namespace MagiGameServer.Codec
         public static T Deserialize<T>(string json)
             => JsonSerializer.Deserialize<T>(json, Options);
 
-        /// Builds ActionEnvelope&lt;actionType&gt; at runtime and deserializes
-        /// into it. Returns object because the caller's static view of
-        /// TAction is "unknown until module lookup" — the server's
-        /// Session receives it as ActionEnvelope&lt;object&gt; anyway, since
-        /// IRulesAdapter.Apply takes object. Callers that want the typed
-        /// envelope cast it themselves.
-        public static object DeserializeActionEnvelope(ReadOnlySpan<byte> utf8Json, Type actionType)
+        /// Decodes an inbound ActionEnvelope for the server side. Returns
+        /// ActionEnvelope&lt;object&gt; directly — the exact shape
+        /// Session.Apply consumes — rather than ActionEnvelope&lt;TAction&gt;,
+        /// because C# generic types are invariant: an
+        /// ActionEnvelope&lt;CounterAction&gt; is not assignment-compatible
+        /// with ActionEnvelope&lt;object&gt;, so a naive MakeGenericType path
+        /// would force the host into reflection-cast glue at the seam.
+        ///
+        /// Implementation: deserialize into ActionEnvelope&lt;JsonElement&gt;
+        /// as an intermediate shape, then deserialize the Action
+        /// JsonElement against the runtime `actionType` and box the
+        /// result into an ActionEnvelope&lt;object&gt;. The non-generic
+        /// IRulesAdapter downstream will cast Action back to its
+        /// concrete type inside RulesAdapterBase's object-bridge.
+        public static ActionEnvelope<object> DeserializeActionEnvelope(ReadOnlySpan<byte> utf8Json, Type actionType)
         {
             if (actionType == null) throw new ArgumentNullException(nameof(actionType));
-            var envelopeType = typeof(ActionEnvelope<>).MakeGenericType(actionType);
-            return JsonSerializer.Deserialize(utf8Json, envelopeType, Options);
+            var raw = JsonSerializer.Deserialize<ActionEnvelope<JsonElement>>(utf8Json, Options);
+            return BuildObjectEnvelope(raw, actionType);
         }
 
-        public static object DeserializeActionEnvelope(string json, Type actionType)
+        public static ActionEnvelope<object> DeserializeActionEnvelope(string json, Type actionType)
         {
             if (actionType == null) throw new ArgumentNullException(nameof(actionType));
-            var envelopeType = typeof(ActionEnvelope<>).MakeGenericType(actionType);
-            return JsonSerializer.Deserialize(json, envelopeType, Options);
+            var raw = JsonSerializer.Deserialize<ActionEnvelope<JsonElement>>(json, Options);
+            return BuildObjectEnvelope(raw, actionType);
+        }
+
+        private static ActionEnvelope<object> BuildObjectEnvelope(ActionEnvelope<JsonElement> raw, Type actionType)
+        {
+            if (raw == null) return null;
+            object action = null;
+            if (raw.Action.ValueKind != JsonValueKind.Undefined && raw.Action.ValueKind != JsonValueKind.Null)
+            {
+                action = JsonSerializer.Deserialize(raw.Action.GetRawText(), actionType, Options);
+            }
+            return new ActionEnvelope<object>
+            {
+                Session = raw.Session,
+                Seat = raw.Seat,
+                Seq = raw.Seq,
+                Action = action,
+                PredictedStateHash = raw.PredictedStateHash,
+            };
         }
     }
 }
