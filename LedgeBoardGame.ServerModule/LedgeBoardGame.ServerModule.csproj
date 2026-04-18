@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <RootNamespace>Magi.LedgeBoardGame.ServerModule</RootNamespace>
+    <AssemblyName>Magi.LedgeBoardGame.ServerModule</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Per-game plugin that teaches the game-agnostic MagiGameServer how to run
+    LedgeBoardGame sessions. Depends on LedgeBoardGame.Core for the rules /
+    state types and on MagiGameServer.Contracts for IGameModule +
+    RulesAdapterBase. Intentionally does NOT live inside
+    MagiGameServer.Modules — that assembly is a deliberately minimal module
+    registry, and folding per-game code into it would require the registry
+    to reference every game's domain. The dependency arrow points the other
+    way: games depend on the framework, not vice versa.
+
+    netstandard2.1 to stay consumable by the Unity-side in-process transport
+    (M6 commit 2) which targets Unity 6 mono. The server host (net8.0) picks
+    it up as a transitive ProjectReference without issue.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\LedgeBoardGame.Core\LedgeBoardGame.Core.csproj" />
+    <ProjectReference Include="..\MagiGameServer.Contracts\MagiGameServer.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>
