@@ -116,6 +116,7 @@ namespace MagiGameServer.Host.Session
                             case AttachWork a: HandleAttach(a); break;
                             case DetachWork d: HandleDetach(d); break;
                             case FrameWork f: HandleFrame(f); break;
+                            case ProtocolErrorWork e: SendError(e.Seat, e.Code, e.Message, e.Acked); break;
                         }
                     }
                 }
@@ -395,13 +396,14 @@ namespace MagiGameServer.Host.Session
             SendTo(seat, WrapServerFrame(ServerFrameKind.Error, error: err));
         }
 
-        /// Emit a protocol-level error on a seat without going through the
-        /// dispatcher. Safe to call from the transport read loop when the
-        /// inbound bytes don't parse as JSON at all — we still want the
-        /// client's OnError to fire so it can retire the matching pending
-        /// prediction by AckedSeq (zero when we couldn't peek one).
+        /// Emit a protocol-level error on a seat from outside the dispatcher
+        /// (e.g. the transport read loop when inbound bytes don't parse as
+        /// JSON at all). Routes through the work channel so the dispatcher
+        /// remains the sole writer to each seat's outbound Channel — that
+        /// invariant is what lets SeatConnection.Outgoing stay configured
+        /// with SingleWriter=true.
         public void SendProtocolError(SeatId seat, string code, string message, ClientSeq acked)
-            => SendError(seat, code, message, acked);
+            => _work.Writer.TryWrite(new ProtocolErrorWork(seat, code, message, acked));
 
         private static ClientSeq TryReadSeq(JsonElement payload) => TryReadProperty(payload, "seq");
 
@@ -431,6 +433,7 @@ namespace MagiGameServer.Host.Session
         private sealed record AttachWork(SeatId Seat, SeatConnection Connection, TaskCompletionSource<bool> Completion) : IWorkItem;
         private sealed record DetachWork(SeatId Seat) : IWorkItem;
         private sealed record FrameWork(SeatId Seat, JsonDocument Frame) : IWorkItem;
+        private sealed record ProtocolErrorWork(SeatId Seat, string Code, string Message, ClientSeq Acked) : IWorkItem;
 
         private sealed class SeatConnection
         {
