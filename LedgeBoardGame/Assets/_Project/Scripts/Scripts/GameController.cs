@@ -6,6 +6,7 @@ using System.Linq;
 using UnityEngine.InputSystem;
 #endif
 using Magi.LedgeBoardGame.Models;
+using Magi.LedgeBoardGame.Models.Network;
 using Magi.LedgeBoardGame.Models.Spec;
 using Magi.LedgeBoardGame.Rules;
 using Magi.LedgeBoardGame.Board;
@@ -30,6 +31,15 @@ namespace Magi.LedgeBoardGame
 
         private GameState _gameState;
         private GameRules _rules;
+        private LedgeRuntimeConfig _runtimeConfig;
+
+        // Shadow-mode sink, attached at scene start by LedgeShadowBootstrap.
+        // When null (production builds with shadow disabled, or before the
+        // driver has finished ConnectAsync) every hook no-ops. The interface
+        // lives in Magi.LedgeBoardGame.Models.Network so this controller can
+        // hold the reference without pulling the Net asmdef into its compile
+        // graph. See ILedgeShadowSessionSink docs for the per-method contract.
+        private ILedgeShadowSessionSink _shadowSink;
 
         // The player ID this client controls. Distinct from GameState.CurrentPlayerId —
         // which is "whose turn is it" (authoritative, server-set in the online model).
@@ -74,13 +84,49 @@ namespace Magi.LedgeBoardGame
         public bool IsLocalSeatsTurn() =>
             _gameState != null && _gameState.CurrentPlayerId == _localSeatId;
 
+        /// Seat count the shadow driver should spin up. Matches the roster
+        /// built during Start; hard-coded to 2 until the scene exposes a
+        /// per-match player count slider. Kept as a public getter so the
+        /// bootstrap doesn't hard-code the number in two places.
+        public int PlayerCount => _gameState?.Players?.Count ?? 2;
+
+        /// Hands the ledge spec JSON text (if any) to LedgeShadowBootstrap so
+        /// the server-side CreateInitialState loads from the same spec file
+        /// the client does. A null return is legal — LedgeGameModule tolerates
+        /// a missing option key and produces the default initial state.
+        public string GetLedgeSpecJson() => ledgeSpecJson != null ? ledgeSpecJson.text : null;
+
+        /// Called once by LedgeShadowBootstrap after the driver has finished
+        /// ConnectAsync for every seat. Idempotent and null-tolerant — passing
+        /// null detaches shadow mode (useful if the bootstrap is torn down
+        /// during play for any reason). The controller never calls through
+        /// the sink before AttachShadowSink completes, so the ordering here
+        /// (construct driver → await ConnectAsync → attach) is exactly what
+        /// keeps the first submission's hash check valid.
+        public void AttachShadowSink(ILedgeShadowSessionSink sink)
+        {
+            _shadowSink = sink;
+        }
+
+        /// Produces a fresh SpecGameState snapshot of the current _gameState
+        /// with its Config re-attached, matching what
+        /// LedgeGameModule.CreateInitialState does on the server side. This
+        /// is the state the shadow sink hashes for PredictedStateHash, so its
+        /// shape MUST match the server's ProjectStateFor output byte-for-byte
+        /// or the hashes will never agree. ToSpecState already clones boards,
+        /// so the returned object is safe to hand to a background thread if
+        /// the sink ever chooses to offload hashing.
+        private SpecGameState BuildCurrentSpecState()
+        {
+            if (_gameState == null) return null;
+            var state = _gameState.ToSpecState();
+            state.Config = _runtimeConfig?.ToSpec();
+            return state;
+        }
+
         private void Start()
         {
-            var players = new List<Player>
-            {
-                new Player(1, "Player1", 0),
-                new Player(2, "Player2", 1)
-            };
+            var players = Player.BuildDefaultRoster(2);
 
             LedgeRuntimeConfig runtimeConfig = null;
             var useSpec = false;
@@ -106,6 +152,7 @@ namespace Magi.LedgeBoardGame
 
             _gameState = new GameState(players, runtimeConfig);
             _rules = new GameRules(useSpec ? runtimeConfig : null);
+            _runtimeConfig = useSpec ? runtimeConfig : null;
             _localSeatId = _gameState.CurrentPlayerId;
 
             if (multiBoardLayout == null)
@@ -314,10 +361,17 @@ namespace Magi.LedgeBoardGame
             if (_rules.CanPlaceToken(_gameState, target, toneToPlace))
             {
                 PushPlacementUndo();
+                int seatIndex = currentPlayer.Id - 1;
                 var move = _rules.PlaceToken(_gameState, target, toneToPlace);
                 if (move != null)
                 {
                     LogEvent($"{currentPlayer.Name} placed {toneToPlace} at {FormatSpace(target)}");
+                    // Shadow: mirror the commit onto the parallel Session. Snapshot is
+                    // taken AFTER _rules mutated, so the hash the server will recompute
+                    // matches the hash we submit. A divergence here would mean the
+                    // rules adapter and GameRules produced different post-apply states
+                    // for the same action — the M6c3a canary.
+                    _shadowSink?.ShadowPlace(seatIndex, BuildCurrentSpecState(), target, toneToPlace);
                     PlayPlacementTween(target, toneToPlace);
                 }
                 else
@@ -531,6 +585,12 @@ namespace Magi.LedgeBoardGame
             int darkLeftOrigin = 0;
             var hopOrigin = from;
             int successfulHops = 0;
+            // Seat is latched BEFORE the first MoveToken call. GameRules.MoveToken
+            // never transitions turns on its own (only EndTurn does), but taking
+            // the reading once up front keeps the shadow submissions on the right
+            // seat regardless of any future mid-move turn-change surprises.
+            var moverForShadow = _gameState.GetCurrentPlayer();
+            int moverSeatIndex = moverForShadow != null ? moverForShadow.Id - 1 : -1;
 
             // Per-waypoint stack sizes. Index 0 is the liftoff size; each subsequent
             // entry is the carried size after landing at path[hop-1] — which includes
@@ -546,11 +606,15 @@ namespace Magi.LedgeBoardGame
                 {
                     if (_rules.MoveToken(_gameState, hopOrigin, hopTarget, Tone.Light) == null) break;
                     hopLight++;
+                    // One shadow submission per single-counter commit — matches the
+                    // one-action-per-MoveToken shape the server rules adapter sees.
+                    _shadowSink?.ShadowMove(moverSeatIndex, BuildCurrentSpecState(), hopOrigin, hopTarget, Tone.Light);
                 }
                 for (int i = 0; i < darkCarried; i++)
                 {
                     if (_rules.MoveToken(_gameState, hopOrigin, hopTarget, Tone.Dark) == null) break;
                     hopDark++;
+                    _shadowSink?.ShadowMove(moverSeatIndex, BuildCurrentSpecState(), hopOrigin, hopTarget, Tone.Dark);
                 }
 
                 if (hopLight + hopDark == 0) break;
@@ -1080,9 +1144,14 @@ namespace Magi.LedgeBoardGame
             ClearMovementSelection();
 
             var endingPlayer = _gameState.GetCurrentPlayer();
+            // Capture the ending seat BEFORE EndTurn rotates CurrentPlayerId so
+            // the shadow submission is addressed to the player who actually
+            // ended their turn, not the next one up.
+            int endingSeatIndex = endingPlayer != null ? endingPlayer.Id - 1 : -1;
             var endOfTurn = _gameState.EndTurn();
             NarrateOverflowCap(endOfTurn, endingPlayer);
             var nextPlayer = _gameState.GetCurrentPlayer();
+            _shadowSink?.ShadowEndTurn(endingSeatIndex, BuildCurrentSpecState());
 
             // Hot-seat: the local seat follows the active turn so the same keyboard/mouse
             // drives whichever player is up. Online transport will stop firing this line

@@ -1,0 +1,18 @@
+{
+    "name": "Magi.LedgeBoardGame.Net",
+    "rootNamespace": "Magi.LedgeBoardGame.Net",
+    "references": [
+        "Magi.LedgeBoardGame",
+        "Magi.UnityTools",
+        "Magi.UnityTools.Net"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

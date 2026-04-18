@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Magi.LedgeBoardGame.Models;
 using Magi.LedgeBoardGame.Models.Network;
 using Magi.LedgeBoardGame.Models.Spec;
@@ -20,6 +19,13 @@ namespace Magi.LedgeBoardGame.ServerModule
     /// themselves for testing should open a session with SeatCount=2 and
     /// attach both seats from the same client — that's a session-shape
     /// concern, not a module-shape concern.
+    ///
+    /// Source lives under LedgeBoardGame/Assets so Unity's compiler picks
+    /// it up through the Magi.LedgeBoardGame.Net asmdef; the pure-.NET
+    /// LedgeBoardGame.ServerModule csproj compiles the same .cs files
+    /// through its own path (EnableDefaultCompileItems=false + explicit
+    /// Compile Include) so the server host and the Unity in-process driver
+    /// share one source of truth. Same pattern LedgeBoardGame.Core uses.
     public sealed class LedgeGameModule : IGameModule
     {
         // Convention: pass the verbatim ledge spec JSON under this key in
@@ -52,7 +58,7 @@ namespace Magi.LedgeBoardGame.ServerModule
             // LedgeBoardGame's initial state is fully deterministic from the
             // seat count. Future variants (scenario seeds, starting piece
             // placement) would consume Seed at this point.
-            var players = BuildPlayers(seatCount);
+            var players = Player.BuildDefaultRoster(seatCount);
             var gs = new GameState(players, runtimeConfig);
             var state = gs.ToSpecState();
             // Persist the runtime config on the wire so every RulesExecutor.TryApply
@@ -86,27 +92,6 @@ namespace Magi.LedgeBoardGame.ServerModule
 
             LedgeSpecValidator.Validate(spec);
             return LedgeRuntimeConfig.FromSpec(spec);
-        }
-
-        private static List<Player> BuildPlayers(int seatCount)
-        {
-            // SeatId is 0-indexed in the session layer, PlayerId is 1-indexed
-            // in LedgeBoardGame's domain. The mapping stays 1:1: seat N
-            // controls player (N+1). BoardId aligns with PlayerId.
-            var players = new List<Player>(seatCount);
-            for (int i = 0; i < seatCount; i++)
-            {
-                int playerId = i + 1;
-                players.Add(new Player
-                {
-                    Id = playerId,
-                    Name = "Player " + playerId,
-                    BoardId = playerId,
-                    IsHuman = true,
-                    IsEliminated = false,
-                });
-            }
-            return players;
         }
 
         public static GameConfig DefaultConfig(int seatCount = 2, IReadOnlyDictionary<string, string> options = null)

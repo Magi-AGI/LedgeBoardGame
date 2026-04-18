@@ -25,6 +25,10 @@ namespace Magi.LedgeBoardGame.ServerModule
     /// TAction is LedgeAction — the tagged-union wire action type shared with
     /// the Unity client. Committed actions only (Place/Move/EndTurn). No UI
     /// intents, no hover/select state.
+    ///
+    /// Source lives under LedgeBoardGame/Assets so both the Unity in-process
+    /// driver (Magi.LedgeBoardGame.Net asmdef) and the pure-.NET server host
+    /// (LedgeBoardGame.ServerModule csproj) compile from the same .cs file.
     public sealed class LedgeRulesAdapter : RulesAdapterBase<SpecGameState, LedgeAction>
     {
         // Newtonsoft-based hash because the local path (Unity) already
