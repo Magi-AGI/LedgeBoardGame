@@ -12,6 +12,7 @@ using MagiGameServer.Contracts.Core;
 using MagiGameServer.Contracts.Protocol;
 using MagiGameServer.Contracts.Rules;
 using MagiGameServer.Core;
+using ContractsApplyOutcome = MagiGameServer.Contracts.Core.ApplyOutcome;
 
 namespace Magi.LedgeBoardGame.Net
 {
@@ -33,7 +34,7 @@ namespace Magi.LedgeBoardGame.Net
     /// thread, DisposeAsync when the scene unloads. The driver does NOT
     /// start an HTTP host — for shadow mode the "server" is literally a
     /// Session object in the same process, no socket hop involved.
-    public sealed class LedgeBoardSessionDriver : ILedgeShadowSessionSink, IAsyncDisposable
+    public sealed class LedgeBoardSessionDriver : ILedgeSessionBinding, IAsyncDisposable
     {
         private readonly int _seatCount;
         private readonly LedgeRulesAdapter _adapter = new LedgeRulesAdapter();
@@ -61,6 +62,18 @@ namespace Magi.LedgeBoardGame.Net
 
         public bool IsReady { get; private set; }
         public int SeatCount => _seatCount;
+
+        /// Observer surface (ILedgeSessionObserver). Raised on the Unity main
+        /// thread because each per-seat MagiSession dispatches these events
+        /// inside its own Tick(), which LedgeShadowBootstrap pumps from
+        /// MonoBehaviour.Update. No subscription filtering here — the driver
+        /// fans all seats' events through one surface and the subscriber (the
+        /// GameController, typically) decides which seats matter.
+        public event Action<LedgeSessionJoinInfo> OnServerJoin;
+        public event Action<LedgeSessionEchoInfo> OnServerAdvance;
+        public event Action<LedgeSessionEchoInfo> OnServerMatched;
+        public event Action<LedgeSessionEchoInfo> OnServerDiverged;
+        public event Action<LedgeSessionErrorInfo> OnServerError;
 
         public LedgeBoardSessionDriver(int seatCount)
         {
@@ -107,9 +120,11 @@ namespace Magi.LedgeBoardGame.Net
                 int seatIndex = i;
                 var transport = new InProcessMagiTransport<SpecGameState, LedgeAction>(_bus);
                 var session = new MagiSession<SpecGameState, LedgeAction>(transport);
-                session.OnPredictionMatched += _ => Interlocked.Increment(ref _matches);
-                session.OnPredictionDiverged += echo => OnDiverged(seatIndex, echo);
-                session.OnError += err => OnServerError(seatIndex, err);
+                session.OnSessionJoined += snap => RaiseJoin(seatIndex, snap);
+                session.OnStateAdvanced += echo => RaiseAdvance(seatIndex, echo);
+                session.OnPredictionMatched += echo => RaiseMatched(seatIndex, echo);
+                session.OnPredictionDiverged += echo => RaiseDiverged(seatIndex, echo);
+                session.OnError += err => RaiseError(seatIndex, err);
                 session.OnTransportError += ex => UnityEngine.Debug.LogError(
                     $"[shadow] transport error seat={seatIndex}: {ex}");
                 _transports.Add(transport);
@@ -165,7 +180,38 @@ namespace Magi.LedgeBoardGame.Net
             _sessions[seatIndex].Submit(action, localHash);
         }
 
-        private void OnDiverged(int seatIndex, StateEcho<SpecGameState> echo)
+        private void RaiseJoin(int seatIndex, JoinSnapshot<SpecGameState> snap)
+        {
+            var info = new LedgeSessionJoinInfo(
+                forSeatIndex: snap.ForSeat.Value,
+                revision: snap.Revision.Value,
+                serverHash: snap.StateHash,
+                state: snap.State);
+            try { OnServerJoin?.Invoke(info); }
+            catch (Exception ex) { UnityEngine.Debug.LogError($"[shadow] OnServerJoin subscriber threw seat={seatIndex}: {ex}"); }
+        }
+
+        private void RaiseAdvance(int seatIndex, StateEcho<SpecGameState> echo)
+        {
+            // Non-predicting path — the dispatcher routes here when the local
+            // submission did not include a PredictedStateHash. Shadow mode
+            // always submits with a hash, so in M6c3b-1 this branch only fires
+            // for replayed joins or background server-pushed state changes
+            // (none today, but the wire is kept honest for M6c3b-3).
+            var info = BuildEchoInfo(echo);
+            try { OnServerAdvance?.Invoke(info); }
+            catch (Exception ex) { UnityEngine.Debug.LogError($"[shadow] OnServerAdvance subscriber threw seat={seatIndex}: {ex}"); }
+        }
+
+        private void RaiseMatched(int seatIndex, StateEcho<SpecGameState> echo)
+        {
+            Interlocked.Increment(ref _matches);
+            var info = BuildEchoInfo(echo);
+            try { OnServerMatched?.Invoke(info); }
+            catch (Exception ex) { UnityEngine.Debug.LogError($"[shadow] OnServerMatched subscriber threw seat={seatIndex}: {ex}"); }
+        }
+
+        private void RaiseDiverged(int seatIndex, StateEcho<SpecGameState> echo)
         {
             Interlocked.Increment(ref _divergences);
             // Echo carries the canonical server state under Outcome=Desynced
@@ -180,14 +226,49 @@ namespace Magi.LedgeBoardGame.Net
                 $"[shadow] divergence seat={seatIndex} outcome={echo.Outcome} " +
                 $"seq={echo.AckedSeq.Value} revision={echo.Revision.Value} " +
                 $"serverHash=0x{echo.StateHash:X16}{localAction}");
+
+            var info = BuildEchoInfo(echo);
+            try { OnServerDiverged?.Invoke(info); }
+            catch (Exception ex) { UnityEngine.Debug.LogError($"[shadow] OnServerDiverged subscriber threw seat={seatIndex}: {ex}"); }
         }
 
-        private void OnServerError(int seatIndex, ErrorEnvelope err)
+        private void RaiseError(int seatIndex, ErrorEnvelope err)
         {
             Interlocked.Increment(ref _divergences);
             UnityEngine.Debug.LogError(
                 $"[shadow] server error seat={seatIndex} seq={err.AckedSeq.Value} " +
                 $"code={err.Code} message={err.Message}");
+
+            var info = new LedgeSessionErrorInfo(
+                subscribingSeatIndex: seatIndex,
+                ackedSeq: err.AckedSeq.Value,
+                code: err.Code,
+                message: err.Message);
+            try { OnServerError?.Invoke(info); }
+            catch (Exception ex) { UnityEngine.Debug.LogError($"[shadow] OnServerError subscriber threw seat={seatIndex}: {ex}"); }
+        }
+
+        private static LedgeSessionEchoInfo BuildEchoInfo(StateEcho<SpecGameState> echo)
+        {
+            return new LedgeSessionEchoInfo(
+                submittingSeatIndex: echo.SubmittingSeat.Value,
+                forSeatIndex: echo.ForSeat.Value,
+                ackedSeq: echo.AckedSeq.Value,
+                revision: echo.Revision.Value,
+                serverHash: echo.StateHash,
+                outcome: TranslateOutcome(echo.Outcome),
+                state: echo.State);
+        }
+
+        private static LedgeSessionOutcome TranslateOutcome(ContractsApplyOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case ContractsApplyOutcome.Applied: return LedgeSessionOutcome.Applied;
+                case ContractsApplyOutcome.Rejected: return LedgeSessionOutcome.Rejected;
+                case ContractsApplyOutcome.Desynced: return LedgeSessionOutcome.Desynced;
+                default: return LedgeSessionOutcome.Applied;
+            }
         }
 
         public async ValueTask DisposeAsync()

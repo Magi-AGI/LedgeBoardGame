@@ -15,6 +15,18 @@ namespace Magi.LedgeBoardGame
 {
     public class GameController : MonoBehaviour
     {
+        /// Authority mode. Local (default) = local GameRules is the source of
+        /// truth; the shadow driver runs in parallel but its echoes are only
+        /// diagnostic. Network = GameController will accept authoritative
+        /// state from the server echo stream (M6c3b-2 feeds ApplyServerState,
+        /// M6c3b-3 flips to submit-only). In M6c3b-1 this field is plumbing
+        /// only — all handlers currently log regardless of the mode.
+        public enum NetworkMode
+        {
+            Local = 0,
+            Network = 1,
+        }
+
         [SerializeField] private BoardPresenter boardPresenterPrefab;
         [SerializeField] private TextAsset ledgeSpecJson;
         [SerializeField] private Button endTurnButton;
@@ -28,18 +40,22 @@ namespace Magi.LedgeBoardGame
         [Tooltip("When on, records placements/moves/turn-ends/undos to the on-screen log panel. Leave on for playtest/video; turn off to hide the panel during normal play.")]
         [SerializeField] private bool showEventLog = true;
         [SerializeField] private Tone defaultMovementTone = Tone.Light;
+        [Tooltip("Local = local rules authoritative (current production). Network = accept authoritative state from server echoes. Leave Local until M6c3b-3.")]
+        [SerializeField] private NetworkMode networkMode = NetworkMode.Local;
 
         private GameState _gameState;
         private GameRules _rules;
         private LedgeRuntimeConfig _runtimeConfig;
 
-        // Shadow-mode sink, attached at scene start by LedgeShadowBootstrap.
+        // Shadow-mode binding, attached at scene start by LedgeShadowBootstrap.
         // When null (production builds with shadow disabled, or before the
-        // driver has finished ConnectAsync) every hook no-ops. The interface
-        // lives in Magi.LedgeBoardGame.Models.Network so this controller can
-        // hold the reference without pulling the Net asmdef into its compile
-        // graph. See ILedgeShadowSessionSink docs for the per-method contract.
-        private ILedgeShadowSessionSink _shadowSink;
+        // driver has finished ConnectAsync) every submit hook no-ops and no
+        // observer events fire. The combined ILedgeSessionBinding carries the
+        // outgoing sink (ShadowPlace/Move/EndTurn) AND the incoming observer
+        // (OnServerJoin/Advance/Matched/Diverged/Error). The interface lives
+        // in Magi.LedgeBoardGame.Models.Network so this controller can hold
+        // the reference without pulling the Net asmdef into its compile graph.
+        private ILedgeSessionBinding _shadowSink;
 
         // The player ID this client controls. Distinct from GameState.CurrentPlayerId —
         // which is "whose turn is it" (authoritative, server-set in the online model).
@@ -96,6 +112,12 @@ namespace Magi.LedgeBoardGame
         /// a missing option key and produces the default initial state.
         public string GetLedgeSpecJson() => ledgeSpecJson != null ? ledgeSpecJson.text : null;
 
+        /// Authority mode selected in the inspector. M6c3b-1 plumbing — read
+        /// by OnServer* handlers but not yet used to gate behavior. Flips to
+        /// load-bearing in M6c3b-2 (state-application path) and M6c3b-3
+        /// (submit-only + hard-snap).
+        public NetworkMode CurrentNetworkMode => networkMode;
+
         /// Called once by LedgeShadowBootstrap after the driver has finished
         /// ConnectAsync for every seat. Idempotent and null-tolerant — passing
         /// null detaches shadow mode (useful if the bootstrap is torn down
@@ -103,9 +125,110 @@ namespace Magi.LedgeBoardGame
         /// the sink before AttachShadowSink completes, so the ordering here
         /// (construct driver → await ConnectAsync → attach) is exactly what
         /// keeps the first submission's hash check valid.
-        public void AttachShadowSink(ILedgeShadowSessionSink sink)
+        ///
+        /// Re-attachment paths: calling with a non-null sink while one is
+        /// already attached unsubscribes from the previous sink's events
+        /// before swapping, so a bootstrap that rebuilds its driver (e.g.
+        /// across a scene reload where the bootstrap survives and the
+        /// GameController doesn't — not a path today, but cheap to be safe)
+        /// never double-fires.
+        public void AttachShadowSink(ILedgeSessionBinding sink)
         {
+            if (ReferenceEquals(_shadowSink, sink)) return;
+            if (_shadowSink != null) UnsubscribeObserver(_shadowSink);
             _shadowSink = sink;
+            if (_shadowSink != null) SubscribeObserver(_shadowSink);
+        }
+
+        private void SubscribeObserver(ILedgeSessionObserver observer)
+        {
+            observer.OnServerJoin += HandleServerJoin;
+            observer.OnServerAdvance += HandleServerAdvance;
+            observer.OnServerMatched += HandleServerMatched;
+            observer.OnServerDiverged += HandleServerDiverged;
+            observer.OnServerError += HandleServerError;
+        }
+
+        private void UnsubscribeObserver(ILedgeSessionObserver observer)
+        {
+            observer.OnServerJoin -= HandleServerJoin;
+            observer.OnServerAdvance -= HandleServerAdvance;
+            observer.OnServerMatched -= HandleServerMatched;
+            observer.OnServerDiverged -= HandleServerDiverged;
+            observer.OnServerError -= HandleServerError;
+        }
+
+        private void HandleServerJoin(LedgeSessionJoinInfo info)
+        {
+            // M6c3b-1: diagnostic only. M6c3b-3 will hydrate _gameState from
+            // info.State here when networkMode == Network.
+            if (Application.isEditor)
+                UnityEngine.Debug.Log(
+                    $"[net] join seat={info.ForSeatIndex} revision={info.Revision} " +
+                    $"hash=0x{info.ServerHash:X16} mode={networkMode}");
+        }
+
+        private void HandleServerAdvance(LedgeSessionEchoInfo info)
+        {
+            if (Application.isEditor)
+                UnityEngine.Debug.Log(
+                    $"[net] advance submittingSeat={info.SubmittingSeatIndex} " +
+                    $"seq={info.AckedSeq} revision={info.Revision} " +
+                    $"hash=0x{info.ServerHash:X16} outcome={info.Outcome} mode={networkMode}");
+        }
+
+        private void HandleServerMatched(LedgeSessionEchoInfo info)
+        {
+            // In M6c3b-2 the Network branch here will call ApplyServerState
+            // with idempotent scene sync (no duplicate tweens) to prove the
+            // echoed state can drive the UI for already-local actions.
+            if (Application.isEditor)
+                UnityEngine.Debug.Log(
+                    $"[net] matched submittingSeat={info.SubmittingSeatIndex} " +
+                    $"seq={info.AckedSeq} revision={info.Revision} mode={networkMode}");
+        }
+
+        private void HandleServerDiverged(LedgeSessionEchoInfo info)
+        {
+            // The driver already LogError's this with context. Controller-side
+            // handler is a placeholder for M6c3b-3's hard-snap + resync flow.
+            if (Application.isEditor)
+                UnityEngine.Debug.LogWarning(
+                    $"[net] diverged submittingSeat={info.SubmittingSeatIndex} " +
+                    $"seq={info.AckedSeq} revision={info.Revision} " +
+                    $"outcome={info.Outcome} mode={networkMode}");
+        }
+
+        private void HandleServerError(LedgeSessionErrorInfo info)
+        {
+            if (Application.isEditor)
+                UnityEngine.Debug.LogWarning(
+                    $"[net] server-error seat={info.SubscribingSeatIndex} " +
+                    $"seq={info.AckedSeq} code={info.Code} message={info.Message} mode={networkMode}");
+        }
+
+        /// Replaces _gameState's mutable fields from an authoritative server
+        /// snapshot without triggering tweens, ghosts, or audio. M6c3b-1
+        /// helper — unused until M6c3b-2 wires Network-mode echoes into the
+        /// state-application path. By design this does NOT:
+        ///   * play movement/placement animations (scene sync is idempotent)
+        ///   * raise undo frames (authoritative state isn't something the
+        ///     local player can undo)
+        ///   * reset selection / picked-up counts (M6c3b-2 will clear those
+        ///     around the call when its own action was the one echoed)
+        ///
+        /// The helper inflates via GameState.FromSpecState (which rebuilds
+        /// cross-board ledge edges) and copies into _gameState via CopyFrom
+        /// so downstream references — BoardPresenters keyed off _gameState.
+        /// Boards[i] in particular — stay valid. Fails silently on null or
+        /// when _gameState hasn't finished Start yet; callers should gate on
+        /// CurrentNetworkMode == Network before calling.
+        public void ApplyServerState(SpecGameState specState)
+        {
+            if (specState == null || _gameState == null) return;
+            var inflated = GameState.FromSpecState(specState);
+            if (inflated == null) return;
+            _gameState.CopyFrom(inflated);
         }
 
         /// Produces a fresh SpecGameState snapshot of the current _gameState
@@ -203,6 +326,11 @@ namespace Magi.LedgeBoardGame
         private void OnDestroy()
         {
             SpaceClickedEvent.Unregister(OnSpaceClicked);
+            if (_shadowSink != null)
+            {
+                UnsubscribeObserver(_shadowSink);
+                _shadowSink = null;
+            }
         }
 
         private void Update()
