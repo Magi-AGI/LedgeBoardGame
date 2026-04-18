@@ -156,3 +156,4 @@ Thumbs.db
 !MagiGameServer.Host.Tests/MagiGameServer.Host.Tests.csproj
 !LedgeBoardGame.ServerModule/LedgeBoardGame.ServerModule.csproj
 !LedgeBoardGame.ServerModule.Tests/LedgeBoardGame.ServerModule.Tests.csproj
+!LedgeBoardGame.Host/LedgeBoardGame.Host.csproj

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -41,10 +42,17 @@ namespace Magi.LedgeBoardGame.Net
         private readonly LedgeGameModule _module = new LedgeGameModule();
         private Session _session;
         private InProcessSessionBus<SpecGameState> _bus;
-        private readonly List<InProcessMagiTransport<SpecGameState, LedgeAction>> _transports
-            = new List<InProcessMagiTransport<SpecGameState, LedgeAction>>();
+        private readonly List<IAsyncDisposable> _transports
+            = new List<IAsyncDisposable>();
         private readonly List<MagiSession<SpecGameState, LedgeAction>> _sessions
             = new List<MagiSession<SpecGameState, LedgeAction>>();
+        // Synchronises the AddRange publication at the end of Start with
+        // the snapshot+clear in DisposeAsync, so a scene-unload racing a
+        // nearly-complete connect can't land mid-resize on the list's
+        // internal array. Both critical sections are O(N) in seat count
+        // and never await, so the lock is held briefly.
+        private readonly object _lock = new object();
+        private HttpClient _hostHttp;
         private int _divergences;
         private int _matches;
         private int _disposed;
@@ -117,26 +125,168 @@ namespace Magi.LedgeBoardGame.Net
                 Options = options,
             };
 
-            for (int i = 0; i < _seatCount; i++)
+            // Build per-seat state in locals and publish atomically at the
+            // end. Keeps DisposeAsync (which reads _sessions/_transports on
+            // the main thread) out of the async Add path and lets the
+            // awaits use ConfigureAwait(false) without racing. The
+            // per-iteration ct + _disposed guards let a dispose that lands
+            // mid-start abort cleanly and tear down only what was built.
+            var localTransports = new List<IAsyncDisposable>(_seatCount);
+            var localSessions = new List<MagiSession<SpecGameState, LedgeAction>>(_seatCount);
+            try
             {
-                int seatIndex = i;
-                var transport = new InProcessMagiTransport<SpecGameState, LedgeAction>(_bus);
-                var session = new MagiSession<SpecGameState, LedgeAction>(transport);
-                session.OnSessionJoined += snap => RaiseJoin(seatIndex, snap);
-                session.OnStateAdvanced += echo => RaiseAdvance(seatIndex, echo);
-                session.OnPredictionMatched += echo => RaiseMatched(seatIndex, echo);
-                session.OnPredictionDiverged += echo => RaiseDiverged(seatIndex, echo);
-                session.OnError += err => RaiseError(seatIndex, err);
-                session.OnTakebackBroadcast += bcast => RaiseTakeback(seatIndex, bcast);
-                session.OnTakebackReply += reply => RaiseTakebackReply(seatIndex, reply);
-                session.OnTransportError += ex => UnityEngine.Debug.LogError(
-                    $"[shadow] transport error seat={seatIndex}: {ex}");
-                _transports.Add(transport);
-                _sessions.Add(session);
-                await session.ConnectAsync(magiConfig, new SeatId(i), ct).ConfigureAwait(false);
+                for (int i = 0; i < _seatCount; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
+                    int seatIndex = i;
+                    var transport = new InProcessMagiTransport<SpecGameState, LedgeAction>(_bus);
+                    var session = new MagiSession<SpecGameState, LedgeAction>(transport);
+                    WireSeatSession(seatIndex, session);
+                    localTransports.Add(transport);
+                    localSessions.Add(session);
+                    await session.ConnectAsync(magiConfig, new SeatId(i), ct).ConfigureAwait(false);
+                    if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
+                }
+            }
+            catch
+            {
+                foreach (var s in localSessions)
+                {
+                    try { await s.DisposeAsync().ConfigureAwait(false); } catch { }
+                }
+                throw;
             }
 
+            // Publish under the lock, re-checking _disposed so a scene
+            // unload that wins the race here still drops these cleanly.
+            bool published;
+            lock (_lock)
+            {
+                published = Volatile.Read(ref _disposed) == 0;
+                if (published)
+                {
+                    _transports.AddRange(localTransports);
+                    _sessions.AddRange(localSessions);
+                }
+            }
+            if (!published)
+            {
+                foreach (var s in localSessions)
+                {
+                    try { await s.DisposeAsync().ConfigureAwait(false); } catch { }
+                }
+                throw new OperationCanceledException();
+            }
             IsReady = true;
+        }
+
+        /// Host-backed variant of StartAsync. Opens one server session via
+        /// HTTP POST against the launcher, then attaches N WebSockets to
+        /// that single SessionId so every seat sees the same authoritative
+        /// timeline — mirrors what StartAsync does in-process, but the
+        /// "server" is a real ASP.NET binary running at baseUri.
+        ///
+        /// Caller must ensure the MagiGameServer.Host launcher (with
+        /// LedgeGameModule registered) is already listening at baseUri
+        /// before invoking this. StartAsync (in-process) and
+        /// StartHostBackedAsync are mutually exclusive — either one runs
+        /// per driver instance, never both.
+        public async Task StartHostBackedAsync(string baseUri, string ledgeSpecJson, CancellationToken ct)
+        {
+            if (IsReady) throw new InvalidOperationException("StartAsync/StartHostBackedAsync already completed");
+            if (string.IsNullOrEmpty(baseUri)) throw new ArgumentException("baseUri required", nameof(baseUri));
+
+            var options = new Dictionary<string, string>();
+            if (!string.IsNullOrEmpty(ledgeSpecJson))
+                options[LedgeGameModule.SpecJsonOptionKey] = ledgeSpecJson;
+            var magiConfig = new MagiSessionConfig
+            {
+                BaseUri = baseUri,
+                GameId = _module.GameId,
+                SeatCount = _seatCount,
+                Seed = 0,
+                Options = options,
+            };
+
+            _hostHttp = new HttpClient();
+
+            // Seat 0's transport POSTs /session/open and learns the
+            // SessionId. Subsequent seats get the pre-seeded ctor so they
+            // skip the POST and attach to the same session. All N sockets
+            // land on the same SessionRuntime on the host side.
+            //
+            // ConnectAsync over a real WebSocket parks continuations on a
+            // pool thread; building transports/sessions in locals and
+            // publishing at the end keeps DisposeAsync (main thread) out
+            // of the async Add path. The per-iteration ct + _disposed
+            // guards let a mid-start dispose abort cleanly, and the catch
+            // block tears down whatever was built so nothing leaks.
+            var localTransports = new List<IAsyncDisposable>(_seatCount);
+            var localSessions = new List<MagiSession<SpecGameState, LedgeAction>>(_seatCount);
+            SessionId sharedSession = default;
+            try
+            {
+                for (int i = 0; i < _seatCount; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
+                    int seatIndex = i;
+                    WebSocketMagiTransport<SpecGameState, LedgeAction> transport = (i == 0)
+                        ? new WebSocketMagiTransport<SpecGameState, LedgeAction>(_hostHttp)
+                        : new WebSocketMagiTransport<SpecGameState, LedgeAction>(_hostHttp, baseUri, sharedSession);
+                    var session = new MagiSession<SpecGameState, LedgeAction>(transport);
+                    WireSeatSession(seatIndex, session);
+                    localTransports.Add(transport);
+                    localSessions.Add(session);
+                    await session.ConnectAsync(magiConfig, new SeatId(i), ct).ConfigureAwait(false);
+                    if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
+                    if (i == 0) sharedSession = session.Session;
+                }
+            }
+            catch
+            {
+                foreach (var s in localSessions)
+                {
+                    try { await s.DisposeAsync().ConfigureAwait(false); } catch { }
+                }
+                throw;
+            }
+
+            // Publish under the lock, re-checking _disposed so a scene
+            // unload that wins the race here still drops these cleanly.
+            bool published;
+            lock (_lock)
+            {
+                published = Volatile.Read(ref _disposed) == 0;
+                if (published)
+                {
+                    _transports.AddRange(localTransports);
+                    _sessions.AddRange(localSessions);
+                }
+            }
+            if (!published)
+            {
+                foreach (var s in localSessions)
+                {
+                    try { await s.DisposeAsync().ConfigureAwait(false); } catch { }
+                }
+                throw new OperationCanceledException();
+            }
+            IsReady = true;
+        }
+
+        private void WireSeatSession(int seatIndex, MagiSession<SpecGameState, LedgeAction> session)
+        {
+            session.OnSessionJoined += snap => RaiseJoin(seatIndex, snap);
+            session.OnStateAdvanced += echo => RaiseAdvance(seatIndex, echo);
+            session.OnPredictionMatched += echo => RaiseMatched(seatIndex, echo);
+            session.OnPredictionDiverged += echo => RaiseDiverged(seatIndex, echo);
+            session.OnError += err => RaiseError(seatIndex, err);
+            session.OnTakebackBroadcast += bcast => RaiseTakeback(seatIndex, bcast);
+            session.OnTakebackReply += reply => RaiseTakebackReply(seatIndex, reply);
+            session.OnTransportError += ex => UnityEngine.Debug.LogError(
+                $"[shadow] transport error seat={seatIndex}: {ex}");
         }
 
         /// Drains inbound echoes on the calling thread. Must be called from
@@ -368,13 +518,30 @@ namespace Magi.LedgeBoardGame.Net
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             IsReady = false;
-            for (int i = 0; i < _sessions.Count; i++)
+            // Snapshot under the lock, then dispose outside it — can't hold
+            // a lock across await. The Start path's publish step observes
+            // _disposed under the same lock, so a concurrent AddRange can
+            // only either (a) finish before our snapshot, making its
+            // sessions visible here, or (b) see _disposed=1 and dispose
+            // its locals itself.
+            MagiSession<SpecGameState, LedgeAction>[] snapshot;
+            lock (_lock)
             {
-                try { await _sessions[i].DisposeAsync().ConfigureAwait(false); }
+                snapshot = _sessions.ToArray();
+                _sessions.Clear();
+                _transports.Clear();
+            }
+            for (int i = 0; i < snapshot.Length; i++)
+            {
+                try { await snapshot[i].DisposeAsync().ConfigureAwait(false); }
                 catch (Exception ex) { UnityEngine.Debug.LogError($"[shadow] dispose seat {i}: {ex}"); }
             }
-            _sessions.Clear();
-            _transports.Clear();
+            if (_hostHttp != null)
+            {
+                try { _hostHttp.Dispose(); }
+                catch (Exception ex) { UnityEngine.Debug.LogError($"[shadow] dispose http client: {ex}"); }
+                _hostHttp = null;
+            }
         }
     }
 }

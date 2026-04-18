@@ -34,6 +34,10 @@ namespace Magi.LedgeBoardGame.Net
         [SerializeField] private GameController controller;
         [Tooltip("When off, shadow mode only activates inside the Unity editor. Leave off for shipped builds.")]
         [SerializeField] private bool enableInBuild = false;
+        [Tooltip("When on, the driver connects to a running MagiGameServer.Host launcher at hostBaseUri instead of hosting the session in-process. Requires LedgeBoardGame.Host (or an equivalent launcher with LedgeGameModule registered) to already be listening.")]
+        [SerializeField] private bool useHostBackedTransport = false;
+        [Tooltip("Base URI of the MagiGameServer.Host launcher. Only used when useHostBackedTransport is on.")]
+        [SerializeField] private string hostBaseUri = "http://localhost:5080";
 
         /// Auto-spawn hook. Fires once after the first scene loads (and
         /// again for every subsequent scene load via SceneManager.sceneLoaded)
@@ -100,7 +104,16 @@ namespace Magi.LedgeBoardGame.Net
                 // with defaults; LedgeGameModule tolerates a missing spec
                 // key and the driver will initialise a bare state that
                 // still hashes-identical to the client's default state.
-                await _driver.StartAsync(controller.GetLedgeSpecJson(), _cts.Token);
+                string specJson = controller.GetLedgeSpecJson();
+                if (useHostBackedTransport)
+                {
+                    UnityEngine.Debug.Log($"[shadow] bootstrap: connecting host-backed transport at {hostBaseUri}");
+                    await _driver.StartHostBackedAsync(hostBaseUri, specJson, _cts.Token);
+                }
+                else
+                {
+                    await _driver.StartAsync(specJson, _cts.Token);
+                }
             }
             catch (System.Exception ex)
             {
