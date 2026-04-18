@@ -17,10 +17,10 @@ namespace Magi.LedgeBoardGame
     {
         /// Authority mode. Local (default) = local GameRules is the source of
         /// truth; the shadow driver runs in parallel but its echoes are only
-        /// diagnostic. Network = GameController will accept authoritative
-        /// state from the server echo stream (M6c3b-2 feeds ApplyServerState,
-        /// M6c3b-3 flips to submit-only). In M6c3b-1 this field is plumbing
-        /// only — all handlers currently log regardless of the mode.
+        /// diagnostic. Network (M6c3b-2) = state-carrying echoes feed
+        /// ApplyServerState + RefreshBoards + UpdateStatusUI, so the scene
+        /// tracks authoritative state; local rules still run the entry points
+        /// until M6c3b-3 flips them to submit-only.
         public enum NetworkMode
         {
             Local = 0,
@@ -160,12 +160,13 @@ namespace Magi.LedgeBoardGame
 
         private void HandleServerJoin(LedgeSessionJoinInfo info)
         {
-            // M6c3b-1: diagnostic only. M6c3b-3 will hydrate _gameState from
-            // info.State here when networkMode == Network.
             if (Application.isEditor)
                 UnityEngine.Debug.Log(
                     $"[net] join seat={info.ForSeatIndex} revision={info.Revision} " +
                     $"hash=0x{info.ServerHash:X16} mode={networkMode}");
+
+            if (networkMode == NetworkMode.Network)
+                ApplyServerStateAndRefresh(info.State);
         }
 
         private void HandleServerAdvance(LedgeSessionEchoInfo info)
@@ -175,28 +176,40 @@ namespace Magi.LedgeBoardGame
                     $"[net] advance submittingSeat={info.SubmittingSeatIndex} " +
                     $"seq={info.AckedSeq} revision={info.Revision} " +
                     $"hash=0x{info.ServerHash:X16} outcome={info.Outcome} mode={networkMode}");
+
+            // Rejected echoes carry the last accepted state for snap-back.
+            // In Network mode local entry points still mutate first, so when
+            // the server refuses the action we MUST apply the echo or the
+            // scene stays on the wrong (locally-mutated) state.
+            if (networkMode == NetworkMode.Network)
+                ApplyServerStateAndRefresh(info.State);
         }
 
         private void HandleServerMatched(LedgeSessionEchoInfo info)
         {
-            // In M6c3b-2 the Network branch here will call ApplyServerState
-            // with idempotent scene sync (no duplicate tweens) to prove the
-            // echoed state can drive the UI for already-local actions.
             if (Application.isEditor)
                 UnityEngine.Debug.Log(
                     $"[net] matched submittingSeat={info.SubmittingSeatIndex} " +
                     $"seq={info.AckedSeq} revision={info.Revision} mode={networkMode}");
+
+            if (networkMode == NetworkMode.Network)
+                ApplyServerStateAndRefresh(info.State);
         }
 
         private void HandleServerDiverged(LedgeSessionEchoInfo info)
         {
             // The driver already LogError's this with context. Controller-side
-            // handler is a placeholder for M6c3b-3's hard-snap + resync flow.
+            // handler is a placeholder for M6c3b-3's hard-snap + resync flow;
+            // in M6c3b-2 we still hand the canonical state to the state
+            // application path so the UI tracks the server's truth.
             if (Application.isEditor)
                 UnityEngine.Debug.LogWarning(
                     $"[net] diverged submittingSeat={info.SubmittingSeatIndex} " +
                     $"seq={info.AckedSeq} revision={info.Revision} " +
                     $"outcome={info.Outcome} mode={networkMode}");
+
+            if (networkMode == NetworkMode.Network)
+                ApplyServerStateAndRefresh(info.State);
         }
 
         private void HandleServerError(LedgeSessionErrorInfo info)
@@ -207,28 +220,57 @@ namespace Magi.LedgeBoardGame
                     $"seq={info.AckedSeq} code={info.Code} message={info.Message} mode={networkMode}");
         }
 
+        /// M6c3b-2 glue between the observer handlers and the state
+        /// application path. Applies the authoritative snapshot, then refreshes
+        /// boards + status UI so the scene mirrors the server truth. The
+        /// refresh is suppressed while a local tween owns the visual state —
+        /// RefreshBoards snaps SpaceView transforms directly and would fight
+        /// an in-flight placement/move/return/undo animation. The tween
+        /// completion callback already calls RefreshBoards + UpdateStatusUI,
+        /// so the just-applied state lands naturally when the tween ends.
+        private void ApplyServerStateAndRefresh(SpecGameState specState)
+        {
+            if (specState == null) return;
+            ApplyServerState(specState);
+            if (_moveInProgress) return;
+            RefreshBoards();
+            UpdateStatusUI();
+        }
+
         /// Replaces _gameState's mutable fields from an authoritative server
-        /// snapshot without triggering tweens, ghosts, or audio. M6c3b-1
-        /// helper — unused until M6c3b-2 wires Network-mode echoes into the
-        /// state-application path. By design this does NOT:
+        /// snapshot without triggering tweens, ghosts, or audio. By design
+        /// this does NOT:
         ///   * play movement/placement animations (scene sync is idempotent)
         ///   * raise undo frames (authoritative state isn't something the
         ///     local player can undo)
-        ///   * reset selection / picked-up counts (M6c3b-2 will clear those
+        ///   * reset selection / picked-up counts (M6c3b-3 will clear those
         ///     around the call when its own action was the one echoed)
         ///
         /// The helper inflates via GameState.FromSpecState (which rebuilds
         /// cross-board ledge edges) and copies into _gameState via CopyFrom
         /// so downstream references — BoardPresenters keyed off _gameState.
-        /// Boards[i] in particular — stay valid. Fails silently on null or
-        /// when _gameState hasn't finished Start yet; callers should gate on
-        /// CurrentNetworkMode == Network before calling.
+        /// Boards[i] in particular — stay valid. When the snapshot carries a
+        /// Config it also replaces _runtimeConfig + _rules so server-mode
+        /// rule evaluation uses the same phase bounds the server used. Fails
+        /// silently on null or when _gameState hasn't finished Start yet;
+        /// callers should gate on CurrentNetworkMode == Network before
+        /// calling.
         public void ApplyServerState(SpecGameState specState)
         {
             if (specState == null || _gameState == null) return;
             var inflated = GameState.FromSpecState(specState);
             if (inflated == null) return;
             _gameState.CopyFrom(inflated);
+
+            // The snapshot's Config is authoritative, including when it is
+            // null — a remote seat whose server runs without a spec must end
+            // up with _rules = new GameRules(null), not whatever startup
+            // config the local bootstrap happened to load.
+            var runtimeConfig = specState.Config != null
+                ? LedgeRuntimeConfig.FromSpec(specState.Config)
+                : null;
+            _runtimeConfig = runtimeConfig;
+            _rules = new GameRules(runtimeConfig);
         }
 
         /// Produces a fresh SpecGameState snapshot of the current _gameState
