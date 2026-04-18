@@ -111,10 +111,14 @@ namespace Magi.LedgeBoardGame.Models.Network
         event Action<LedgeSessionErrorInfo> OnServerError;
     }
 
-    /// Combined sink + observer surface so GameController receives a single
-    /// object that covers both directions of the session (submit + listen).
-    /// LedgeBoardSessionDriver is the one implementation.
-    public interface ILedgeSessionBinding : ILedgeShadowSessionSink, ILedgeSessionObserver
+    /// Combined sink + submitter + observer surface so GameController
+    /// receives a single object that covers both directions of the session.
+    /// Shadow path (Local mode) uses ILedgeShadowSessionSink; authoritative
+    /// submit path (Network mode, M6c3b-3) uses ILedgeSessionSubmitter; both
+    /// raise the same ILedgeSessionObserver events. LedgeBoardSessionDriver
+    /// is the one implementation.
+    public interface ILedgeSessionBinding
+        : ILedgeShadowSessionSink, ILedgeSessionSubmitter, ILedgeSessionObserver
     {
     }
 }

@@ -158,14 +158,18 @@ namespace Magi.LedgeBoardGame.Net
         public void ShadowEndTurn(int seatIndex, SpecGameState localPostApplyState)
             => SubmitShadow(seatIndex, localPostApplyState, LedgeAction.EndTurn());
 
+        public bool SubmitPlace(int seatIndex, SpaceId target, Tone tone)
+            => SubmitAuthoritative(seatIndex, LedgeAction.PlaceToken(target, tone));
+
+        public bool SubmitMove(int seatIndex, SpaceId from, SpaceId to, Tone tone)
+            => SubmitAuthoritative(seatIndex, LedgeAction.MoveToken(from, to, tone));
+
+        public bool SubmitEndTurn(int seatIndex)
+            => SubmitAuthoritative(seatIndex, LedgeAction.EndTurn());
+
         private void SubmitShadow(int seatIndex, SpecGameState localPostApplyState, LedgeAction action)
         {
-            if (!IsReady || Volatile.Read(ref _disposed) != 0) return;
-            if (seatIndex < 0 || seatIndex >= _seatCount)
-            {
-                UnityEngine.Debug.LogError($"[shadow] submit rejected: seat {seatIndex} out of range [0,{_seatCount})");
-                return;
-            }
+            if (!ValidateSeat(seatIndex, "shadow")) return;
             if (localPostApplyState == null)
             {
                 UnityEngine.Debug.LogError($"[shadow] submit rejected: seat {seatIndex} local post-apply state was null");
@@ -178,6 +182,28 @@ namespace Magi.LedgeBoardGame.Net
             // branches rather than the non-predicting OnStateAdvanced path.
             long localHash = _adapter.GetStateHash(localPostApplyState);
             _sessions[seatIndex].Submit(action, localHash);
+        }
+
+        private bool SubmitAuthoritative(int seatIndex, LedgeAction action)
+        {
+            if (!ValidateSeat(seatIndex, "submit")) return false;
+            // predictedHash=0 is the non-predicting path — submit-only mode
+            // has no local mutation, so there is no post-apply state to hash
+            // and the echo routes through OnStateAdvanced. The controller
+            // then calls ApplyServerState to pick up the canonical state.
+            _sessions[seatIndex].Submit(action, 0L);
+            return true;
+        }
+
+        private bool ValidateSeat(int seatIndex, string label)
+        {
+            if (!IsReady || Volatile.Read(ref _disposed) != 0) return false;
+            if (seatIndex < 0 || seatIndex >= _seatCount)
+            {
+                UnityEngine.Debug.LogError($"[{label}] submit rejected: seat {seatIndex} out of range [0,{_seatCount})");
+                return false;
+            }
+            return true;
         }
 
         private void RaiseJoin(int seatIndex, JoinSnapshot<SpecGameState> snap)

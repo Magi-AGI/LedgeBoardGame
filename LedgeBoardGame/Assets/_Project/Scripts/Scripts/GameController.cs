@@ -17,10 +17,13 @@ namespace Magi.LedgeBoardGame
     {
         /// Authority mode. Local (default) = local GameRules is the source of
         /// truth; the shadow driver runs in parallel but its echoes are only
-        /// diagnostic. Network (M6c3b-2) = state-carrying echoes feed
-        /// ApplyServerState + RefreshBoards + UpdateStatusUI, so the scene
-        /// tracks authoritative state; local rules still run the entry points
-        /// until M6c3b-3 flips them to submit-only.
+        /// diagnostic. Network (M6c3b-3) = entry points submit-only via the
+        /// session sink, the scene renders entirely from server echoes
+        /// (ApplyServerState + RefreshBoards + UpdateStatusUI), and the UI
+        /// locks on _pendingSubmissions between submit and echo. Undo stays
+        /// disabled in Network mode; cross-commit rollback goes through the
+        /// RequestTakeback path. Multi-hop movement is deferred — M6c3b-3
+        /// covers single-hop only.
         public enum NetworkMode
         {
             Local = 0,
@@ -42,6 +45,8 @@ namespace Magi.LedgeBoardGame
         [SerializeField] private Tone defaultMovementTone = Tone.Light;
         [Tooltip("Local = local rules authoritative (current production). Network = accept authoritative state from server echoes. Leave Local until M6c3b-3.")]
         [SerializeField] private NetworkMode networkMode = NetworkMode.Local;
+        [Tooltip("Network mode only: seat index (0-based) this client controls. Actions submit for this seat and input is gated on IsLocalSeatsTurn. Ignored in Local/hot-seat.")]
+        [SerializeField] private int networkLocalSeatIndex = 0;
 
         private GameState _gameState;
         private GameRules _rules;
@@ -72,6 +77,12 @@ namespace Magi.LedgeBoardGame
         private int _pickedUpDark;
         private readonly Stack<UndoFrame> _undoStack = new Stack<UndoFrame>();
         private bool _moveInProgress;
+        // Count of in-flight submit-only actions whose server echo hasn't
+        // returned yet. Network mode uses this to lock the UI — a new click
+        // while any submission is pending would queue a second action against
+        // stale local state. Incremented in Submit*; decremented in the
+        // OnServer* handlers for the local seat. Unused in Local mode.
+        private int _pendingSubmissions;
         private SpaceId? _pendingRetarget;
         private SpaceView _sourcePhantomView;
         // Reach map for the currently selected stack: key = space, value = hop distance
@@ -112,10 +123,9 @@ namespace Magi.LedgeBoardGame
         /// a missing option key and produces the default initial state.
         public string GetLedgeSpecJson() => ledgeSpecJson != null ? ledgeSpecJson.text : null;
 
-        /// Authority mode selected in the inspector. M6c3b-1 plumbing — read
-        /// by OnServer* handlers but not yet used to gate behavior. Flips to
-        /// load-bearing in M6c3b-2 (state-application path) and M6c3b-3
-        /// (submit-only + hard-snap).
+        /// Authority mode selected in the inspector. Load-bearing since
+        /// M6c3b-3: gates whether entry points mutate locally or submit via
+        /// the session sink.
         public NetworkMode CurrentNetworkMode => networkMode;
 
         /// Called once by LedgeShadowBootstrap after the driver has finished
@@ -165,8 +175,18 @@ namespace Magi.LedgeBoardGame
                     $"[net] join seat={info.ForSeatIndex} revision={info.Revision} " +
                     $"hash=0x{info.ServerHash:X16} mode={networkMode}");
 
-            if (networkMode == NetworkMode.Network)
+            // _localSeatId is set at Start from networkLocalSeatIndex and is
+            // NOT re-pinned here — the in-process test harness creates one
+            // MagiSession per seat and fans every seat's join into this one
+            // controller, so pinning from the join would clobber on whichever
+            // seat happened to join last. Real single-client networking will
+            // only see its own seat's join, and the Start-time pin remains
+            // consistent with that anyway.
+            if (networkMode == NetworkMode.Network
+                && info.ForSeatIndex == _localSeatId - 1)
+            {
                 ApplyServerStateAndRefresh(info.State);
+            }
         }
 
         private void HandleServerAdvance(LedgeSessionEchoInfo info)
@@ -178,11 +198,14 @@ namespace Magi.LedgeBoardGame
                     $"hash=0x{info.ServerHash:X16} outcome={info.Outcome} mode={networkMode}");
 
             // Rejected echoes carry the last accepted state for snap-back.
-            // In Network mode local entry points still mutate first, so when
-            // the server refuses the action we MUST apply the echo or the
-            // scene stays on the wrong (locally-mutated) state.
+            // Network mode also arrives here for its own (non-predicting)
+            // submissions — shadow submissions still route through
+            // OnServerMatched/Diverged when predicting.
             if (networkMode == NetworkMode.Network)
+            {
                 ApplyServerStateAndRefresh(info.State);
+                ReleaseSubmissionIfLocal(info.SubmittingSeatIndex);
+            }
         }
 
         private void HandleServerMatched(LedgeSessionEchoInfo info)
@@ -192,16 +215,24 @@ namespace Magi.LedgeBoardGame
                     $"[net] matched submittingSeat={info.SubmittingSeatIndex} " +
                     $"seq={info.AckedSeq} revision={info.Revision} mode={networkMode}");
 
+            // In Network mode Submit* uses predictedHash=0, so Matched
+            // shouldn't fire for local-seat network submissions. It may still
+            // arrive for shadow-mode submissions in mixed-mode testing, or
+            // for frames other clients predicted — we still apply + unlock
+            // defensively so a stray attribution can't wedge the UI.
             if (networkMode == NetworkMode.Network)
+            {
                 ApplyServerStateAndRefresh(info.State);
+                ReleaseSubmissionIfLocal(info.SubmittingSeatIndex);
+            }
         }
 
         private void HandleServerDiverged(LedgeSessionEchoInfo info)
         {
-            // The driver already LogError's this with context. Controller-side
-            // handler is a placeholder for M6c3b-3's hard-snap + resync flow;
-            // in M6c3b-2 we still hand the canonical state to the state
-            // application path so the UI tracks the server's truth.
+            // The driver already LogError's this. Controller-side, we still
+            // apply the canonical state so the scene tracks the server
+            // (hard-snap); M6c3b-3 intentionally has no optimistic prediction
+            // to roll back, so this is the same code path as Matched.
             if (Application.isEditor)
                 UnityEngine.Debug.LogWarning(
                     $"[net] diverged submittingSeat={info.SubmittingSeatIndex} " +
@@ -209,7 +240,10 @@ namespace Magi.LedgeBoardGame
                     $"outcome={info.Outcome} mode={networkMode}");
 
             if (networkMode == NetworkMode.Network)
+            {
                 ApplyServerStateAndRefresh(info.State);
+                ReleaseSubmissionIfLocal(info.SubmittingSeatIndex);
+            }
         }
 
         private void HandleServerError(LedgeSessionErrorInfo info)
@@ -218,6 +252,34 @@ namespace Magi.LedgeBoardGame
                 UnityEngine.Debug.LogWarning(
                     $"[net] server-error seat={info.SubscribingSeatIndex} " +
                     $"seq={info.AckedSeq} code={info.Code} message={info.Message} mode={networkMode}");
+
+            // Protocol-layer errors don't carry state, but the submission
+            // did land (and get refused) — release the lock so the user can
+            // try again. Without this the UI would stay frozen on a failed
+            // submit in Network mode. ErrorInfo's SubscribingSeatIndex is
+            // the seat whose session raised the error, which is always the
+            // local seat here (observer events are per-seat-scoped).
+            if (networkMode == NetworkMode.Network)
+            {
+                ReleaseSubmissionIfLocal(info.SubscribingSeatIndex);
+                RefreshBoards();
+                UpdateStatusUI();
+            }
+        }
+
+        private void ReleaseSubmissionIfLocal(int submittingSeatIndex)
+        {
+            if (submittingSeatIndex != _localSeatId - 1) return;
+            if (_pendingSubmissions > 0) _pendingSubmissions--;
+            if (_pendingSubmissions == 0)
+            {
+                // UI was frozen while waiting for the authoritative echo.
+                // Re-enable interactive buttons now that the round-trip is
+                // done. Status/highlight refresh happens in
+                // ApplyServerStateAndRefresh above, not here, so this stays
+                // purely a lock-release.
+                RefreshUndoButton();
+            }
         }
 
         /// M6c3b-2 glue between the observer handlers and the state
@@ -318,7 +380,13 @@ namespace Magi.LedgeBoardGame
             _gameState = new GameState(players, runtimeConfig);
             _rules = new GameRules(useSpec ? runtimeConfig : null);
             _runtimeConfig = useSpec ? runtimeConfig : null;
-            _localSeatId = _gameState.CurrentPlayerId;
+            // Hot-seat / Local mode: _localSeatId tracks whoever's turn it is
+            // and rotates in OnEndTurnClicked. Network mode pins to the seat
+            // this client owns, configured via networkLocalSeatIndex, and
+            // never rotates — IsLocalSeatsTurn() becomes the input gate.
+            _localSeatId = networkMode == NetworkMode.Network
+                ? networkLocalSeatIndex + 1
+                : _gameState.CurrentPlayerId;
 
             if (multiBoardLayout == null)
             {
@@ -433,6 +501,20 @@ namespace Magi.LedgeBoardGame
             if (_moveInProgress)
                 return;
 
+            if (networkMode == NetworkMode.Network)
+            {
+                // Drop input while a previously submitted action is still
+                // awaiting its echo. Without this the user could submit a
+                // second action against the pre-echo state.
+                if (_pendingSubmissions > 0)
+                    return;
+                // Only act on our own turn in Network mode. Without this
+                // gate the client could submit actions for the remote
+                // player just by clicking during their turn.
+                if (!IsLocalSeatsTurn())
+                    return;
+            }
+
             var boardId = FindBoardIdForView(view);
             if (boardId == null)
                 return;
@@ -528,28 +610,56 @@ namespace Magi.LedgeBoardGame
                 return;
             }
 
-            if (_rules.CanPlaceToken(_gameState, target, toneToPlace))
+            // CanPlaceToken is a pure read on _gameState; safe to use as a
+            // UI gate even in Network mode (the server re-validates).
+            if (!_rules.CanPlaceToken(_gameState, target, toneToPlace))
+                return;
+
+            int seatIndex = currentPlayer.Id - 1;
+
+            if (networkMode == NetworkMode.Network)
             {
-                PushPlacementUndo();
-                int seatIndex = currentPlayer.Id - 1;
-                var move = _rules.PlaceToken(_gameState, target, toneToPlace);
-                if (move != null)
+                // Authority flip: submit-only. No local mutation, no tween,
+                // no undo frame — the echo drives the visual change via
+                // ApplyServerStateAndRefresh. UI stays locked on
+                // _pendingSubmissions until the echo returns. Submit from
+                // _localSeatId (not currentPlayer.Id) so we never send an
+                // action for another seat; input is already gated on
+                // IsLocalSeatsTurn so the two are equal here, but deriving
+                // from _localSeatId keeps the invariant local to the call.
+                if (_shadowSink != null
+                    && _shadowSink.SubmitPlace(_localSeatId - 1, target, toneToPlace))
                 {
-                    LogEvent($"{currentPlayer.Name} placed {toneToPlace} at {FormatSpace(target)}");
-                    // Shadow: mirror the commit onto the parallel Session. Snapshot is
-                    // taken AFTER _rules mutated, so the hash the server will recompute
-                    // matches the hash we submit. A divergence here would mean the
-                    // rules adapter and GameRules produced different post-apply states
-                    // for the same action — the M6c3a canary.
-                    _shadowSink?.ShadowPlace(seatIndex, BuildCurrentSpecState(), target, toneToPlace);
-                    PlayPlacementTween(target, toneToPlace);
-                }
-                else
-                {
-                    // Placement actually failed — drop the speculative snapshot.
-                    _undoStack.Pop();
+                    _pendingSubmissions++;
+                    LogEvent($"{currentPlayer.Name} → submit place {toneToPlace} at {FormatSpace(target)}");
+                    ClearHighlights();
                     RefreshUndoButton();
                 }
+                else if (Application.isEditor)
+                {
+                    UnityEngine.Debug.LogWarning("[net] place submission dropped (sink null or not ready)");
+                }
+                return;
+            }
+
+            PushPlacementUndo();
+            var move = _rules.PlaceToken(_gameState, target, toneToPlace);
+            if (move != null)
+            {
+                LogEvent($"{currentPlayer.Name} placed {toneToPlace} at {FormatSpace(target)}");
+                // Shadow: mirror the commit onto the parallel Session. Snapshot is
+                // taken AFTER _rules mutated, so the hash the server will recompute
+                // matches the hash we submit. A divergence here would mean the
+                // rules adapter and GameRules produced different post-apply states
+                // for the same action — the M6c3a canary.
+                _shadowSink?.ShadowPlace(seatIndex, BuildCurrentSpecState(), target, toneToPlace);
+                PlayPlacementTween(target, toneToPlace);
+            }
+            else
+            {
+                // Placement actually failed — drop the speculative snapshot.
+                _undoStack.Pop();
+                RefreshUndoButton();
             }
         }
 
@@ -720,6 +830,12 @@ namespace Magi.LedgeBoardGame
 
         private void ExecuteStackMove(SpaceId from, SpaceId clicked)
         {
+            if (networkMode == NetworkMode.Network)
+            {
+                ExecuteStackMoveNetwork(from, clicked);
+                return;
+            }
+
             // Resolve the path first. Single-hop destinations keep the direct tween path
             // for continuity; multi-hop destinations replay as chained single-step moves
             // (one MoveToken batch per hop) so the domain sees the same sequence it would
@@ -873,6 +989,98 @@ namespace Magi.LedgeBoardGame
                 MovingCounter.PlayPath(overlayParent, waypoints, visualStacks,
                     MoveTweenDuration, OnMoveTweenComplete);
             }
+        }
+
+        /// Network-mode (submit-only) variant of ExecuteStackMove. Covers
+        /// single-hop destinations only — multi-hop chains land each hop's
+        /// carried count on the server-side ResolveEntry outcome, which the
+        /// client can't predict without running local rules speculatively.
+        /// Multi-hop Network-mode moves are deferred; they'll either split
+        /// per hop on arrival of each echo or move into a multi-action
+        /// server submission shape in a later step.
+        ///
+        /// Single-hop: one SubmitMove per counter (Light first, then Dark),
+        /// mirroring the Local-mode shadow submission order. No local
+        /// mutation, no undo frame, no tween — the echo feeds
+        /// ApplyServerStateAndRefresh which re-renders from the authoritative
+        /// state. _pendingSubmissions counts the in-flight actions so the UI
+        /// stays locked until every echo returns.
+        private void ExecuteStackMoveNetwork(SpaceId from, SpaceId clicked)
+        {
+            if (_selectedReach != null
+                && _selectedReach.TryGetValue(clicked, out var dist)
+                && dist > 1)
+            {
+                if (Application.isEditor)
+                    UnityEngine.Debug.LogWarning(
+                        $"[net] multi-hop movement not yet supported in Network mode (dist={dist})");
+                ClearMovementSelection();
+                HighlightMovablePieces();
+                return;
+            }
+
+            int lightPickedUp = _pickedUpLight;
+            int darkPickedUp = _pickedUpDark;
+            if (lightPickedUp + darkPickedUp == 0)
+            {
+                ClearMovementSelection();
+                HighlightMovablePieces();
+                return;
+            }
+
+            var mover = _gameState.GetCurrentPlayer();
+            if (mover == null)
+            {
+                ClearMovementSelection();
+                HighlightMovablePieces();
+                return;
+            }
+            int seatIndex = _localSeatId - 1;
+
+            int lightSubmitted = 0;
+            int darkSubmitted = 0;
+            for (int i = 0; i < lightPickedUp; i++)
+            {
+                if (_shadowSink != null
+                    && _shadowSink.SubmitMove(seatIndex, from, clicked, Tone.Light))
+                {
+                    _pendingSubmissions++;
+                    lightSubmitted++;
+                }
+                else if (Application.isEditor)
+                {
+                    UnityEngine.Debug.LogWarning(
+                        "[net] move submission dropped (sink null or not ready)");
+                }
+            }
+            for (int i = 0; i < darkPickedUp; i++)
+            {
+                if (_shadowSink != null
+                    && _shadowSink.SubmitMove(seatIndex, from, clicked, Tone.Dark))
+                {
+                    _pendingSubmissions++;
+                    darkSubmitted++;
+                }
+                else if (Application.isEditor)
+                {
+                    UnityEngine.Debug.LogWarning(
+                        "[net] move submission dropped (sink null or not ready)");
+                }
+            }
+
+            if (lightSubmitted + darkSubmitted > 0)
+            {
+                LogEvent($"{mover.Name} → submit move " +
+                         $"L{lightSubmitted}+D{darkSubmitted} {FormatSpace(from)}→{FormatSpace(clicked)}");
+            }
+
+            // Clear the in-hand selection immediately — the player has
+            // committed the action and can't re-target while echoes are in
+            // flight. Highlights go away for the same reason; the next
+            // echo-driven refresh will rehighlight based on the server's
+            // post-apply state.
+            ClearMovementSelection();
+            RefreshUndoButton();
         }
 
         private void DeselectWithReturnTween()
@@ -1305,6 +1513,14 @@ namespace Magi.LedgeBoardGame
             if (_moveInProgress)
                 return;
 
+            // Network mode: same locks as OnSpaceClicked. The Space-key
+            // shortcut in Update() would otherwise bypass this.
+            if (networkMode == NetworkMode.Network)
+            {
+                if (_pendingSubmissions > 0) return;
+                if (!IsLocalSeatsTurn()) return;
+            }
+
             if (_gameState.CurrentPhase == GamePhase.Placement && !_gameState.IsPlacementComplete())
             {
                 // Must place both tones before ending the turn.
@@ -1318,6 +1534,29 @@ namespace Magi.LedgeBoardGame
             // the shadow submission is addressed to the player who actually
             // ended their turn, not the next one up.
             int endingSeatIndex = endingPlayer != null ? endingPlayer.Id - 1 : -1;
+
+            if (networkMode == NetworkMode.Network)
+            {
+                // Authority flip. No local EndTurn, no undo clear, no
+                // hot-seat _localSeatId rotation — the echo carries the
+                // rotated state and ApplyServerStateAndRefresh picks it up.
+                int submitSeat = _localSeatId - 1;
+                if (_shadowSink != null && _shadowSink.SubmitEndTurn(submitSeat))
+                {
+                    _pendingSubmissions++;
+                    if (endingPlayer != null)
+                        LogEvent($"{endingPlayer.Name} → submit end turn");
+                    ClearHighlights();
+                    RefreshUndoButton();
+                }
+                else if (Application.isEditor)
+                {
+                    UnityEngine.Debug.LogWarning(
+                        "[net] end-turn submission dropped (sink null or not ready)");
+                }
+                return;
+            }
+
             var endOfTurn = _gameState.EndTurn();
             NarrateOverflowCap(endOfTurn, endingPlayer);
             var nextPlayer = _gameState.GetCurrentPlayer();
@@ -1391,6 +1630,13 @@ namespace Magi.LedgeBoardGame
                 return;
 
             if (_moveInProgress)
+                return;
+
+            // Network mode has no pre-submit local buffer to rewind — every
+            // action is server-committed the instant it echoes back. Cross-
+            // commit rollback is what RequestTakeback is for; this button
+            // stays dormant while networkMode == Network.
+            if (networkMode == NetworkMode.Network)
                 return;
 
             // Controller-layer gate: undo only applies to the local seat's own
@@ -1502,7 +1748,21 @@ namespace Magi.LedgeBoardGame
                 // Mirror the OnUndoClicked gate: the button is only interactable when
                 // this seat can actually rewind. Shared gate avoids divergence between
                 // "button says yes" and "controller says no" once online mode lands.
-                undoButton.interactable = _undoStack.Count > 0 && !_moveInProgress && IsLocalSeatsTurn();
+                // Network mode disables undo outright — takeback goes through
+                // RequestTakeback once that's wired to the session.
+                undoButton.interactable =
+                    networkMode == NetworkMode.Local
+                    && _undoStack.Count > 0
+                    && !_moveInProgress
+                    && IsLocalSeatsTurn();
+            }
+            if (endTurnButton != null)
+            {
+                // End-turn must also respect the Network-mode pending-
+                // submission lock. Placement-completeness and move-in-progress
+                // gates are still handled inside OnEndTurnClicked itself.
+                endTurnButton.interactable =
+                    !(networkMode == NetworkMode.Network && _pendingSubmissions > 0);
             }
         }
 
