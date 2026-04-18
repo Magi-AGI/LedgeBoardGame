@@ -17,13 +17,14 @@ namespace Magi.LedgeBoardGame
     {
         /// Authority mode. Local (default) = local GameRules is the source of
         /// truth; the shadow driver runs in parallel but its echoes are only
-        /// diagnostic. Network (M6c3b-3) = entry points submit-only via the
-        /// session sink, the scene renders entirely from server echoes
+        /// diagnostic. Network = entry points submit-only via the session
+        /// sink, the scene renders entirely from server echoes
         /// (ApplyServerState + RefreshBoards + UpdateStatusUI), and the UI
-        /// locks on _pendingSubmissions between submit and echo. Undo stays
-        /// disabled in Network mode; cross-commit rollback goes through the
-        /// RequestTakeback path. Multi-hop movement is deferred — M6c3b-3
-        /// covers single-hop only.
+        /// locks on _pendingSubmissions between submit and echo. The undo
+        /// button is repurposed as the takeback trigger (RequestTakeback);
+        /// pre-submit undo has no analogue server-side. Multi-hop movement
+        /// is supported via a speculative-clone resolve that computes
+        /// per-hop carried counts without mutating _gameState.
         public enum NetworkMode
         {
             Local = 0,
@@ -1081,34 +1082,20 @@ namespace Magi.LedgeBoardGame
             }
         }
 
-        /// Network-mode (submit-only) variant of ExecuteStackMove. Covers
-        /// single-hop destinations only — multi-hop chains land each hop's
-        /// carried count on the server-side ResolveEntry outcome, which the
-        /// client can't predict without running local rules speculatively.
-        /// Multi-hop Network-mode moves are deferred; they'll either split
-        /// per hop on arrival of each echo or move into a multi-action
-        /// server submission shape in a later step.
-        ///
-        /// Single-hop: one SubmitMove per counter (Light first, then Dark),
-        /// mirroring the Local-mode shadow submission order. No local
-        /// mutation, no undo frame, no tween — the echo feeds
-        /// ApplyServerStateAndRefresh which re-renders from the authoritative
-        /// state. _pendingSubmissions counts the in-flight actions so the UI
-        /// stays locked until every echo returns.
+        /// Network-mode (submit-only) variant of ExecuteStackMove. Mirrors
+        /// the Local path's structure — resolve shortest path, apply one
+        /// MoveToken per counter per hop — but never mutates _gameState:
+        /// the per-hop carried count is computed against a throwaway clone
+        /// so we know how many single-counter SubmitMove calls to enqueue
+        /// at each waypoint without affecting rendering. The server sees
+        /// the same sequence of actions Local mode would have submitted
+        /// via the shadow path and resolves authoritatively in ClientSeq
+        /// order; if its own ResolveEntry outcomes differ from the local
+        /// speculation at an intermediate hop, later hops will rules-fail
+        /// server-side and the echoes will surface the actual landing
+        /// position. No undo frame, no tween — echoes drive the re-render.
         private void ExecuteStackMoveNetwork(SpaceId from, SpaceId clicked)
         {
-            if (_selectedReach != null
-                && _selectedReach.TryGetValue(clicked, out var dist)
-                && dist > 1)
-            {
-                if (Application.isEditor)
-                    UnityEngine.Debug.LogWarning(
-                        $"[net] multi-hop movement not yet supported in Network mode (dist={dist})");
-                ClearMovementSelection();
-                HighlightMovablePieces();
-                return;
-            }
-
             int lightPickedUp = _pickedUpLight;
             int darkPickedUp = _pickedUpDark;
             if (lightPickedUp + darkPickedUp == 0)
@@ -1125,43 +1112,107 @@ namespace Magi.LedgeBoardGame
                 HighlightMovablePieces();
                 return;
             }
+
+            // Resolve the path: single-hop collapses to the single-entry
+            // list, multi-hop uses the rule-layer shortest-path search
+            // exactly like Local mode.
+            List<SpaceId> path;
+            if (_selectedReach != null
+                && _selectedReach.TryGetValue(clicked, out var dist)
+                && dist > 1)
+            {
+                path = _rules.FindShortestPath(_gameState, from, clicked, _selectedTone, _selectedReachMax);
+                if (path == null || path.Count == 0)
+                {
+                    ClearMovementSelection();
+                    HighlightMovablePieces();
+                    return;
+                }
+            }
+            else
+            {
+                path = new List<SpaceId> { clicked };
+            }
+
             int seatIndex = _localSeatId - 1;
 
-            int lightSubmitted = 0;
-            int darkSubmitted = 0;
-            for (int i = 0; i < lightPickedUp; i++)
+            // Speculative resolve against a clone so per-hop carried counts
+            // include ResolveEntry survivors + same-tone pickups at pass-
+            // through spaces, matching what FindShortestPath's reach model
+            // assumed. The clone never leaks — rendering stays on _gameState
+            // and the echo reconciles any divergence from the server's
+            // authoritative resolution.
+            var speculative = _gameState.Clone();
+
+            int totalLightSubmitted = 0;
+            int totalDarkSubmitted = 0;
+            int carriedLight = lightPickedUp;
+            int carriedDark = darkPickedUp;
+            var hopOrigin = from;
+            SpaceId lastReachedHop = from;
+            int successfulHops = 0;
+
+            for (int hop = 0; hop < path.Count; hop++)
             {
-                if (_shadowSink != null
-                    && _shadowSink.SubmitMove(seatIndex, from, clicked, Tone.Light))
+                var hopTarget = path[hop];
+                int hopLight = 0;
+                int hopDark = 0;
+
+                for (int i = 0; i < carriedLight; i++)
                 {
-                    _pendingSubmissions++;
-                    lightSubmitted++;
+                    if (_rules.MoveToken(speculative, hopOrigin, hopTarget, Tone.Light) == null) break;
+                    hopLight++;
+                    if (_shadowSink != null
+                        && _shadowSink.SubmitMove(seatIndex, hopOrigin, hopTarget, Tone.Light))
+                    {
+                        _pendingSubmissions++;
+                        totalLightSubmitted++;
+                    }
+                    else if (Application.isEditor)
+                    {
+                        UnityEngine.Debug.LogWarning(
+                            "[net] move submission dropped (sink null or not ready)");
+                    }
                 }
-                else if (Application.isEditor)
+                for (int i = 0; i < carriedDark; i++)
                 {
-                    UnityEngine.Debug.LogWarning(
-                        "[net] move submission dropped (sink null or not ready)");
+                    if (_rules.MoveToken(speculative, hopOrigin, hopTarget, Tone.Dark) == null) break;
+                    hopDark++;
+                    if (_shadowSink != null
+                        && _shadowSink.SubmitMove(seatIndex, hopOrigin, hopTarget, Tone.Dark))
+                    {
+                        _pendingSubmissions++;
+                        totalDarkSubmitted++;
+                    }
+                    else if (Application.isEditor)
+                    {
+                        UnityEngine.Debug.LogWarning(
+                            "[net] move submission dropped (sink null or not ready)");
+                    }
                 }
-            }
-            for (int i = 0; i < darkPickedUp; i++)
-            {
-                if (_shadowSink != null
-                    && _shadowSink.SubmitMove(seatIndex, from, clicked, Tone.Dark))
-                {
-                    _pendingSubmissions++;
-                    darkSubmitted++;
-                }
-                else if (Application.isEditor)
-                {
-                    UnityEngine.Debug.LogWarning(
-                        "[net] move submission dropped (sink null or not ready)");
-                }
+
+                if (hopLight + hopDark == 0) break;
+
+                // Next hop carries the full stack at hopTarget — post-clash,
+                // post-pickup. Reading from the speculative clone keeps this
+                // aligned with Local mode's carried-count math.
+                var targetBoard = speculative.GetBoard(hopTarget.BoardId);
+                var targetStack = targetBoard?.GetStack(hopTarget.Id);
+                carriedLight = targetStack?.LightCount ?? hopLight;
+                carriedDark = targetStack?.DarkCount ?? hopDark;
+                hopOrigin = hopTarget;
+                lastReachedHop = hopTarget;
+                successfulHops = hop + 1;
             }
 
-            if (lightSubmitted + darkSubmitted > 0)
+            if (totalLightSubmitted + totalDarkSubmitted > 0)
             {
+                string destination = successfulHops == path.Count
+                    ? FormatSpace(clicked)
+                    : $"{FormatSpace(lastReachedHop)} (partial)";
                 LogEvent($"{mover.Name} → submit move " +
-                         $"L{lightSubmitted}+D{darkSubmitted} {FormatSpace(from)}→{FormatSpace(clicked)}");
+                         $"L{totalLightSubmitted}+D{totalDarkSubmitted} " +
+                         $"{FormatSpace(from)}→{destination} hops={successfulHops}");
             }
 
             // Clear the in-hand selection immediately — the player has
