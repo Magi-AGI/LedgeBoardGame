@@ -120,6 +120,7 @@ namespace MagiGameServer.Client
         public void Ingest(JoinSnapshot<TState> snapshot)
         {
             if (snapshot == null) throw new ArgumentNullException(nameof(snapshot));
+            GuardAddressing(snapshot.Session, snapshot.ForSeat, nameof(snapshot));
             OnSessionJoined?.Invoke(snapshot);
         }
 
@@ -130,6 +131,7 @@ namespace MagiGameServer.Client
         public void Ingest(StateEcho<TState> echo)
         {
             if (echo == null) throw new ArgumentNullException(nameof(echo));
+            GuardAddressing(echo.Session, echo.ForSeat, nameof(echo));
 
             // Not our submission → remote advance. Optimistic stack is
             // untouched; remote players can't ack our entries.
@@ -175,6 +177,7 @@ namespace MagiGameServer.Client
         public void Ingest(TakebackBroadcast<TState> broadcast)
         {
             if (broadcast == null) throw new ArgumentNullException(nameof(broadcast));
+            GuardAddressing(broadcast.Session, broadcast.ForSeat, nameof(broadcast));
 
             if (broadcast.RequestingSeat == _ownSeat)
             {
@@ -209,6 +212,9 @@ namespace MagiGameServer.Client
         public void Ingest(TakebackResponse response)
         {
             if (response == null) throw new ArgumentNullException(nameof(response));
+            // TakebackResponse has no ForSeat — it's delivered only to the
+            // requester, so RequestingSeat is the addressee we must match.
+            GuardAddressing(response.Session, response.RequestingSeat, nameof(response));
             OnTakebackReply?.Invoke(response);
         }
 
@@ -219,9 +225,38 @@ namespace MagiGameServer.Client
         public void Ingest(ErrorEnvelope error)
         {
             if (error == null) throw new ArgumentNullException(nameof(error));
+            // ErrorEnvelope carries no seat field — the server only emits
+            // it to the submitter whose envelope was rejected. Session
+            // match is the strongest guard available, and it's enough to
+            // keep a foreign error with a colliding ClientSeq from
+            // retiring the wrong optimistic entry.
+            if (error.Session != _session)
+                throw new ArgumentException(
+                    $"ErrorEnvelope for session {error.Session} delivered to dispatcher bound to {_session}",
+                    nameof(error));
             int idx = FindPendingIndex(error.AckedSeq);
             if (idx >= 0) _pending.RemoveAt(idx);
             OnError?.Invoke(error);
+        }
+
+        // Session + addressee-seat guard shared by every inbound envelope
+        // that carries a ForSeat-ish field. A transport misroute here is
+        // not a noop: a wrong-seat StateEcho / JoinSnapshot /
+        // TakebackBroadcast would surface another seat's projected state
+        // to this client, breaking the hidden-info invariant the server
+        // enforces in ProjectStateFor. The dispatcher is the last line of
+        // defence before the game layer sees projected state, so it fails
+        // loud rather than silently routing.
+        private void GuardAddressing(SessionId session, SeatId addressee, string paramName)
+        {
+            if (session != _session)
+                throw new ArgumentException(
+                    $"Envelope addressed to session {session} delivered to dispatcher bound to {_session}",
+                    paramName);
+            if (addressee != _ownSeat)
+                throw new ArgumentException(
+                    $"Envelope addressed to {addressee} delivered to dispatcher bound to {_ownSeat}",
+                    paramName);
         }
 
         private int FindPendingIndex(ClientSeq seq)

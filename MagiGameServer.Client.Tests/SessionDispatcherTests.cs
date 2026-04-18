@@ -364,6 +364,143 @@ namespace MagiGameServer.Client.Tests
                 "wait forever for an echo that will never come");
         }
 
+        // --------------------------------------------------------------
+        // Negative routing: envelopes addressed elsewhere must throw, not
+        // silently leak cross-seat state into this dispatcher's callbacks.
+        // A wrong-ForSeat StateEcho / JoinSnapshot / TakebackBroadcast
+        // would surface another seat's projected State to the local game
+        // layer, breaking the hidden-info invariant. The dispatcher is
+        // the last guard before the game layer sees projected state.
+        // --------------------------------------------------------------
+
+        [Test]
+        public void Ingest_JoinSnapshot_WrongSession_Throws()
+        {
+            var d = NewDispatcher();
+            var snap = new JoinSnapshot<TestState>
+            {
+                Session = new SessionId("other"),
+                ForSeat = Own,
+                Revision = new ServerSeq(0),
+                State = new TestState(),
+                StateHash = 0,
+            };
+            Assert.That(() => d.Ingest(snap), Throws.ArgumentException);
+        }
+
+        [Test]
+        public void Ingest_JoinSnapshot_WrongSeat_Throws()
+        {
+            var d = NewDispatcher();
+            var snap = new JoinSnapshot<TestState>
+            {
+                Session = Session,
+                ForSeat = Remote,
+                Revision = new ServerSeq(0),
+                State = new TestState(),
+                StateHash = 0,
+            };
+            Assert.That(() => d.Ingest(snap), Throws.ArgumentException);
+        }
+
+        [Test]
+        public void Ingest_StateEcho_WrongSession_Throws()
+        {
+            var d = NewDispatcher();
+            var echo = new StateEcho<TestState>
+            {
+                Session = new SessionId("other"),
+                ForSeat = Own,
+                SubmittingSeat = Remote,
+                AckedSeq = new ClientSeq(1),
+                Revision = new ServerSeq(1),
+                State = new TestState(),
+                StateHash = 0,
+                Outcome = ApplyOutcome.Applied,
+            };
+            Assert.That(() => d.Ingest(echo), Throws.ArgumentException);
+        }
+
+        [Test]
+        public void Ingest_StateEcho_WrongForSeat_Throws()
+        {
+            var d = NewDispatcher();
+            var echo = new StateEcho<TestState>
+            {
+                Session = Session,
+                ForSeat = Remote,
+                SubmittingSeat = Remote,
+                AckedSeq = new ClientSeq(1),
+                Revision = new ServerSeq(1),
+                State = new TestState(),
+                StateHash = 0,
+                Outcome = ApplyOutcome.Applied,
+            };
+            Assert.That(() => d.Ingest(echo), Throws.ArgumentException);
+        }
+
+        [Test]
+        public void Ingest_TakebackBroadcast_WrongForSeat_Throws()
+        {
+            var d = NewDispatcher();
+            var broadcast = new TakebackBroadcast<TestState>
+            {
+                Session = Session,
+                ForSeat = Remote,
+                RequestingSeat = Remote,
+                AckedRequestSeq = new ClientSeq(1),
+                RevisionAfter = new ServerSeq(0),
+                StepsRewound = 1,
+                State = new TestState(),
+                StateHash = 0,
+            };
+            Assert.That(() => d.Ingest(broadcast), Throws.ArgumentException);
+        }
+
+        [Test]
+        public void Ingest_TakebackResponse_WrongRequestingSeat_Throws()
+        {
+            // Only the requester should ever receive a TakebackResponse —
+            // Granted outcomes arrive as broadcasts instead. A response
+            // whose RequestingSeat != OwnSeat is either a transport
+            // misroute or a server bug; either way, failing loud stops
+            // the UI from showing a decision that doesn't belong to us.
+            var d = NewDispatcher();
+            var denied = new TakebackResponse
+            {
+                Session = Session,
+                RequestingSeat = Remote,
+                AckedRequestSeq = new ClientSeq(1),
+                Outcome = TakebackOutcome.Denied,
+                StepsGranted = 0,
+                RevisionAfter = new ServerSeq(5),
+                Message = "policy",
+            };
+            Assert.That(() => d.Ingest(denied), Throws.ArgumentException);
+        }
+
+        [Test]
+        public void Ingest_Error_WrongSession_Throws_AndDoesNotDropPending()
+        {
+            var cap = new Capture();
+            var d = NewDispatcher(cap);
+            d.Submit(new TestAction { Delta = 1 }, predictedStateHash: 42);
+            Assume.That(d.PendingCount, Is.EqualTo(1));
+
+            var err = new ErrorEnvelope
+            {
+                Session = new SessionId("other"),
+                AckedSeq = new ClientSeq(1),
+                Code = "x",
+                Message = "y",
+            };
+
+            Assert.That(() => d.Ingest(err), Throws.ArgumentException);
+            Assert.That(d.PendingCount, Is.EqualTo(1),
+                "a foreign error must not retire our optimistic entry even if AckedSeq collides");
+            Assert.That(cap.Errors, Is.Empty);
+        }
+
         [Test]
         public void RoutingEvents_AreMutuallyExclusive_PerEcho()
         {
