@@ -47,6 +47,22 @@ namespace MagiGameServer.Core
             _revision = new ServerSeq(0);
         }
 
+        /// Project the canonical state for a seat without mutating the
+        /// session. Used by the host to build JoinSnapshot frames without
+        /// reaching into private state, and keeps the projection guarantee
+        /// on the Session surface rather than relying on the host to
+        /// remember to call ProjectStateFor — skipping projection would
+        /// leak hidden-info cross-seat.
+        public (object projected, long stateHash, ServerSeq revision) ProjectForSeat(SeatId seat)
+        {
+            if (seat.Value < 0 || seat.Value >= SeatCount)
+                throw new ArgumentOutOfRangeException(nameof(seat),
+                    $"Seat {seat} out of range [0,{SeatCount}) for session {Id}");
+            object projected = _rules.ProjectStateFor(_state, seat);
+            long hash = _rules.GetStateHash(projected);
+            return (projected, hash, _revision);
+        }
+
         public SessionApplyResult Apply(ActionEnvelope<object> envelope)
         {
             if (envelope == null) throw new ArgumentNullException(nameof(envelope));

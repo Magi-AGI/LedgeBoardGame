@@ -32,19 +32,30 @@ namespace MagiGameServer.Codec
 
         private static JsonSerializerOptions BuildOptions()
         {
-            var o = new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                PropertyNameCaseInsensitive = false,
-                WriteIndented = false,
-                DefaultIgnoreCondition = JsonIgnoreCondition.Never,
-            };
-            o.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
-            o.Converters.Add(new SessionIdConverter());
-            o.Converters.Add(new SeatIdConverter());
-            o.Converters.Add(new ClientSeqConverter());
-            o.Converters.Add(new ServerSeqConverter());
+            var o = new JsonSerializerOptions();
+            ConfigureOptions(o);
             return o;
+        }
+
+        /// Applies the wire-codec policy (camelCase, enum-as-string,
+        /// strong-typed-identifier converters) to an existing
+        /// JsonSerializerOptions. Used by the ASP.NET host to ensure
+        /// `Results.Ok` / `ReadFromJsonAsync` on the HTTP pipeline
+        /// produce the exact same wire shape as direct codec calls — if
+        /// the host used default options, HTTP bodies and WebSocket
+        /// frames would disagree on whether SessionId is "s" or
+        /// {"value":"s"}.
+        public static void ConfigureOptions(JsonSerializerOptions target)
+        {
+            target.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+            target.PropertyNameCaseInsensitive = false;
+            target.WriteIndented = false;
+            target.DefaultIgnoreCondition = JsonIgnoreCondition.Never;
+            target.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
+            target.Converters.Add(new SessionIdConverter());
+            target.Converters.Add(new SeatIdConverter());
+            target.Converters.Add(new ClientSeqConverter());
+            target.Converters.Add(new ServerSeqConverter());
         }
 
         public static byte[] Serialize<T>(T value)
