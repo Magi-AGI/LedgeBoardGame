@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using MagiGameServer.Contracts.Core;
 using MagiGameServer.Contracts.Rules;
@@ -51,6 +52,8 @@ namespace MagiGameServer.Core.Tests
         public int MinSeats => 1;
         public int MaxSeats => 4;
         public IRulesAdapter Rules { get; } = new CounterRules();
+        public Type ActionType => typeof(CounterAction);
+        public Type StateType => typeof(CounterState);
 
         public object CreateInitialState(GameConfig config)
         {

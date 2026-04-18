@@ -148,3 +148,7 @@ Thumbs.db
 !MagiGameServer.Core.Tests/MagiGameServer.Core.Tests.csproj
 !MagiGameServer.Client/MagiGameServer.Client.csproj
 !MagiGameServer.Client.Tests/MagiGameServer.Client.Tests.csproj
+!MagiGameServer.Modules/MagiGameServer.Modules.csproj
+!MagiGameServer.Modules.Tests/MagiGameServer.Modules.Tests.csproj
+!MagiGameServer.Codec/MagiGameServer.Codec.csproj
+!MagiGameServer.Codec.Tests/MagiGameServer.Codec.Tests.csproj

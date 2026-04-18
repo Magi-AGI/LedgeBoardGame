@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <RootNamespace>MagiGameServer.Modules</RootNamespace>
+    <AssemblyName>MagiGameServer.Modules</AssemblyName>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!--
+      Static game-module registry. Deliberately minimal: a thread-safe map
+      of gameId → IGameModule built at server startup via explicit
+      Register(...) calls. No reflection, no plugin discovery, no DI
+      container. Dynamic plugin loading (post-M6) would replace this with
+      an assembly-scanning resolver, but the surface the rest of the
+      server sees (Get/TryGet) is designed to outlive that swap.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MagiGameServer.Contracts\MagiGameServer.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

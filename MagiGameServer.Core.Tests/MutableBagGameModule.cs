@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using MagiGameServer.Contracts.Core;
@@ -63,6 +64,8 @@ namespace MagiGameServer.Core.Tests
         public int MinSeats => 1;
         public int MaxSeats => 2;
         public IRulesAdapter Rules { get; } = new MutableBagRules();
+        public Type ActionType => typeof(MutableBagAction);
+        public Type StateType => typeof(MutableBagState);
 
         public object CreateInitialState(GameConfig config) => new MutableBagState();
 

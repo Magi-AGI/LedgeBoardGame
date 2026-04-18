@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace MagiGameServer.Contracts.Rules
@@ -31,6 +32,26 @@ namespace MagiGameServer.Contracts.Rules
         /// per-session options (seed, player count, variant flags). The returned
         /// object is the first canonical state the server will persist and hash.
         object CreateInitialState(GameConfig config);
+
+        /// Concrete action payload type for this module (e.g. CounterAction,
+        /// LedgeAction). The wire codec uses this to deserialize incoming
+        /// ActionEnvelope payloads into the right shape: the server
+        /// receives JSON, resolves the session's module, and asks
+        /// JsonSerializer.Deserialize(json, typeof(ActionEnvelope&lt;&gt;).MakeGenericType(module.ActionType)).
+        /// Non-generic IRulesAdapter deliberately keeps this off its own
+        /// surface — rules code doesn't care about wire typing, but the
+        /// module is the natural single source of truth for what "an
+        /// action for this game" concretely is.
+        Type ActionType { get; }
+
+        /// Concrete canonical state type for this module. The server
+        /// serializes StateEcho.State using the runtime type of the
+        /// instance (which System.Text.Json handles by default), so this
+        /// is primarily advisory on the server side. Clients use it to
+        /// parameterise SessionDispatcher&lt;TState, TAction&gt; — pairing
+        /// a gameId with a module tells the client which concrete TState
+        /// to expect from echoes.
+        Type StateType { get; }
     }
 
     /// Per-session configuration passed to CreateInitialState. Kept as a
