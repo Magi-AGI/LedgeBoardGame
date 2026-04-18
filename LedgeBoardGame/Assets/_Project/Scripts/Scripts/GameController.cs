@@ -1932,6 +1932,18 @@ namespace Magi.LedgeBoardGame
                     ? _undoStack.Count > 0 && IsLocalSeatsTurn()
                     : _shadowSink != null && _pendingSubmissions == 0;
                 undoButton.interactable = canUndo && !_moveInProgress;
+
+                // The button's click handler routes to either OnUndoClicked's
+                // local-buffer pop or RequestTakeback depending on mode. The
+                // label follows the same split so the user sees what the
+                // button will actually do rather than the legacy name baked
+                // into the scene asset.
+                var label = undoButton.GetComponentInChildren<Text>(includeInactive: true);
+                if (label != null)
+                {
+                    string desired = networkMode == NetworkMode.Network ? "Takeback" : "Undo";
+                    if (label.text != desired) label.text = desired;
+                }
             }
             if (endTurnButton != null)
             {
