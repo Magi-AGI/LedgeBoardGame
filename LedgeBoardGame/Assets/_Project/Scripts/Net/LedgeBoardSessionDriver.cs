@@ -38,6 +38,20 @@ namespace Magi.LedgeBoardGame.Net
     public sealed class LedgeBoardSessionDriver : ILedgeSessionBinding, IAsyncDisposable
     {
         private readonly int _seatCount;
+        // Which seat indices this client actually binds transports for. In
+        // the original multi-seat/shadow flow a single driver owns all N
+        // seats; the single-seat Host/Join flow introduced for the lobby
+        // stores just one entry here. _sessions and _transports are kept
+        // parallel to _ownedSeats — position k in either list is the
+        // session for seat _ownedSeats[k]. OwnedIndexOf(seatIndex) does
+        // the lookup.
+        private readonly int[] _ownedSeats;
+        // When set, StartHostBackedAsync skips POST /session/open and
+        // attaches every owned seat via the secondary WebSocket ctor to
+        // this pre-known SessionId (lobby Join). When null, the first
+        // owned seat POSTs to open a fresh session (lobby Host or legacy
+        // multi-seat flow).
+        private readonly SessionId? _expectedSessionId;
         private readonly LedgeRulesAdapter _adapter = new LedgeRulesAdapter();
         private readonly LedgeGameModule _module = new LedgeGameModule();
         private Session _session;
@@ -53,6 +67,7 @@ namespace Magi.LedgeBoardGame.Net
         // and never await, so the lock is held briefly.
         private readonly object _lock = new object();
         private HttpClient _hostHttp;
+        private SessionId? _activeSessionId;
         private int _divergences;
         private int _matches;
         private int _disposed;
@@ -69,7 +84,19 @@ namespace Magi.LedgeBoardGame.Net
         public int Divergences => _divergences;
 
         public bool IsReady { get; private set; }
+        /// Total number of seats in the server-side session. For a single-
+        /// seat Host/Join client this is the lobby-selected player count
+        /// (so MagiSessionConfig.SeatCount matches what the host opens);
+        /// for the legacy multi-seat flow it equals OwnedSeats.Count.
         public int SeatCount => _seatCount;
+        /// The seat indices this driver binds transports for. Callers use
+        /// this to know which Submit(seatIndex, ...) calls will succeed.
+        public IReadOnlyList<int> OwnedSeats => _ownedSeats;
+        /// SessionId after a successful Start*/HostNew/JoinHosted. For
+        /// host flows this is the session the server just opened; for
+        /// join flows it's the (already-known) session we attached to.
+        /// Lobby UIs surface this as the shareable code for other players.
+        public SessionId? ActiveSessionId => _activeSessionId;
 
         /// Observer surface (ILedgeSessionObserver). Raised on the Unity main
         /// thread because each per-seat MagiSession dispatches these events
@@ -86,13 +113,57 @@ namespace Magi.LedgeBoardGame.Net
         public event Action<LedgeSessionTakebackReplyInfo> OnServerTakebackReply;
 
         public LedgeBoardSessionDriver(int seatCount)
+            : this(seatCount, FullRange(seatCount), null)
+        {
+        }
+
+        /// General ctor used by the single-seat Host/Join entry points
+        /// and the legacy full-range ctor above. ownedSeats selects which
+        /// seat indices this client binds sockets for; expectedSessionId
+        /// null means the first owned seat posts /session/open (host),
+        /// non-null means every owned seat attaches to an already-open
+        /// session (join). Legacy multi-seat shadow/host flows pass the
+        /// full 0..seatCount range with null expectedSessionId.
+        public LedgeBoardSessionDriver(int seatCount, int[] ownedSeats, SessionId? expectedSessionId)
         {
             var tempModule = new LedgeGameModule();
             if (seatCount < tempModule.MinSeats || seatCount > tempModule.MaxSeats)
                 throw new ArgumentOutOfRangeException(nameof(seatCount),
                     $"LedgeBoardSessionDriver requires {tempModule.MinSeats}-{tempModule.MaxSeats} seats (got {seatCount})");
+            if (ownedSeats == null || ownedSeats.Length == 0)
+                throw new ArgumentException("ownedSeats must name at least one seat", nameof(ownedSeats));
+            foreach (var s in ownedSeats)
+            {
+                if (s < 0 || s >= seatCount)
+                    throw new ArgumentOutOfRangeException(nameof(ownedSeats),
+                        $"owned seat {s} outside session range [0,{seatCount})");
+            }
             _seatCount = seatCount;
+            _ownedSeats = (int[])ownedSeats.Clone();
+            _expectedSessionId = expectedSessionId;
         }
+
+        /// Convenience: single-seat Host driver. This client opens a new
+        /// server session at StartHostBackedAsync time and attaches only
+        /// `ownedSeatIndex` (0 by default). The remaining seats are left
+        /// empty on the server side until other clients Join.
+        public static LedgeBoardSessionDriver ForHost(int seatCount, int ownedSeatIndex = 0)
+            => new LedgeBoardSessionDriver(seatCount, new[] { ownedSeatIndex }, null);
+
+        /// Convenience: single-seat Join driver. This client skips the
+        /// /session/open POST and attaches only `ownedSeatIndex` to the
+        /// already-open `sessionId` via the secondary WebSocket ctor.
+        public static LedgeBoardSessionDriver ForJoin(int seatCount, SessionId sessionId, int ownedSeatIndex)
+            => new LedgeBoardSessionDriver(seatCount, new[] { ownedSeatIndex }, sessionId);
+
+        private static int[] FullRange(int count)
+        {
+            var r = new int[count];
+            for (int i = 0; i < count; i++) r[i] = i;
+            return r;
+        }
+
+        private int OwnedIndexOf(int seatIndex) => Array.IndexOf(_ownedSeats, seatIndex);
 
         public async Task StartAsync(string ledgeSpecJson, CancellationToken ct)
         {
@@ -131,21 +202,21 @@ namespace Magi.LedgeBoardGame.Net
             // awaits use ConfigureAwait(false) without racing. The
             // per-iteration ct + _disposed guards let a dispose that lands
             // mid-start abort cleanly and tear down only what was built.
-            var localTransports = new List<IAsyncDisposable>(_seatCount);
-            var localSessions = new List<MagiSession<SpecGameState, LedgeAction>>(_seatCount);
+            var localTransports = new List<IAsyncDisposable>(_ownedSeats.Length);
+            var localSessions = new List<MagiSession<SpecGameState, LedgeAction>>(_ownedSeats.Length);
             try
             {
-                for (int i = 0; i < _seatCount; i++)
+                for (int k = 0; k < _ownedSeats.Length; k++)
                 {
                     ct.ThrowIfCancellationRequested();
                     if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
-                    int seatIndex = i;
+                    int seatIndex = _ownedSeats[k];
                     var transport = new InProcessMagiTransport<SpecGameState, LedgeAction>(_bus);
                     var session = new MagiSession<SpecGameState, LedgeAction>(transport);
                     WireSeatSession(seatIndex, session);
                     localTransports.Add(transport);
                     localSessions.Add(session);
-                    await session.ConnectAsync(magiConfig, new SeatId(i), ct).ConfigureAwait(false);
+                    await session.ConnectAsync(magiConfig, new SeatId(seatIndex), ct).ConfigureAwait(false);
                     if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
                 }
             }
@@ -178,6 +249,7 @@ namespace Magi.LedgeBoardGame.Net
                 }
                 throw new OperationCanceledException();
             }
+            _activeSessionId = sessionId;
             IsReady = true;
         }
 
@@ -222,26 +294,35 @@ namespace Magi.LedgeBoardGame.Net
             // of the async Add path. The per-iteration ct + _disposed
             // guards let a mid-start dispose abort cleanly, and the catch
             // block tears down whatever was built so nothing leaks.
-            var localTransports = new List<IAsyncDisposable>(_seatCount);
-            var localSessions = new List<MagiSession<SpecGameState, LedgeAction>>(_seatCount);
-            SessionId sharedSession = default;
+            var localTransports = new List<IAsyncDisposable>(_ownedSeats.Length);
+            var localSessions = new List<MagiSession<SpecGameState, LedgeAction>>(_ownedSeats.Length);
+            // sharedSession is populated either from the join-preset or
+            // from the first owned seat's /session/open response. Every
+            // subsequent owned seat attaches to it via the secondary
+            // WebSocket ctor so they all land on the same SessionRuntime
+            // on the server side.
+            SessionId sharedSession = _expectedSessionId ?? default;
             try
             {
-                for (int i = 0; i < _seatCount; i++)
+                for (int k = 0; k < _ownedSeats.Length; k++)
                 {
                     ct.ThrowIfCancellationRequested();
                     if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
-                    int seatIndex = i;
-                    WebSocketMagiTransport<SpecGameState, LedgeAction> transport = (i == 0)
-                        ? new WebSocketMagiTransport<SpecGameState, LedgeAction>(_hostHttp)
-                        : new WebSocketMagiTransport<SpecGameState, LedgeAction>(_hostHttp, baseUri, sharedSession);
+                    int seatIndex = _ownedSeats[k];
+                    bool useSecondaryCtor = _expectedSessionId.HasValue || k > 0;
+                    WebSocketMagiTransport<SpecGameState, LedgeAction> transport = useSecondaryCtor
+                        ? new WebSocketMagiTransport<SpecGameState, LedgeAction>(_hostHttp, baseUri, sharedSession)
+                        : new WebSocketMagiTransport<SpecGameState, LedgeAction>(_hostHttp);
                     var session = new MagiSession<SpecGameState, LedgeAction>(transport);
                     WireSeatSession(seatIndex, session);
                     localTransports.Add(transport);
                     localSessions.Add(session);
-                    await session.ConnectAsync(magiConfig, new SeatId(i), ct).ConfigureAwait(false);
+                    await session.ConnectAsync(magiConfig, new SeatId(seatIndex), ct).ConfigureAwait(false);
                     if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
-                    if (i == 0) sharedSession = session.Session;
+                    // First seat on the host-open path learns the session
+                    // id from OpenSessionResponse — capture it for the
+                    // secondary attaches and for ActiveSessionId.
+                    if (!_expectedSessionId.HasValue && k == 0) sharedSession = session.Session;
                 }
             }
             catch
@@ -273,7 +354,33 @@ namespace Magi.LedgeBoardGame.Net
                 }
                 throw new OperationCanceledException();
             }
+            _activeSessionId = sharedSession;
             IsReady = true;
+        }
+
+        /// Single-seat host entry for the lobby. Equivalent to constructing
+        /// with ForHost(seatCount, ownedSeatIndex) followed by
+        /// StartHostBackedAsync — exposed here for discoverability.
+        /// ActiveSessionId is populated after this completes and is the
+        /// code a joiner needs to call JoinHostedAsync.
+        public Task HostNewAsync(string baseUri, string ledgeSpecJson, CancellationToken ct)
+        {
+            if (_expectedSessionId.HasValue)
+                throw new InvalidOperationException(
+                    "HostNewAsync requires a driver built without an expected session id; use JoinHostedAsync or build the driver via ForHost.");
+            return StartHostBackedAsync(baseUri, ledgeSpecJson, ct);
+        }
+
+        /// Single-seat join entry for the lobby. Attaches one socket to
+        /// an already-open session via the secondary WebSocket ctor.
+        /// Driver must have been built via ForJoin (expected session id
+        /// set in ctor).
+        public Task JoinHostedAsync(string baseUri, string ledgeSpecJson, CancellationToken ct)
+        {
+            if (!_expectedSessionId.HasValue)
+                throw new InvalidOperationException(
+                    "JoinHostedAsync requires a driver built via ForJoin (expected session id).");
+            return StartHostBackedAsync(baseUri, ledgeSpecJson, ct);
         }
 
         private void WireSeatSession(int seatIndex, MagiSession<SpecGameState, LedgeAction> session)
@@ -323,20 +430,20 @@ namespace Magi.LedgeBoardGame.Net
 
         public bool SubmitTakeback(int seatIndex, int stepsRequested, string reason)
         {
-            if (!ValidateSeat(seatIndex, "takeback")) return false;
+            if (!TryResolveOwnedSeat(seatIndex, "takeback", out int idx)) return false;
             if (stepsRequested < 1)
             {
                 UnityEngine.Debug.LogError(
                     $"[takeback] submit rejected: stepsRequested={stepsRequested} must be >= 1");
                 return false;
             }
-            _sessions[seatIndex].SubmitTakeback(stepsRequested, reason);
+            _sessions[idx].SubmitTakeback(stepsRequested, reason);
             return true;
         }
 
         private void SubmitShadow(int seatIndex, SpecGameState localPostApplyState, LedgeAction action)
         {
-            if (!ValidateSeat(seatIndex, "shadow")) return;
+            if (!TryResolveOwnedSeat(seatIndex, "shadow", out int idx)) return;
             if (localPostApplyState == null)
             {
                 UnityEngine.Debug.LogError($"[shadow] submit rejected: seat {seatIndex} local post-apply state was null");
@@ -348,28 +455,37 @@ namespace Magi.LedgeBoardGame.Net
             // echo onto the OnPredictionMatched/OnPredictionDiverged
             // branches rather than the non-predicting OnStateAdvanced path.
             long localHash = _adapter.GetStateHash(localPostApplyState);
-            _sessions[seatIndex].Submit(action, localHash);
+            _sessions[idx].Submit(action, localHash);
         }
 
         private bool SubmitAuthoritative(int seatIndex, LedgeAction action)
         {
-            if (!ValidateSeat(seatIndex, "submit")) return false;
+            if (!TryResolveOwnedSeat(seatIndex, "submit", out int idx)) return false;
             // predictedHash=0 is the non-predicting path — submit-only mode
             // has no local mutation, so there is no post-apply state to hash
             // and the echo routes through OnStateAdvanced. The controller
             // then calls ApplyServerState to pick up the canonical state.
-            _sessions[seatIndex].Submit(action, 0L);
+            _sessions[idx].Submit(action, 0L);
             return true;
         }
 
-        private bool ValidateSeat(int seatIndex, string label)
+        private bool TryResolveOwnedSeat(int seatIndex, string label, out int ownedListIndex)
         {
+            ownedListIndex = -1;
             if (!IsReady || Volatile.Read(ref _disposed) != 0) return false;
             if (seatIndex < 0 || seatIndex >= _seatCount)
             {
                 UnityEngine.Debug.LogError($"[{label}] submit rejected: seat {seatIndex} out of range [0,{_seatCount})");
                 return false;
             }
+            int idx = OwnedIndexOf(seatIndex);
+            if (idx < 0)
+            {
+                UnityEngine.Debug.LogError(
+                    $"[{label}] submit rejected: seat {seatIndex} is not owned by this driver (owned: [{string.Join(",", _ownedSeats)}])");
+                return false;
+            }
+            ownedListIndex = idx;
             return true;
         }
 
@@ -412,7 +528,7 @@ namespace Magi.LedgeBoardGame.Net
             // refused the action). Log both explicitly so the reader can
             // tell whether the divergence is "server saw a different world"
             // vs "server disagrees with what the action should do."
-            var localAction = seatIndex >= 0 && seatIndex < _sessions.Count
+            var localAction = seatIndex >= 0 && seatIndex < _seatCount
                 ? $" submittingSeat={echo.SubmittingSeat.Value}"
                 : string.Empty;
             UnityEngine.Debug.LogError(
