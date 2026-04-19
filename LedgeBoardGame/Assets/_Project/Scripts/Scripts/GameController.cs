@@ -49,7 +49,7 @@ namespace Magi.LedgeBoardGame
         [Tooltip("Network mode only: seat index (0-based) this client controls. Actions submit for this seat and input is gated on IsLocalSeatsTurn. Ignored in Local/hot-seat.")]
         [SerializeField] private int networkLocalSeatIndex = 0;
         [Tooltip("Total seats in the match. Drives BuildDefaultRoster and must match the server-side SeatCount for Network mode. The lobby overrides this via ConfigureNetwork before Start runs.")]
-        [SerializeField, Range(2, 6)] private int seatCount = 2;
+        [SerializeField, Range(2, 8)] private int seatCount = 2;
 
         private GameState _gameState;
         private GameRules _rules;

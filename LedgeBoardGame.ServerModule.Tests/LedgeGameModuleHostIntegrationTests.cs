@@ -220,7 +220,7 @@ namespace Magi.LedgeBoardGame.ServerModule.Tests
                 Assert.That(echoedState.Config, Is.Not.Null,
                     "every echo must carry the spec-driven runtime config");
                 Assert.That(echoedState.Config.MinPlayers, Is.EqualTo(2));
-                Assert.That(echoedState.Config.MaxPlayers, Is.EqualTo(6));
+                Assert.That(echoedState.Config.MaxPlayers, Is.EqualTo(8));
             }
         }
     }

@@ -37,10 +37,10 @@ namespace Magi.LedgeBoardGame.Net
         [SerializeField] private GameController controller;
         [Tooltip("Default WebSocket-capable base URI for the MagiGameServer.Host launcher. The player can edit this in the overlay before clicking Go. Use http://localhost:5080 for a locally-running host; wss://play.magi-agi.org/ws for the prod deployment.")]
         [SerializeField] private string defaultHostBaseUri = "http://localhost:5080";
-        [Tooltip("Pre-seed for the Host mode seat count slider. Clamped to LedgeGameModule's 2..6 range by the overlay.")]
-        [SerializeField, Range(2, 6)] private int defaultSeatCount = 6;
+        [Tooltip("Pre-seed for the Host mode seat count slider. Clamped to LedgeGameModule's 2..8 range by the overlay.")]
+        [SerializeField, Range(2, 8)] private int defaultSeatCount = 6;
         [Tooltip("Pre-seed for the local seat index. Host defaults to 0; Join players should match whatever slot the host advertised.")]
-        [SerializeField, Range(0, 5)] private int defaultOwnedSeat = 0;
+        [SerializeField, Range(0, 7)] private int defaultOwnedSeat = 0;
         [Tooltip("Pre-seed for the Join session code. Empty until a host shares a code; leave blank at build time.")]
         [SerializeField] private string defaultSessionCode = "";
 
@@ -74,7 +74,7 @@ namespace Magi.LedgeBoardGame.Net
             // schedules Start only after the component is enabled, so we
             // get a clean "configure → enable → Start" ordering.
             if (controller != null) controller.enabled = false;
-            _seatCount = Mathf.Clamp(defaultSeatCount, 2, 6);
+            _seatCount = Mathf.Clamp(defaultSeatCount, 2, 8);
             _ownedSeat = Mathf.Clamp(defaultOwnedSeat, 0, _seatCount - 1);
             _sessionCode = defaultSessionCode ?? "";
             _hostBaseUri = string.IsNullOrEmpty(defaultHostBaseUri)
@@ -127,8 +127,8 @@ namespace Magi.LedgeBoardGame.Net
 
             if (_mode == LobbyMode.Host)
             {
-                GUILayout.Label($"Seats (2–6): {_seatCount}");
-                _seatCount = Mathf.RoundToInt(GUILayout.HorizontalSlider(_seatCount, 2f, 6f));
+                GUILayout.Label($"Seats (2–8): {_seatCount}");
+                _seatCount = Mathf.RoundToInt(GUILayout.HorizontalSlider(_seatCount, 2f, 8f));
                 if (_ownedSeat >= _seatCount) _ownedSeat = _seatCount - 1;
                 GUILayout.Label($"Your seat: {_ownedSeat} (0-based)");
                 _ownedSeat = Mathf.RoundToInt(GUILayout.HorizontalSlider(_ownedSeat, 0f, _seatCount - 1));
@@ -138,7 +138,7 @@ namespace Magi.LedgeBoardGame.Net
                 GUILayout.Label("Session code:");
                 _sessionCode = GUILayout.TextField(_sessionCode ?? "");
                 GUILayout.Label($"Expected seats (must match host): {_seatCount}");
-                _seatCount = Mathf.RoundToInt(GUILayout.HorizontalSlider(_seatCount, 2f, 6f));
+                _seatCount = Mathf.RoundToInt(GUILayout.HorizontalSlider(_seatCount, 2f, 8f));
                 if (_ownedSeat >= _seatCount) _ownedSeat = _seatCount - 1;
                 GUILayout.Label($"Your seat: {_ownedSeat} (0-based)");
                 _ownedSeat = Mathf.RoundToInt(GUILayout.HorizontalSlider(_ownedSeat, 0f, _seatCount - 1));

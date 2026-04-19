@@ -7,7 +7,7 @@
 
   "config": {
     "minPlayers": 2,
-    "maxPlayers": 6,
+    "maxPlayers": 8,
     "board": {
       "spaces": 49,
       "rings": [
