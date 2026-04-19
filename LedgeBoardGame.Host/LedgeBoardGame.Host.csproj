@@ -23,4 +23,13 @@
     <ProjectReference Include="..\LedgeBoardGame.ServerModule\LedgeBoardGame.ServerModule.csproj" />
   </ItemGroup>
 
+  <!--
+    The upstream MagiGameServer.Host ships an appsettings.json for its own
+    test harnesses. Publishing the launcher via ProjectReference copies it
+    into the launcher's output directory; if the launcher also carried an
+    appsettings.json, NETSDK1152 would fire on the duplicate. Deployment
+    relies on the upstream file (Logging + AllowedHosts) and injects
+    ASPNETCORE_URLS via the systemd unit.
+  -->
+
 </Project>
