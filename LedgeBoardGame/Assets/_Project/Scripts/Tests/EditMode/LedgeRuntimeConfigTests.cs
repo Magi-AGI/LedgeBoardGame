@@ -21,7 +21,7 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
             var config = LedgeRuntimeConfig.FromSpec(spec);
 
             Assert.AreEqual(2, config.MinPlayers);
-            Assert.AreEqual(4, config.MaxPlayers);
+            Assert.AreEqual(6, config.MaxPlayers);
 
             Assert.AreEqual(2, config.PlacementMinMoves);
             Assert.AreEqual(2, config.PlacementMaxMoves);

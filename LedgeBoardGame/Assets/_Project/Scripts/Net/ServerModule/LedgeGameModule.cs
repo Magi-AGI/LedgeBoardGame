@@ -38,7 +38,7 @@ namespace Magi.LedgeBoardGame.ServerModule
         public string GameId => "ledge-board";
         public string DisplayName => "Ledge Board Game";
         public int MinSeats => 2;
-        public int MaxSeats => 4;
+        public int MaxSeats => 6;
         public IRulesAdapter Rules { get; } = new LedgeRulesAdapter();
         public Type ActionType => typeof(LedgeAction);
         public Type StateType => typeof(SpecGameState);

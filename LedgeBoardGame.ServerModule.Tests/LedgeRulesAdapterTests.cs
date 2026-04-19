@@ -153,7 +153,7 @@ namespace Magi.LedgeBoardGame.ServerModule.Tests
 
             Assert.That(state.Config, Is.Not.Null, "spec-driven config must attach to initial state");
             Assert.That(state.Config.MinPlayers, Is.EqualTo(2));
-            Assert.That(state.Config.MaxPlayers, Is.EqualTo(4));
+            Assert.That(state.Config.MaxPlayers, Is.EqualTo(6));
             Assert.That(state.Config.PlacementMaxMoves, Is.GreaterThan(0),
                 "spec-driven placement budget must survive CreateInitialState");
 
