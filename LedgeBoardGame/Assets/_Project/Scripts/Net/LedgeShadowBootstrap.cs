@@ -74,6 +74,12 @@ namespace Magi.LedgeBoardGame.Net
             // keeps the Session/transport/MagiSession overhead out of those.
             if (FindAnyObjectByType<GameController>() == null) return;
             if (FindAnyObjectByType<LedgeShadowBootstrap>() != null) return;
+            // The Monday lobby drives its own driver lifecycle end-to-end
+            // (Host/Join ctors, Network-mode authority), so a parallel
+            // shadow driver would open a second in-process session and
+            // race the controller's AttachShadowSink. Skip the auto-spawn
+            // when a LedgeLobbyBootstrap is already wired into the scene.
+            if (FindAnyObjectByType<LedgeLobbyBootstrap>() != null) return;
             var go = new GameObject(nameof(LedgeShadowBootstrap));
             SceneManager.MoveGameObjectToScene(go, scene);
             go.AddComponent<LedgeShadowBootstrap>();

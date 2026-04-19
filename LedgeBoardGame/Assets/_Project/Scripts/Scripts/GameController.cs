@@ -48,6 +48,8 @@ namespace Magi.LedgeBoardGame
         [SerializeField] private NetworkMode networkMode = NetworkMode.Local;
         [Tooltip("Network mode only: seat index (0-based) this client controls. Actions submit for this seat and input is gated on IsLocalSeatsTurn. Ignored in Local/hot-seat.")]
         [SerializeField] private int networkLocalSeatIndex = 0;
+        [Tooltip("Total seats in the match. Drives BuildDefaultRoster and must match the server-side SeatCount for Network mode. The lobby overrides this via ConfigureNetwork before Start runs.")]
+        [SerializeField, Range(2, 6)] private int seatCount = 2;
 
         private GameState _gameState;
         private GameRules _rules;
@@ -442,9 +444,25 @@ namespace Magi.LedgeBoardGame
             return state;
         }
 
+        /// Lobby hook. Called before Start runs (LedgeLobbyBootstrap gates
+        /// GameController.enabled while the selector is up) to override the
+        /// inspector defaults with what the user picked. Throws if the
+        /// controller has already started — once _gameState exists the
+        /// roster is baked and switching seat counts mid-game is not a
+        /// supported path.
+        public void ConfigureNetwork(NetworkMode mode, int ownedSeatIndex, int totalSeats)
+        {
+            if (_gameState != null)
+                throw new System.InvalidOperationException(
+                    "GameController.ConfigureNetwork must run before Start — _gameState is already initialised.");
+            networkMode = mode;
+            networkLocalSeatIndex = ownedSeatIndex;
+            seatCount = totalSeats;
+        }
+
         private void Start()
         {
-            var players = Player.BuildDefaultRoster(2);
+            var players = Player.BuildDefaultRoster(seatCount);
 
             LedgeRuntimeConfig runtimeConfig = null;
             var useSpec = false;
