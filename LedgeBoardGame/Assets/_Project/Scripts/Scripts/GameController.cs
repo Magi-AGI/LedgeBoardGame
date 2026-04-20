@@ -93,6 +93,11 @@ namespace Magi.LedgeBoardGame
         // moment the state actually changes client-side. Null when no local
         // submission is in flight. Cleared on emit, on takeback, and on error.
         private string _pendingEchoNarration;
+        // Last (phase, playerId) shown via the phase banner. Null on first
+        // signal — subsequent signals compare against this to fire only when
+        // the turn or phase actually changes. Set by MaybeSignalPhaseBanner.
+        private GamePhase? _lastSignaledPhase;
+        private int? _lastSignaledPlayerId;
         private SpaceId? _pendingRetarget;
         private SpaceView _sourcePhantomView;
         // Reach map for the currently selected stack: key = space, value = hop distance
@@ -2291,6 +2296,41 @@ namespace Magi.LedgeBoardGame
             gameHud?.UpdateHud(_gameState);
             placementGhost?.Refresh(_gameState, _localSeatId);
             UpdateIdentityBadge();
+            MaybeSignalPhaseBanner();
+        }
+
+        /// Raises the StatusBanner (and writes one log line) the first time a
+        /// (phase, playerId) pair is seen, so a new turn or phase transition
+        /// is called out instead of silently flipping in the HUD. Dedupes via
+        /// _lastSignaledPhase/_lastSignaledPlayerId so idempotent repaints
+        /// (e.g. Network-mode echoes on an unchanged turn) don't spam.
+        private void MaybeSignalPhaseBanner()
+        {
+            if (_gameState == null || _gameState.GameOver) return;
+            var currentPhase = _gameState.CurrentPhase;
+            var currentPlayerId = _gameState.CurrentPlayerId;
+            if (_lastSignaledPhase == currentPhase
+                && _lastSignaledPlayerId == currentPlayerId)
+                return;
+
+            _lastSignaledPhase = currentPhase;
+            _lastSignaledPlayerId = currentPlayerId;
+
+            var player = _gameState.GetCurrentPlayer();
+            string who;
+            if (networkMode == NetworkMode.Network && currentPlayerId == _localSeatId)
+            {
+                who = "You";
+            }
+            else
+            {
+                who = player != null ? player.Name : $"Player {currentPlayerId}";
+            }
+
+            string action = currentPhase == GamePhase.Placement
+                ? "place one Light and one Dark"
+                : "make a move";
+            ShowBanner($"{who}: {action}.");
         }
 
         private void UpdateIdentityBadge()
