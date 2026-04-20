@@ -20,6 +20,7 @@
     <ProjectReference Include="..\LedgeBoardGame.Core\LedgeBoardGame.Core.csproj" />
     <ProjectReference Include="..\MagiGameServer.Contracts\MagiGameServer.Contracts.csproj" />
     <ProjectReference Include="..\MagiGameServer.Core\MagiGameServer.Core.csproj" />
+    <ProjectReference Include="..\MagiGameServer.Codec\MagiGameServer.Codec.csproj" />
   </ItemGroup>
 
   <!--

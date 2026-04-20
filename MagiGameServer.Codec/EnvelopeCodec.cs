@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using MagiGameServer.Contracts.Protocol;
@@ -28,6 +29,13 @@ namespace MagiGameServer.Codec
     /// is impossible (there's one set of options, not two).
     public static class EnvelopeCodec
     {
+        // Declared before Options so the Options field initializer — which
+        // calls ConfigureOptions → locks _converterLock — observes a
+        // fully-constructed list and lock. C# runs static field initializers
+        // in source order; inverting this would NRE on the very first call.
+        private static readonly List<JsonConverter> _externalConverters = new List<JsonConverter>();
+        private static readonly object _converterLock = new object();
+
         public static JsonSerializerOptions Options { get; } = BuildOptions();
 
         private static JsonSerializerOptions BuildOptions()
@@ -56,6 +64,40 @@ namespace MagiGameServer.Codec
             target.Converters.Add(new SeatIdConverter());
             target.Converters.Add(new ClientSeqConverter());
             target.Converters.Add(new ServerSeqConverter());
+            lock (_converterLock)
+            {
+                foreach (var c in _externalConverters) target.Converters.Add(c);
+            }
+        }
+
+        /// Game-specific JsonConverter registration seam. Called once per
+        /// converter type from the owning game module's constructor, which
+        /// runs at app startup (server: `new LedgeGameModule()` inside
+        /// registerModules; client: LedgeBoardSessionDriver ctor). Both
+        /// paths fire before the first Serialize/Deserialize on the static
+        /// Options instance, so adding to Options.Converters is safe —
+        /// STJ freezes options only on first use. Idempotent on converter
+        /// type: calling twice with a SpaceIdJsonConverter produces one
+        /// registration. Late calls (after first use) log to stderr and
+        /// drop silently rather than throw, so a mid-session bootstrap
+        /// failure degrades to "types serialize as defaults" rather than
+        /// "server crashes".
+        public static void AddExternalConverter(JsonConverter converter)
+        {
+            if (converter == null) throw new ArgumentNullException(nameof(converter));
+            lock (_converterLock)
+            {
+                var t = converter.GetType();
+                foreach (var c in _externalConverters)
+                    if (c.GetType() == t) return;
+                _externalConverters.Add(converter);
+                try { Options.Converters.Add(converter); }
+                catch (InvalidOperationException)
+                {
+                    Console.Error.WriteLine(
+                        $"[EnvelopeCodec] {t.Name} registered after options froze; wire shape for its type will fall back to STJ defaults.");
+                }
+            }
         }
 
         public static byte[] Serialize<T>(T value)

@@ -202,7 +202,7 @@ namespace Magi.LedgeBoardGame.Rules
                 var nextLevel = new Dictionary<SpaceId, int>();
                 foreach (var (u, budget) in frontier)
                 {
-                    foreach (var v in EnumerateSingleStepNeighbors(gameState, u, tone, u.Equals(from)))
+                    foreach (var v in EnumerateSingleStepNeighbors(gameState, u, tone, u.Equals(from), maxSteps))
                     {
                         int sameToneAtV = GetSameToneCount(gameState, v, tone);
                         int newBudget = budget - 1 + sameToneAtV;
@@ -267,7 +267,7 @@ namespace Magi.LedgeBoardGame.Rules
                     int uBudget = bestBudget[u];
                     int uClashes = bestClashes[u];
                     int uPickups = bestPickups[u];
-                    foreach (var v in EnumerateSingleStepNeighbors(gameState, u, tone, u.Equals(from)))
+                    foreach (var v in EnumerateSingleStepNeighbors(gameState, u, tone, u.Equals(from), maxSteps))
                     {
                         int sameToneAtV = GetSameToneCount(gameState, v, tone);
                         int oppositeAtV = GetOppositeToneCount(gameState, v, tone);
@@ -348,7 +348,7 @@ namespace Magi.LedgeBoardGame.Rules
             return tone == Tone.Light ? stack.DarkCount : stack.LightCount;
         }
 
-        private IEnumerable<SpaceId> EnumerateSingleStepNeighbors(GameState gameState, SpaceId current, Tone tone, bool isOriginalSource)
+        private IEnumerable<SpaceId> EnumerateSingleStepNeighbors(GameState gameState, SpaceId current, Tone tone, bool isOriginalSource, int maxSteps)
         {
             var board = gameState.GetBoard(current.BoardId);
             if (board == null) yield break;
@@ -356,15 +356,33 @@ namespace Magi.LedgeBoardGame.Rules
             foreach (var adj in board.GetAdjacentSpaces(current.Id))
                 yield return new SpaceId(current.BoardId, adj);
 
-            // Cross-board hops require the source space's stack to satisfy the 2-of-a-tone
-            // gate. From an intermediate pass-through that gate is evaluated against the
-            // intermediate's domain stack (not the traveling stack), so cross-board hops
-            // are only emitted from the original source — matching the single-step rule.
-            if (isOriginalSource && board.IsLedgeSpace(current.Id) && gameState.CanCrossBoard(current))
+            // Cross-board hops require the source's stack to satisfy the 2-of-a-tone gate.
+            // At the original source, the stack is exactly what's there now, so the static
+            // CanCrossBoard answer is correct. At an intermediate pass-through, the gate is
+            // evaluated post-arrival — the traveling stack lands first, then the cross-hop
+            // is taken from the combined stack. BFS approximates that arrival with the
+            // initial carry (maxSteps), which is a no-clash upper bound: preSame + maxSteps
+            // for same-tone, preOpp unchanged for opposite-tone. Over-show is bounded by
+            // the execution-time CanCrossBoard re-check on the real post-arrival stack, and
+            // the lex path search prefers clash-free routes that match this approximation.
+            if (!board.IsLedgeSpace(current.Id)) yield break;
+
+            bool canCross;
+            if (isOriginalSource)
             {
-                foreach (var cross in gameState.GetCrossBoardTargets(current))
-                    yield return cross;
+                canCross = gameState.CanCrossBoard(current);
             }
+            else
+            {
+                var stack = board.GetStack(current.Id);
+                int preSame = tone == Tone.Light ? stack.LightCount : stack.DarkCount;
+                int preOpp = tone == Tone.Light ? stack.DarkCount : stack.LightCount;
+                canCross = (preSame + maxSteps) >= 2 || preOpp >= 2;
+            }
+            if (!canCross) yield break;
+
+            foreach (var cross in gameState.GetCrossBoardTargets(current))
+                yield return cross;
         }
 
         public List<SpaceId> GetMovablePieces(GameState gameState, int playerId)
@@ -392,6 +410,11 @@ namespace Magi.LedgeBoardGame.Rules
 
             foreach (var move in gameState.CurrentTurnMoves)
             {
+                // Clear = the entering counter 1-to-1 clashed with an opposing
+                // counter and did not land, so the player has no control over
+                // what remains on the stack — even if opposing-tone survivors
+                // are still technically movable. Mirrors IsSpaceControlled.
+                if (move.Result == MoveResult.Clear) continue;
                 var board = gameState.GetBoard(move.To.BoardId);
                 if (board != null && board.BoardId != playerBoard?.BoardId)
                 {

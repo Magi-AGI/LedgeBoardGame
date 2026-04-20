@@ -25,6 +25,8 @@ namespace Magi.LedgeBoardGame.Board
         private BoardState _boardState;
         private string _ownerName;
         private Image _backgroundImage;
+        private Image _eliminatedOverlay;
+        private bool _isEliminated;
         private readonly Dictionary<int, SpaceView> _spaceViews = new Dictionary<int, SpaceView>();
 
         public BoardState BoardState => _boardState;
@@ -188,6 +190,43 @@ namespace Magi.LedgeBoardGame.Board
                 var stack = _boardState.GetStack(spaceId);
                 view.UpdateTokenDisplay(stack);
             }
+        }
+
+        /// Mark this board as owned by an eliminated player. The board stays
+        /// fully interactive — remaining counters can still be captured and
+        /// spaces still register for ledge-hop pathing — but a semi-transparent
+        /// grey overlay signals "this player is out". Called from the state-diff
+        /// hook, not an animation callback, so Network mode fires too.
+        public void SetEliminated(bool eliminated)
+        {
+            if (_isEliminated == eliminated && _eliminatedOverlay != null == eliminated) return;
+            _isEliminated = eliminated;
+            if (eliminated)
+            {
+                EnsureEliminatedOverlay();
+                if (_eliminatedOverlay != null) _eliminatedOverlay.enabled = true;
+            }
+            else if (_eliminatedOverlay != null)
+            {
+                _eliminatedOverlay.enabled = false;
+            }
+        }
+
+        private void EnsureEliminatedOverlay()
+        {
+            if (_eliminatedOverlay != null) return;
+            var go = new GameObject("EliminatedOverlay");
+            go.transform.SetParent(transform, false);
+            var rect = go.AddComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = Vector2.zero;
+            rect.sizeDelta = new Vector2(outerRadius * 2.2f, outerRadius * 2.2f);
+            _eliminatedOverlay = go.AddComponent<Image>();
+            _eliminatedOverlay.color = new Color(0.15f, 0.15f, 0.18f, 0.45f);
+            _eliminatedOverlay.raycastTarget = false;
+            go.transform.SetAsLastSibling();
         }
 
         public void HighlightValidMoves(List<SpaceId> spaces)

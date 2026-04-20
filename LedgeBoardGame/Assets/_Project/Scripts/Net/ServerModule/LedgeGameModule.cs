@@ -35,6 +35,16 @@ namespace Magi.LedgeBoardGame.ServerModule
         // no-spec local path (GameInitializer with no spec assigned).
         public const string SpecJsonOptionKey = "ledgeSpecJson";
 
+        public LedgeGameModule()
+        {
+            // Both the server host (Program.CreateApp → registerModules →
+            // new LedgeGameModule()) and the Unity client (single-seat
+            // LedgeBoardSessionDriver constructs one for MinSeats/MaxSeats
+            // probing) hit this ctor before any wire traffic, which is the
+            // window the codec accepts converter registrations in.
+            LedgeCodecInit.EnsureRegistered();
+        }
+
         public string GameId => "ledge-board";
         public string DisplayName => "Ledge Board Game";
         public int MinSeats => 2;

@@ -41,6 +41,15 @@
   <ItemGroup>
     <ProjectReference Include="..\LedgeBoardGame.Core\LedgeBoardGame.Core.csproj" />
     <ProjectReference Include="..\MagiGameServer.Contracts\MagiGameServer.Contracts.csproj" />
+    <!--
+      Added for the SpaceId JsonConverter that plugs into EnvelopeCodec.
+      STJ 8 won't bind readonly struct properties through a parameterised
+      ctor when the implicit parameterless ctor also exists (which is
+      always, for structs), so SpaceId needs an explicit converter. The
+      converter source lives in Net/ServerModule/LedgeCodecInit.cs and is
+      registered from LedgeGameModule's ctor.
+    -->
+    <ProjectReference Include="..\MagiGameServer.Codec\MagiGameServer.Codec.csproj" />
   </ItemGroup>
 
 </Project>

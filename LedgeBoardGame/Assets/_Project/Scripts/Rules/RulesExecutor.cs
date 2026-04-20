@@ -87,7 +87,15 @@ namespace Magi.LedgeBoardGame.Rules
         private static bool ApplyMove(GameRules rules, GameState gs, LedgeAction action)
         {
             var move = rules.MoveToken(gs, action.From, action.To, action.Tone);
-            return move != null;
+            if (move == null) return false;
+            // Mid-turn eliminations: a cross-board move can drop a second Dark
+            // counter onto a victim's center, dark-locking it. The local Unity
+            // path runs this pass from OnMoveTweenComplete; the server-auth path
+            // has to do it here so the echo carries the IsEliminated flip and
+            // any resulting last-player-standing win. ApplyOverflowCap is NOT
+            // run here — the 3-stack trim is an end-of-turn rule only.
+            gs.ApplyStateBasedEffects();
+            return true;
         }
 
         private static bool ApplyEndTurn(GameState gs)

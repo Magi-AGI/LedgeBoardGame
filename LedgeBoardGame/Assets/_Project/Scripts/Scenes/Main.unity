@@ -941,9 +941,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Magi.LedgeBoardGame::Magi.LedgeBoardGame.Board.MultiBoardLayout
   presenters: []
-  columns: 2
-  spacing: {x: 1000, y: 1000}
+  columns: 4
+  autoColumns: 1
+  spacing: {x: 1200, y: 1200}
   startOffset: {x: 0, y: 0}
+  mode: 0
+  comparisonSlotX: 550
 --- !u!1 &799211918
 GameObject:
   m_ObjectHideFlags: 0
@@ -1053,7 +1056,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Magi.LedgeBoardGame.Net::Magi.LedgeBoardGame.Net.LedgeLobbyBootstrap
   controller: {fileID: 306378764}
-  defaultHostBaseUri: http://localhost:5080
+  defaultHostBaseUri: https://play.magi-agi.org/ledge
   defaultSeatCount: 6
   defaultOwnedSeat: 0
   defaultSessionCode: 

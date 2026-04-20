@@ -35,8 +35,8 @@ namespace Magi.LedgeBoardGame.Net
         }
 
         [SerializeField] private GameController controller;
-        [Tooltip("Default WebSocket-capable base URI for the MagiGameServer.Host launcher. The player can edit this in the overlay before clicking Go. Use http://localhost:5080 for a locally-running host; wss://play.magi-agi.org/ws for the prod deployment.")]
-        [SerializeField] private string defaultHostBaseUri = "http://localhost:5080";
+        [Tooltip("Default WebSocket-capable base URI for the MagiGameServer.Host launcher. The player can edit this in the overlay before clicking Go. Use https://play.magi-agi.org/ledge for prod (nginx strips the /ledge prefix to the loopback LedgeBoardGame.Host); http://localhost:5080 for a local dev host.")]
+        [SerializeField] private string defaultHostBaseUri = "https://play.magi-agi.org/ledge";
         [Tooltip("Pre-seed for the Host mode seat count slider. Clamped to LedgeGameModule's 2..8 range by the overlay.")]
         [SerializeField, Range(2, 8)] private int defaultSeatCount = 6;
         [Tooltip("Pre-seed for the local seat index. Host defaults to 0; Join players should match whatever slot the host advertised.")]

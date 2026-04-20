@@ -386,10 +386,96 @@ namespace Magi.LedgeBoardGame
         private void ApplyServerStateAndRefresh(SpecGameState specState)
         {
             if (specState == null) return;
+            // Pre-apply snapshot for Network-mode state-diff narration. Local mode
+            // narrates from OnMoveTweenComplete / OnEndTurnClicked; Network mode
+            // only sees echoes here, so eliminations, game-over, and end-of-turn
+            // overflow trims would otherwise fire silently. Capture is cheap and
+            // only consumed when networkMode == Network, so gate is applied later.
+            var preEliminated = new HashSet<int>();
+            int? preCurrentPlayerId = null;
+            bool preGameOver = false;
+            Dictionary<int, (int light, int dark)> preEndingBoardStacks = null;
+            if (_gameState != null)
+            {
+                preCurrentPlayerId = _gameState.CurrentPlayerId;
+                preGameOver = _gameState.GameOver;
+                if (_gameState.Players != null)
+                {
+                    foreach (var p in _gameState.Players)
+                        if (p.IsEliminated) preEliminated.Add(p.Id);
+                }
+                var endingBoard = _gameState.Boards?.FirstOrDefault(b => b.PlayerId == _gameState.CurrentPlayerId);
+                if (endingBoard?.Spaces != null)
+                {
+                    preEndingBoardStacks = new Dictionary<int, (int, int)>();
+                    foreach (var kv in endingBoard.Spaces)
+                        preEndingBoardStacks[kv.Key] = (kv.Value.LightCount, kv.Value.DarkCount);
+                }
+            }
             ApplyServerState(specState);
+            if (networkMode == NetworkMode.Network)
+                NarrateServerStateDiff(preEliminated, preCurrentPlayerId, preGameOver, preEndingBoardStacks);
+            if (Application.isEditor)
+            {
+                var occ = new System.Text.StringBuilder();
+                if (_gameState?.Boards != null)
+                {
+                    foreach (var b in _gameState.Boards)
+                    {
+                        if (b?.Spaces == null) continue;
+                        foreach (var kv in b.Spaces)
+                        {
+                            if (kv.Value.LightCount == 0 && kv.Value.DarkCount == 0) continue;
+                            occ.Append($" {FormatSpace(new SpaceId(b.BoardId, kv.Key))}=L{kv.Value.LightCount}/D{kv.Value.DarkCount}");
+                        }
+                    }
+                }
+                int presenters = _boardPresenters?.Count ?? 0;
+                int tp = _gameState?.CurrentTurnPlacements?.Count ?? 0;
+                UnityEngine.Debug.Log($"[net] post-apply presenters={presenters} turnPlacements={tp} mip={_moveInProgress} occ={{{occ}}}");
+                if (_gameState?.CurrentTurnPlacements != null)
+                {
+                    foreach (var p in _gameState.CurrentTurnPlacements)
+                        UnityEngine.Debug.Log($"[net] placement in state: {p.Tone} at {FormatSpace(p.Target)}");
+                }
+            }
             if (_moveInProgress) return;
             RefreshBoards();
             UpdateStatusUI();
+
+            // Network mode: this echo is the only signal a given player gets
+            // that the board state changed, so re-apply highlights the same
+            // way OnPlacementTweenComplete does after a local tween in Local
+            // mode. Gate on IsLocalSeatsTurn so echoes from a remote player's
+            // action don't paint their targets on this client's board.
+            if (networkMode != NetworkMode.Network) return;
+            if (_gameState == null || _gameState.GameOver)
+            {
+                ClearHighlights();
+                return;
+            }
+            if (!IsLocalSeatsTurn())
+            {
+                ClearHighlights();
+                return;
+            }
+            if (_gameState.CurrentPhase == GamePhase.Placement)
+            {
+                HighlightPlacementTargets();
+            }
+            else
+            {
+                ClearHighlights();
+                // Network-mode auto-skip: Local mode fires this from
+                // OnMoveTweenComplete / the placement→movement hook, but
+                // Network-mode moves land here via the server echo instead,
+                // so the check has to run on every echo the local seat
+                // receives. OnEndTurnClicked's _pendingSubmissions gate keeps
+                // repeated echoes from double-submitting before the EndTurn
+                // echo rotates CurrentPlayerId off this seat.
+                if (!MaybeAutoSkipTurn())
+                    HighlightMovablePieces();
+            }
         }
 
         /// Replaces _gameState's mutable fields from an authoritative server
@@ -506,6 +592,14 @@ namespace Magi.LedgeBoardGame
                 }
             }
 
+            // Pan/zoom lives on the layout's own GameObject so it shares the
+            // RectTransform that holds every board. Auto-attach at runtime so
+            // existing scenes pick it up without a re-save.
+            if (multiBoardLayout.GetComponent<Board.MultiBoardPanZoom>() == null)
+            {
+                multiBoardLayout.gameObject.AddComponent<Board.MultiBoardPanZoom>();
+            }
+
             CreateBoardPresenters();
 
             EnsureInHandGhost();
@@ -591,13 +685,50 @@ namespace Magi.LedgeBoardGame
 
             RefreshBoards();
 
-            // Update multi-board layout positions if present
+            // Update multi-board layout positions if present. Local board is the
+            // one owned by this client's seat — comparison mode uses it as the
+            // fixed-left slot.
             if (multiBoardLayout != null)
             {
+                int localBoardId = ResolveLocalBoardId();
+                multiBoardLayout.SetLocalBoardId(localBoardId);
                 multiBoardLayout.Refresh();
             }
 
+            EnsureBoardViewHud();
+
             gameHud?.UpdateHud(_gameState);
+        }
+
+        private int ResolveLocalBoardId()
+        {
+            if (_gameState == null) return -1;
+            foreach (var board in _gameState.Boards)
+            {
+                if (board.PlayerId == _localSeatId) return board.BoardId;
+            }
+            return _gameState.Boards.Count > 0 ? _gameState.Boards[0].BoardId : -1;
+        }
+
+        private Board.BoardViewHud _boardViewHud;
+        private void EnsureBoardViewHud()
+        {
+            if (_boardViewHud != null) { _boardViewHud.Refresh(); return; }
+            if (multiBoardLayout == null) return;
+            var canvas = GetComponentInParent<Canvas>();
+            if (canvas == null)
+            {
+                foreach (var presenter in _boardPresenters.Values)
+                {
+                    canvas = presenter.GetComponentInParent<Canvas>();
+                    if (canvas != null) break;
+                }
+            }
+            if (canvas == null) return;
+            var go = new GameObject("BoardViewHudHost");
+            go.transform.SetParent(canvas.transform, false);
+            _boardViewHud = go.AddComponent<Board.BoardViewHud>();
+            _boardViewHud.Initialize(multiBoardLayout);
         }
 
         private void OnSpaceClicked(SpaceView view)
@@ -1175,11 +1306,15 @@ namespace Magi.LedgeBoardGame
                 var hopTarget = path[hop];
                 int hopLight = 0;
                 int hopDark = 0;
+                int landedLight = 0;
+                int landedDark = 0;
 
                 for (int i = 0; i < carriedLight; i++)
                 {
-                    if (_rules.MoveToken(speculative, hopOrigin, hopTarget, Tone.Light) == null) break;
+                    var resolved = _rules.MoveToken(speculative, hopOrigin, hopTarget, Tone.Light);
+                    if (resolved == null) break;
                     hopLight++;
+                    if (resolved.Result != MoveResult.Clear) landedLight++;
                     if (_shadowSink != null
                         && _shadowSink.SubmitMove(seatIndex, hopOrigin, hopTarget, Tone.Light))
                     {
@@ -1194,8 +1329,10 @@ namespace Magi.LedgeBoardGame
                 }
                 for (int i = 0; i < carriedDark; i++)
                 {
-                    if (_rules.MoveToken(speculative, hopOrigin, hopTarget, Tone.Dark) == null) break;
+                    var resolved = _rules.MoveToken(speculative, hopOrigin, hopTarget, Tone.Dark);
+                    if (resolved == null) break;
                     hopDark++;
+                    if (resolved.Result != MoveResult.Clear) landedDark++;
                     if (_shadowSink != null
                         && _shadowSink.SubmitMove(seatIndex, hopOrigin, hopTarget, Tone.Dark))
                     {
@@ -1210,6 +1347,14 @@ namespace Magi.LedgeBoardGame
                 }
 
                 if (hopLight + hopDark == 0) break;
+
+                // Clash-only hop: counters were submitted (server will echo the
+                // clash) but none of ours landed, so the player did not arrive
+                // at hopTarget and cannot continue the path from here. Matches
+                // IsSpaceControlled's Clear-excludes-control invariant; without
+                // this, lastReachedHop would drift forward to a space the
+                // player didn't actually reach and "partial" logs would lie.
+                if (landedLight + landedDark == 0) break;
 
                 // Next hop carries the full stack at hopTarget — post-clash,
                 // post-pickup. Reading from the speculative clone keeps this
@@ -1416,6 +1561,70 @@ namespace Magi.LedgeBoardGame
             }
         }
 
+        /// Network-mode counterpart to the Local-mode narration path. Diffs a
+        /// pre-apply snapshot against the newly-applied server state and emits
+        /// banners for new eliminations, game-over/winner, and — on end-of-turn
+        /// echoes — overflow trims on the ending player's board. Turn rotation
+        /// (preCurrentPlayerId != post.CurrentPlayerId) is the discriminator
+        /// for end-of-turn echoes; moves don't rotate the turn, so stack drops
+        /// on a move echo are pickups (not overflow) and must not narrate.
+        private void NarrateServerStateDiff(
+            HashSet<int> preEliminated,
+            int? preCurrentPlayerId,
+            bool preGameOver,
+            Dictionary<int, (int light, int dark)> preEndingBoardStacks)
+        {
+            if (_gameState == null) return;
+            var result = new StateBasedEffectsResult();
+            if (_gameState.Players != null)
+            {
+                foreach (var p in _gameState.Players)
+                {
+                    if (p.IsEliminated && !preEliminated.Contains(p.Id))
+                        result.NewlyEliminatedPlayerIds.Add(p.Id);
+                }
+            }
+            result.GameEnded = _gameState.GameOver && !preGameOver;
+            result.WinnerId = _gameState.WinnerId;
+
+            bool turnRotated = preCurrentPlayerId.HasValue
+                && preCurrentPlayerId.Value != _gameState.CurrentPlayerId;
+            Player endingPlayer = null;
+            if (turnRotated && preEndingBoardStacks != null)
+            {
+                int endingPlayerId = preCurrentPlayerId.Value;
+                var endingBoard = _gameState.Boards?.FirstOrDefault(b => b.PlayerId == endingPlayerId);
+                if (endingBoard?.Spaces != null)
+                {
+                    foreach (var kv in endingBoard.Spaces)
+                    {
+                        if (!preEndingBoardStacks.TryGetValue(kv.Key, out var pre)) continue;
+                        int lightDrop = pre.light - kv.Value.LightCount;
+                        int darkDrop = pre.dark - kv.Value.DarkCount;
+                        if (lightDrop > 0)
+                            result.OverflowTrims.Add(new OverflowTrim
+                            {
+                                Space = new SpaceId(endingBoard.BoardId, kv.Key),
+                                Tone = Tone.Light,
+                                RemovedCount = lightDrop
+                            });
+                        if (darkDrop > 0)
+                            result.OverflowTrims.Add(new OverflowTrim
+                            {
+                                Space = new SpaceId(endingBoard.BoardId, kv.Key),
+                                Tone = Tone.Dark,
+                                RemovedCount = darkDrop
+                            });
+                    }
+                }
+                endingPlayer = _gameState.Players?.FirstOrDefault(p => p.Id == endingPlayerId);
+            }
+
+            if (result.OverflowTrims.Count > 0)
+                NarrateOverflowCap(result, endingPlayer);
+            NarrateStateBasedEffects(result);
+        }
+
         private void NarrateStateBasedEffects(StateBasedEffectsResult result)
         {
             if (result == null || !result.HasAnyEffect) return;
@@ -1566,6 +1775,23 @@ namespace Magi.LedgeBoardGame
             foreach (var presenter in _boardPresenters.Values)
             {
                 presenter.UpdateView();
+            }
+            RefreshEliminatedOverlays();
+        }
+
+        /// Drives BoardPresenter.SetEliminated from the authoritative Player list.
+        /// Runs on every state refresh (local and Network) so elimination and any
+        /// rare un-elimination path stay in sync with the model. Board stays
+        /// playable — overlay is cosmetic only.
+        private void RefreshEliminatedOverlays()
+        {
+            if (_gameState == null) return;
+            foreach (var kvp in _boardPresenters)
+            {
+                var board = _gameState.GetBoard(kvp.Key);
+                if (board == null) continue;
+                var player = _gameState.Players.Find(p => p.Id == board.PlayerId);
+                kvp.Value.SetEliminated(player != null && player.IsEliminated);
             }
         }
 
