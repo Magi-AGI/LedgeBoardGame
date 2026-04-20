@@ -86,6 +86,12 @@ namespace Magi.LedgeBoardGame
         // stale local state. Incremented in Submit*; decremented in the
         // OnServer* handlers for the local seat. Unused in Local mode.
         private int _pendingSubmissions;
+        // Narration line to emit once the authoritative echo for this batch of
+        // network submissions lands. Local mode logs "placed/moved" at rule-
+        // apply time; Network mode deferred that to here so the log matches the
+        // moment the state actually changes client-side. Null when no local
+        // submission is in flight. Cleared on emit, on takeback, and on error.
+        private string _pendingEchoNarration;
         private SpaceId? _pendingRetarget;
         private SpaceView _sourcePhantomView;
         // Reach map for the currently selected stack: key = space, value = hop distance
@@ -268,6 +274,10 @@ namespace Magi.LedgeBoardGame
             // local seat here (observer events are per-seat-scoped).
             if (networkMode == NetworkMode.Network)
             {
+                // Drop any cached landing narration — the action was refused,
+                // so logging "X placed/moved ..." on the pending→0 transition
+                // would misrepresent the outcome.
+                _pendingEchoNarration = null;
                 ReleaseSubmissionIfLocal(info.SubscribingSeatIndex);
                 RefreshBoards();
                 UpdateStatusUI();
@@ -297,6 +307,10 @@ namespace Magi.LedgeBoardGame
                 // snap to post-rewind state).
                 ClearMovementSelection();
                 ClearHighlights();
+                // Drop any pending placed/moved narration — the action it
+                // described just got rewound, so logging it on the pending→0
+                // transition below would be false attribution.
+                _pendingEchoNarration = null;
                 ApplyServerStateAndRefresh(info.State);
                 LogEvent($"↶ takeback granted ({info.StepsRewound} step{(info.StepsRewound == 1 ? "" : "s")})");
             }
@@ -366,6 +380,16 @@ namespace Magi.LedgeBoardGame
             if (_pendingSubmissions > 0) _pendingSubmissions--;
             if (_pendingSubmissions == 0)
             {
+                // Post-echo landing narration. Submit-time already logged a
+                // "→ submit ..." line; this second log matches Local mode's
+                // "placed/moved" wording and confirms the action landed
+                // authoritatively. Multi-counter moves batch to a single log.
+                if (!string.IsNullOrEmpty(_pendingEchoNarration))
+                {
+                    LogEvent(_pendingEchoNarration);
+                    _pendingEchoNarration = null;
+                }
+
                 // UI was frozen while waiting for the authoritative echo.
                 // Re-enable interactive buttons now that the round-trip is
                 // done. Status/highlight refresh happens in
@@ -501,7 +525,15 @@ namespace Magi.LedgeBoardGame
             if (specState == null || _gameState == null) return;
             var inflated = GameState.FromSpecState(specState);
             if (inflated == null) return;
+            int priorBoardCount = _gameState.Boards.Count;
             _gameState.CopyFrom(inflated);
+            // JIP: CopyFrom grew Boards to match the server's roster. Spawn
+            // presenters for the newly appended boards — CreateBoardPresenters
+            // is idempotent and will skip ones we already instantiated.
+            if (_gameState.Boards.Count > priorBoardCount)
+            {
+                CreateBoardPresenters();
+            }
 
             // The snapshot's Config is authoritative, including when it is
             // null — a remote seat whose server runs without a spec must end
@@ -548,7 +580,14 @@ namespace Magi.LedgeBoardGame
 
         private void Start()
         {
-            var players = Player.BuildDefaultRoster(seatCount);
+            // Network mode must match the server's LedgeGameModule.CreateInitialState
+            // exactly (IsConnected=false for every seat) — the initial state hash
+            // is compared shadow-style on the first submit, and any mismatch fires
+            // a divergence log from the very first action. Local/hot-seat keeps
+            // the historical "everyone present" default.
+            var players = Player.BuildDefaultRoster(
+                seatCount,
+                initiallyConnected: networkMode != NetworkMode.Network);
 
             LedgeRuntimeConfig runtimeConfig = null;
             var useSpec = false;
@@ -661,8 +700,13 @@ namespace Magi.LedgeBoardGame
         {
             var presenterParent = multiBoardLayout != null ? multiBoardLayout.transform : transform;
 
+            // Idempotent: skip boards that already have a presenter so a JIP
+            // growth path (ApplyServerState detects Boards.Count grew, calls
+            // back in) only instantiates the new boards.
             foreach (var board in _gameState.Boards)
             {
+                if (_boardPresenters.ContainsKey(board.BoardId)) continue;
+
                 BoardPresenter presenterInstance;
 
                 if (boardPresenterPrefab != null)
@@ -872,6 +916,11 @@ namespace Magi.LedgeBoardGame
                 {
                     _pendingSubmissions++;
                     LogEvent($"{currentPlayer.Name} → submit place {toneToPlace} at {FormatSpace(target)}");
+                    // Cache the landed-narration now — by echo time the turn
+                    // may have rotated, so _gameState.GetCurrentPlayer() is
+                    // not a reliable attribution source. Emitted once the
+                    // last echo for this batch lands (see ReleaseSubmissionIfLocal).
+                    _pendingEchoNarration = $"{currentPlayer.Name} placed {toneToPlace} at {FormatSpace(target)}";
                     ClearHighlights();
                     RefreshUndoButton();
                 }
@@ -1376,6 +1425,13 @@ namespace Magi.LedgeBoardGame
                 LogEvent($"{mover.Name} → submit move " +
                          $"L{totalLightSubmitted}+D{totalDarkSubmitted} " +
                          $"{FormatSpace(from)}→{destination} hops={successfulHops}");
+                // Cache landed-narration keyed to mover.Name captured here —
+                // turn rotates on the EndTurn echo that arrives after the
+                // move echoes, so _gameState.GetCurrentPlayer() by emit time
+                // may no longer point at the mover.
+                _pendingEchoNarration = $"{mover.Name} moved " +
+                    $"{FormatStackCounts(totalLightSubmitted, totalDarkSubmitted)}: " +
+                    $"{FormatSpace(from)} → {FormatSpace(lastReachedHop)}";
             }
 
             // Clear the in-hand selection immediately — the player has
