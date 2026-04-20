@@ -41,6 +41,7 @@ namespace Magi.LedgeBoardGame
         [SerializeField] private Board.InHandGhost inHandGhost;
         [SerializeField] private Board.StatusBanner statusBanner;
         [SerializeField] private Board.StatusLog statusLog;
+        [SerializeField] private Board.IdentityBadge identityBadge;
         [Tooltip("When on, records placements/moves/turn-ends/undos to the on-screen log panel. Leave on for playtest/video; turn off to hide the panel during normal play.")]
         [SerializeField] private bool showEventLog = true;
         [SerializeField] private Tone defaultMovementTone = Tone.Light;
@@ -645,6 +646,7 @@ namespace Magi.LedgeBoardGame
             EnsurePlacementGhost();
             EnsureStatusBanner();
             EnsureStatusLog();
+            EnsureIdentityBadge();
 
             SpaceClickedEvent.Register(OnSpaceClicked);
 
@@ -1588,6 +1590,35 @@ namespace Magi.LedgeBoardGame
             statusLog = go.AddComponent<StatusLog>();
         }
 
+        private void EnsureIdentityBadge()
+        {
+            // Local mode's current-player rotates every turn, so a "you are
+            // Player N" badge would lie. The HUD's existing "Player: X" line
+            // is the honest affordance in hotseat; skip the badge entirely.
+            if (networkMode != NetworkMode.Network) return;
+            if (identityBadge != null) return;
+
+            var canvas = GetComponentInParent<Canvas>();
+            if (canvas == null)
+            {
+                foreach (var presenter in _boardPresenters.Values)
+                {
+                    canvas = presenter.GetComponentInParent<Canvas>();
+                    if (canvas != null) break;
+                }
+            }
+            if (canvas == null) return;
+
+            var go = new GameObject("IdentityBadge", typeof(RectTransform), typeof(CanvasGroup));
+            var rt = (RectTransform)go.transform;
+            rt.SetParent(canvas.transform, false);
+            // First child of the canvas so banner/log paint above it. The
+            // badge is a passive label — it must never eat clicks destined
+            // for a space below.
+            rt.SetAsFirstSibling();
+            identityBadge = go.AddComponent<IdentityBadge>();
+        }
+
         /// Runs SBE on the current state and narrates any eliminations or game-end. No-op
         /// during Placement phase per design — placement can't deadend or win by itself.
         private void RunStateBasedEffects()
@@ -2259,6 +2290,27 @@ namespace Magi.LedgeBoardGame
         {
             gameHud?.UpdateHud(_gameState);
             placementGhost?.Refresh(_gameState, _localSeatId);
+            UpdateIdentityBadge();
+        }
+
+        private void UpdateIdentityBadge()
+        {
+            if (identityBadge == null) return;
+            // Hotseat has no stable "you" — suppress the badge entirely.
+            if (networkMode != NetworkMode.Network)
+            {
+                identityBadge.SetVisible(false);
+                return;
+            }
+            if (_gameState == null)
+            {
+                identityBadge.SetVisible(false);
+                return;
+            }
+            var localPlayer = _gameState.Players?.FirstOrDefault(p => p.Id == _localSeatId);
+            var name = localPlayer != null ? localPlayer.Name : $"Player{_localSeatId}";
+            identityBadge.SetText($"You are {name}");
+            identityBadge.SetVisible(true);
         }
     }
 }
