@@ -2327,8 +2327,11 @@ namespace Magi.LedgeBoardGame
                 who = player != null ? player.Name : $"Player {currentPlayerId}";
             }
 
+            // Placement banner mentions stacking explicitly — it's legal but
+            // not otherwise signaled by the ripple (occupied spaces pulse
+            // the same as empty ones), and playtesters were missing it.
             string action = currentPhase == GamePhase.Placement
-                ? "place one Light and one Dark"
+                ? "place one Light and one Dark (stackable)"
                 : "make a move";
             ShowBanner($"{who}: {action}.");
         }

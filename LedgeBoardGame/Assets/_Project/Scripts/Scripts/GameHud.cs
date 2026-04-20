@@ -47,7 +47,12 @@ namespace Magi.LedgeBoardGame
             }
             else if (state.CurrentPhase == GamePhase.Placement)
             {
-                statusStr = "Place one Light and one Dark token.";
+                // Stacking is allowed: placing on an already-held space adds
+                // to the stack rather than being rejected. Surfacing that in
+                // the status line because the affordance isn't otherwise
+                // visible — the placement targets pulse uniformly for empty
+                // and occupied spaces.
+                statusStr = "Place one Light and one Dark. Same space stacks.";
             }
             else
             {
