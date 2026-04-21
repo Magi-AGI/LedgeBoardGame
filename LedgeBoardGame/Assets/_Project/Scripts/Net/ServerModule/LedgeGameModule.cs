@@ -28,7 +28,7 @@ namespace Magi.LedgeBoardGame.ServerModule
     /// through its own path (EnableDefaultCompileItems=false + explicit
     /// Compile Include) so the server host and the Unity in-process driver
     /// share one source of truth. Same pattern LedgeBoardGame.Core uses.
-    public sealed class LedgeGameModule : IGameModule
+    public sealed class LedgeGameModule : IGameModule, IActionSubmissionValidator
     {
         // Convention: pass the verbatim ledge spec JSON under this key in
         // GameConfig.Options to bind server adjudication to the same spec
@@ -226,6 +226,32 @@ namespace Magi.LedgeBoardGame.ServerModule
             // still sees the same runtime config the session opened with.
             next.Config = spec.Config;
             return next;
+        }
+
+        /// Pre-Apply check: SetDisplayName must target the submitting seat's
+        /// own player slot — a client can only rename itself, not other
+        /// seats. Without this guard an adversarial client could clobber
+        /// another player's display name every turn. Place/Move/EndTurn
+        /// carry no PlayerId and are already constrained by the
+        /// CurrentTurnSeat gate inside RulesExecutor, so they don't need a
+        /// validator pass here.
+        ///
+        /// Reason codes are snake_case per IActionSubmissionValidator's
+        /// contract so clients can branch on them without parsing
+        /// free-form messages.
+        public string ValidateSubmission(SeatId submittingSeat, object action)
+        {
+            if (!(action is LedgeAction la)) return null;
+            if (la.Kind != LedgeActionKind.SetDisplayName) return null;
+            // BuildDefaultRoster seeds playerId = seatIndex + 1. Same
+            // mapping SetSeatPresence uses above — keep the two paths in
+            // lockstep so a future roster change updates both or neither.
+            int expectedPlayerId = submittingSeat.Value + 1;
+            if (la.PlayerId != expectedPlayerId)
+            {
+                return "display_name_not_owned";
+            }
+            return null;
         }
 
         public static GameConfig DefaultConfig(int seatCount = 2, IReadOnlyDictionary<string, string> options = null)

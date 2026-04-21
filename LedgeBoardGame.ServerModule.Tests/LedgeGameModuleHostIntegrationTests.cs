@@ -300,6 +300,58 @@ namespace Magi.LedgeBoardGame.ServerModule.Tests
         }
 
         [Test]
+        public void ValidateSubmission_SetDisplayName_TargetingOwnSeatIsAccepted()
+        {
+            // BuildDefaultRoster assigns playerId = seatIndex + 1. Seat 0's
+            // own player is Id=1 — a SetDisplayName carrying Id=1 from seat
+            // 0 is the only shape the server should accept without a
+            // cross-cutting rejection.
+            var module = new LedgeGameModule();
+            var action = LedgeAction.SetDisplayName(playerId: 1, displayName: "Alice");
+            var rejection = module.ValidateSubmission(new SeatId(0), action);
+            Assert.That(rejection, Is.Null, "seat-owned SetDisplayName must pass validation");
+        }
+
+        [Test]
+        public void ValidateSubmission_SetDisplayName_TargetingOtherSeatIsRejected()
+        {
+            // Attack shape: seat 0 (playerId=1) tries to rename seat 1's
+            // player (playerId=2). Without the validator, RulesExecutor's
+            // ApplySetDisplayName gates only on playerId > 0 and target
+            // existence, so an adversarial client could clobber any
+            // roster entry every turn.
+            var module = new LedgeGameModule();
+            var action = LedgeAction.SetDisplayName(playerId: 2, displayName: "Mallory");
+            var rejection = module.ValidateSubmission(new SeatId(0), action);
+            Assert.That(rejection, Is.EqualTo("display_name_not_owned"),
+                "cross-seat rename must be rejected with the documented snake_case reason");
+        }
+
+        [Test]
+        public void ValidateSubmission_NonSetDisplayName_PassesThrough()
+        {
+            // Validator is scoped to SetDisplayName only — Place/Move/EndTurn
+            // carry no PlayerId and are already gated by the CurrentTurnSeat
+            // rule inside RulesExecutor. Returning null here lets Apply run
+            // its normal rules-layer checks without a duplicate gate.
+            var module = new LedgeGameModule();
+            var place = LedgeAction.PlaceToken(new SpaceId(0, 0), Tone.Light);
+            Assert.That(module.ValidateSubmission(new SeatId(0), place), Is.Null);
+            Assert.That(module.ValidateSubmission(new SeatId(1), LedgeAction.EndTurn()), Is.Null);
+        }
+
+        [Test]
+        public void ValidateSubmission_NonLedgeAction_PassesThrough()
+        {
+            // Defensive: if some other module's action type somehow lands
+            // here (e.g. future multi-module routing bug), the validator
+            // should no-op rather than falsely reject.
+            var module = new LedgeGameModule();
+            Assert.That(module.ValidateSubmission(new SeatId(0), new object()), Is.Null);
+            Assert.That(module.ValidateSubmission(new SeatId(0), null), Is.Null);
+        }
+
+        [Test]
         public void CreateSessionFromSpecOptions_CarriesConfigIntoEveryEcho()
         {
             // Codex reviewer blocker: spec-driven clients must see spec-driven rules

@@ -512,6 +512,21 @@ namespace MagiGameServer.Host.Session
                 return;
             }
 
+            // Optional per-module submission validation. Catches
+            // cross-cutting "this seat is not allowed to submit this
+            // action" cases that the rules layer can't see (envelope.Seat
+            // isn't threaded into IRulesAdapter.Apply). Modules that
+            // don't implement the hook skip this step.
+            if (_module is IActionSubmissionValidator validator)
+            {
+                var rejection = validator.ValidateSubmission(seat, envelope.Action);
+                if (!string.IsNullOrEmpty(rejection))
+                {
+                    SendError(seat, rejection, $"Action rejected by module: {rejection}", envelope.Seq);
+                    return;
+                }
+            }
+
             SessionApplyResult result;
             try
             {
