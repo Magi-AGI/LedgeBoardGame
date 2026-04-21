@@ -50,6 +50,12 @@ namespace MagiGameServer.Host.Session
         // lookups and resist future refactors that might introduce
         // additional writers.
         private readonly ConcurrentDictionary<int, string> _seatOwners = new ConcurrentDictionary<int, string>();
+        // Highest ClientSeq the dispatcher has already processed for each
+        // seat. Retransmits (envelope.Seq <= last) bounce with
+        // "duplicate_seq" so the client's dispatcher retires its optimistic
+        // entry, and a double-delivered frame can't mutate state twice.
+        // Dispatcher-thread only; plain Dictionary is fine.
+        private readonly Dictionary<int, long> _lastAppliedSeqBySeat = new Dictionary<int, long>();
         private readonly Task _dispatcherTask;
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
 
@@ -491,6 +497,21 @@ namespace MagiGameServer.Host.Session
                 return;
             }
 
+            // Per-seat ClientSeq idempotency. Anything at-or-below the last
+            // seq we've already consumed is a retransmit or an
+            // out-of-order stale frame — bounce it with the duplicate seq
+            // as AckedSeq so the client's dispatcher retires the matching
+            // optimistic entry. Applies pre-Apply so duplicates never
+            // mutate state twice.
+            if (_lastAppliedSeqBySeat.TryGetValue(seat.Value, out var lastSeq)
+                && envelope.Seq.Value <= lastSeq)
+            {
+                SendError(seat, "duplicate_seq",
+                    $"seq {envelope.Seq.Value} already processed (last={lastSeq})",
+                    envelope.Seq);
+                return;
+            }
+
             SessionApplyResult result;
             try
             {
@@ -502,6 +523,13 @@ namespace MagiGameServer.Host.Session
                 SendError(seat, "apply_failed", ex.Message, envelope.Seq);
                 return;
             }
+
+            // Record the seq *after* a successful dispatch regardless of
+            // outcome — Applied/Rejected/Desynced all consume the
+            // submission and the client won't resubmit the same seq in
+            // normal operation; any later frame carrying this seq is a
+            // retransmit.
+            _lastAppliedSeqBySeat[seat.Value] = envelope.Seq.Value;
 
             if (result.Outcome == ApplyOutcome.Desynced)
             {

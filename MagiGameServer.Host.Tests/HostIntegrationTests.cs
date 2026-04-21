@@ -560,6 +560,101 @@ namespace MagiGameServer.Host.Tests
             await ws1.CloseAsync(WebSocketCloseStatus.NormalClosure, null, cts.Token);
         }
 
+        // ClientSeq idempotency: a retransmit with an already-consumed
+        // seq must not mutate state twice. The server bounces the
+        // duplicate as an ErrorEnvelope(code=duplicate_seq, AckedSeq=dup)
+        // so the client's dispatcher can retire the retransmitted
+        // optimistic entry; the canonical revision stays put.
+        [Test]
+        public async Task DuplicateSeq_RejectedWithoutMutatingState()
+        {
+            var session = await OpenAsync(seatCount: 2);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            var ws0 = await ConnectAsync(session.Session, 0, cts.Token);
+            await ReceiveFrameAsync(ws0, cts.Token); // JoinSnapshot
+
+            await SendActionAsync(ws0, session.Session, 0, seq: 1, delta: 4, predictedHash: 0, cts.Token);
+            var firstEcho = await ReceiveFrameAsync(ws0, cts.Token);
+            Assert.That(firstEcho.Kind, Is.EqualTo(ServerFrameKind.StateEcho));
+            Assert.That(firstEcho.Echo.Revision.Value, Is.EqualTo(1));
+            Assert.That(firstEcho.Echo.State.Value, Is.EqualTo(4));
+
+            // Resend the identical envelope (same seq, same delta).
+            await SendActionAsync(ws0, session.Session, 0, seq: 1, delta: 4, predictedHash: 0, cts.Token);
+            var duplicateResp = await ReceiveFrameAsync(ws0, cts.Token);
+            Assert.That(duplicateResp.Kind, Is.EqualTo(ServerFrameKind.Error));
+            Assert.That(duplicateResp.Error.Code, Is.EqualTo("duplicate_seq"));
+            Assert.That(duplicateResp.Error.AckedSeq.Value, Is.EqualTo(1),
+                "duplicate response must carry the duplicate seq as AckedSeq so the client can retire its optimistic entry");
+
+            // Confirm state didn't mutate by issuing a fresh seq=2.
+            await SendActionAsync(ws0, session.Session, 0, seq: 2, delta: 1, predictedHash: 0, cts.Token);
+            var third = await ReceiveFrameAsync(ws0, cts.Token);
+            Assert.That(third.Kind, Is.EqualTo(ServerFrameKind.StateEcho));
+            Assert.That(third.Echo.Revision.Value, Is.EqualTo(2),
+                "revision only advances for the duplicate-seq case by 0; seq=2 brings it to 2 total");
+            Assert.That(third.Echo.State.Value, Is.EqualTo(5),
+                "state = 4 (from seq=1) + 1 (from seq=2); the duplicate did not add another 4");
+
+            await ws0.CloseAsync(WebSocketCloseStatus.NormalClosure, null, cts.Token);
+        }
+
+        // Stale-seq dedup: a seq strictly lower than the last-applied one
+        // is treated the same as an exact duplicate — both indicate the
+        // client's dispatcher got out of sync with the canonical counter.
+        [Test]
+        public async Task StaleSeq_BelowLastApplied_RejectedAsDuplicate()
+        {
+            var session = await OpenAsync(seatCount: 2);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            var ws0 = await ConnectAsync(session.Session, 0, cts.Token);
+            await ReceiveFrameAsync(ws0, cts.Token); // JoinSnapshot
+
+            await SendActionAsync(ws0, session.Session, 0, seq: 3, delta: 2, predictedHash: 0, cts.Token);
+            await ReceiveFrameAsync(ws0, cts.Token); // echo for seq=3
+
+            await SendActionAsync(ws0, session.Session, 0, seq: 2, delta: 2, predictedHash: 0, cts.Token);
+            var stale = await ReceiveFrameAsync(ws0, cts.Token);
+            Assert.That(stale.Kind, Is.EqualTo(ServerFrameKind.Error));
+            Assert.That(stale.Error.Code, Is.EqualTo("duplicate_seq"));
+            Assert.That(stale.Error.AckedSeq.Value, Is.EqualTo(2));
+
+            await ws0.CloseAsync(WebSocketCloseStatus.NormalClosure, null, cts.Token);
+        }
+
+        // Per-seat scoping: seat 0 and seat 1 maintain independent seq
+        // counters. A seq=1 submission from seat 1 must not be rejected
+        // just because seat 0 has already submitted seq=1.
+        [Test]
+        public async Task DuplicateSeq_IsPerSeat_NotPerSession()
+        {
+            var session = await OpenAsync(seatCount: 2);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            var ws0 = await ConnectAsync(session.Session, 0, cts.Token);
+            var ws1 = await ConnectAsync(session.Session, 1, cts.Token);
+            await ReceiveFrameAsync(ws0, cts.Token); // JoinSnapshot
+            await ReceiveFrameAsync(ws1, cts.Token); // JoinSnapshot
+
+            await SendActionAsync(ws0, session.Session, 0, seq: 1, delta: 2, predictedHash: 0, cts.Token);
+            await ReceiveFrameAsync(ws0, cts.Token); // own echo
+            await ReceiveFrameAsync(ws1, cts.Token); // broadcast
+
+            // Seat 1 uses seq=1 — must be accepted, not deduped.
+            await SendActionAsync(ws1, session.Session, 1, seq: 1, delta: 3, predictedHash: 0, cts.Token);
+            var seat1Echo = await ReceiveFrameAsync(ws1, cts.Token);
+            Assert.That(seat1Echo.Kind, Is.EqualTo(ServerFrameKind.StateEcho),
+                "seq counters are per-seat; seat 1's seq=1 must not collide with seat 0's");
+            Assert.That(seat1Echo.Echo.Revision.Value, Is.EqualTo(2));
+            Assert.That(seat1Echo.Echo.State.Value, Is.EqualTo(5));
+            await ReceiveFrameAsync(ws0, cts.Token); // broadcast to seat 0
+
+            await ws0.CloseAsync(WebSocketCloseStatus.NormalClosure, null, cts.Token);
+            await ws1.CloseAsync(WebSocketCloseStatus.NormalClosure, null, cts.Token);
+        }
+
         // GET /session/{id}/state — read-only snapshot endpoint. Must
         // reflect current canonical state, route through the dispatcher
         // so it never races an in-flight Apply, and stay consistent with
