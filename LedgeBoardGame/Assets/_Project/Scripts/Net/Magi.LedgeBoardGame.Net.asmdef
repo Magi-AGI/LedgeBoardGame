@@ -4,7 +4,8 @@
     "references": [
         "Magi.LedgeBoardGame",
         "Magi.UnityTools",
-        "Magi.UnityTools.Net"
+        "Magi.UnityTools.Net",
+        "Unity.InputSystem"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

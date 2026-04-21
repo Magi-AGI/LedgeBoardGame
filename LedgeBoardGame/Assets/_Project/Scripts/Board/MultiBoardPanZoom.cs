@@ -52,14 +52,16 @@ namespace Magi.LedgeBoardGame.Board
                 FitToViewport(presenters);
             }
 
-            // Comparison view is meant to present exactly two boards at a
-            // fixed, optimal zoom — let FitToViewport pick the scale and
-            // suppress pan/zoom so players can't drift away from the
-            // side-by-side frame. Bird's-eye keeps the free-form controls.
+            // Comparison view keeps its canonical fit — suppress zoom and
+            // hotkey-refit so players can't drift off the side-by-side
+            // frame. Pan stays available either way: in playtest Lake
+            // reported being able to zoom but not slide the board around,
+            // so the minimum useful inspection gesture is drag-to-pan
+            // regardless of mode.
+            HandlePan();
             if (locked) return;
 
             HandleZoom();
-            HandlePan();
             HandleHotkeys(presenters);
         }
 

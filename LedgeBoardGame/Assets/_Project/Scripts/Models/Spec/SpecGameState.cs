@@ -49,6 +49,12 @@ namespace Magi.LedgeBoardGame.Models.Spec
         public string Name { get; set; }
         public int BoardId { get; set; }
         public bool IsEliminated { get; set; }
+        // JIP/LIP presence — travels with SpecGameState so a mid-session
+        // snapshot delivered to a reconnecting client carries the full
+        // seat-occupancy picture. Default true keeps existing persisted
+        // states (and tests) that predate this field behaving as if all
+        // seats are present; network sessions override explicitly.
+        public bool IsConnected { get; set; } = true;
     }
 
     public class SpecLedgeData

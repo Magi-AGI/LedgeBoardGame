@@ -52,6 +52,11 @@ namespace Magi.LedgeBoardGame.Net
         // owned seat POSTs to open a fresh session (lobby Host or legacy
         // multi-seat flow).
         private readonly SessionId? _expectedSessionId;
+        // When true, the attach path calls MagiSession.ConnectAsync(config, ct)
+        // (server-claim) instead of the explicit-seat overload, then backfills
+        // _ownedSeats[0] with the seat the server handed out. Only makes sense
+        // with a single-entry _ownedSeats (the Host/Join lobby flow).
+        private readonly bool _useServerClaim;
         private readonly LedgeRulesAdapter _adapter = new LedgeRulesAdapter();
         private readonly LedgeGameModule _module = new LedgeGameModule();
         private Session _session;
@@ -71,6 +76,14 @@ namespace Magi.LedgeBoardGame.Net
         private int _divergences;
         private int _matches;
         private int _disposed;
+        // -1 until the first JoinSnapshot arrives; then latched to the
+        // server-authoritative seat count (Players.Count on the projected
+        // state). Joiners connect with a placeholder _seatCount from the
+        // lobby inspector and can't trust that value — the host may have
+        // opened a smaller or larger session. This field carries the
+        // real number so the lobby can reconfigure GameController with
+        // the correct seat count before enabling it.
+        private int _observedSeatCount = -1;
 
         /// Running count of submissions whose local and server hashes agreed.
         /// Exposed for inspector visibility and editor-time diagnostics —
@@ -84,11 +97,21 @@ namespace Magi.LedgeBoardGame.Net
         public int Divergences => _divergences;
 
         public bool IsReady { get; private set; }
-        /// Total number of seats in the server-side session. For a single-
-        /// seat Host/Join client this is the lobby-selected player count
-        /// (so MagiSessionConfig.SeatCount matches what the host opens);
-        /// for the legacy multi-seat flow it equals OwnedSeats.Count.
-        public int SeatCount => _seatCount;
+        /// Total number of seats in the server-side session. Once the first
+        /// JoinSnapshot has arrived this prefers the server-authoritative
+        /// count projected into the state (SpecGameState.Players.Count),
+        /// so joiners get the truth even if their lobby passed a stale
+        /// placeholder at construction. Before any snapshot arrives, falls
+        /// back to the ctor value so Host flows — which open the session
+        /// with exactly this number — still read a sensible value during
+        /// StartHostBackedAsync.
+        public int SeatCount => _observedSeatCount > 0 ? _observedSeatCount : _seatCount;
+
+        /// -1 until the first JoinSnapshot has been ingested by the driver;
+        /// afterwards the server-authoritative seat count. Lobbies reading
+        /// this directly can distinguish "not yet connected" from "connected
+        /// with N seats" — SeatCount collapses that distinction.
+        public int ObservedSeatCount => _observedSeatCount;
         /// The seat indices this driver binds transports for. Callers use
         /// this to know which Submit(seatIndex, ...) calls will succeed.
         public IReadOnlyList<int> OwnedSeats => _ownedSeats;
@@ -125,6 +148,11 @@ namespace Magi.LedgeBoardGame.Net
         /// session (join). Legacy multi-seat shadow/host flows pass the
         /// full 0..seatCount range with null expectedSessionId.
         public LedgeBoardSessionDriver(int seatCount, int[] ownedSeats, SessionId? expectedSessionId)
+            : this(seatCount, ownedSeats, expectedSessionId, useServerClaim: false)
+        {
+        }
+
+        private LedgeBoardSessionDriver(int seatCount, int[] ownedSeats, SessionId? expectedSessionId, bool useServerClaim)
         {
             var tempModule = new LedgeGameModule();
             if (seatCount < tempModule.MinSeats || seatCount > tempModule.MaxSeats)
@@ -132,6 +160,9 @@ namespace Magi.LedgeBoardGame.Net
                     $"LedgeBoardSessionDriver requires {tempModule.MinSeats}-{tempModule.MaxSeats} seats (got {seatCount})");
             if (ownedSeats == null || ownedSeats.Length == 0)
                 throw new ArgumentException("ownedSeats must name at least one seat", nameof(ownedSeats));
+            if (useServerClaim && ownedSeats.Length != 1)
+                throw new ArgumentException("server-claim mode requires exactly one owned seat (the claim path binds a single transport)",
+                    nameof(ownedSeats));
             foreach (var s in ownedSeats)
             {
                 if (s < 0 || s >= seatCount)
@@ -141,6 +172,7 @@ namespace Magi.LedgeBoardGame.Net
             _seatCount = seatCount;
             _ownedSeats = (int[])ownedSeats.Clone();
             _expectedSessionId = expectedSessionId;
+            _useServerClaim = useServerClaim;
         }
 
         /// Convenience: single-seat Host driver. This client opens a new
@@ -155,6 +187,15 @@ namespace Magi.LedgeBoardGame.Net
         /// already-open `sessionId` via the secondary WebSocket ctor.
         public static LedgeBoardSessionDriver ForJoin(int seatCount, SessionId sessionId, int ownedSeatIndex)
             => new LedgeBoardSessionDriver(seatCount, new[] { ownedSeatIndex }, sessionId);
+
+        /// Zero-config Join driver: no seat picker. The client attaches to
+        /// `sessionId` and lets the server claim the lowest free seat
+        /// (ClaimAndAttachAsync). Read OwnedSeats[0] after JoinClaimAsync
+        /// completes to learn which seat the lobby landed on — callers
+        /// typically feed that into GameController.ConfigureNetwork once
+        /// the connect resolves.
+        public static LedgeBoardSessionDriver ForJoinClaim(int seatCount, SessionId sessionId)
+            => new LedgeBoardSessionDriver(seatCount, new[] { 0 }, sessionId, useServerClaim: true);
 
         private static int[] FullRange(int count)
         {
@@ -314,11 +355,27 @@ namespace Magi.LedgeBoardGame.Net
                         ? new WebSocketMagiTransport<SpecGameState, LedgeAction>(_hostHttp, baseUri, sharedSession)
                         : new WebSocketMagiTransport<SpecGameState, LedgeAction>(_hostHttp);
                     var session = new MagiSession<SpecGameState, LedgeAction>(transport);
-                    WireSeatSession(seatIndex, session);
-                    localTransports.Add(transport);
-                    localSessions.Add(session);
-                    await session.ConnectAsync(magiConfig, new SeatId(seatIndex), ct).ConfigureAwait(false);
-                    if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
+                    if (_useServerClaim)
+                    {
+                        // Server-claim: no seat is known up front. ConnectAsync
+                        // opens+claims, and we wire events once session.Seat
+                        // reports the claimed index so event routing keys off
+                        // the real seat rather than the placeholder _ownedSeats[0].
+                        localTransports.Add(transport);
+                        localSessions.Add(session);
+                        await session.ConnectAsync(magiConfig, ct).ConfigureAwait(false);
+                        if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
+                        _ownedSeats[k] = session.Seat.Value;
+                        WireSeatSession(session.Seat.Value, session);
+                    }
+                    else
+                    {
+                        WireSeatSession(seatIndex, session);
+                        localTransports.Add(transport);
+                        localSessions.Add(session);
+                        await session.ConnectAsync(magiConfig, new SeatId(seatIndex), ct).ConfigureAwait(false);
+                        if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
+                    }
                     // First seat on the host-open path learns the session
                     // id from OpenSessionResponse — capture it for the
                     // secondary attaches and for ActiveSessionId.
@@ -383,6 +440,17 @@ namespace Magi.LedgeBoardGame.Net
             return StartHostBackedAsync(baseUri, ledgeSpecJson, ct);
         }
 
+        /// Zero-config join: lets the server claim the lowest free seat.
+        /// Caller should inspect OwnedSeats[0] once this completes to learn
+        /// which seat landed and pass it to GameController.ConfigureNetwork.
+        public Task JoinClaimAsync(string baseUri, string ledgeSpecJson, CancellationToken ct)
+        {
+            if (!_expectedSessionId.HasValue || !_useServerClaim)
+                throw new InvalidOperationException(
+                    "JoinClaimAsync requires a driver built via ForJoinClaim (expected session id + claim mode).");
+            return StartHostBackedAsync(baseUri, ledgeSpecJson, ct);
+        }
+
         private void WireSeatSession(int seatIndex, MagiSession<SpecGameState, LedgeAction> session)
         {
             session.OnSessionJoined += snap => RaiseJoin(seatIndex, snap);
@@ -427,6 +495,14 @@ namespace Magi.LedgeBoardGame.Net
 
         public bool SubmitEndTurn(int seatIndex)
             => SubmitAuthoritative(seatIndex, LedgeAction.EndTurn());
+
+        /// Renames the Player entry whose Id is `playerId` to `displayName`
+        /// via a server-echoed SetDisplayName action. Player.Id is 1-based
+        /// (seatIndex + 1) by roster convention — LedgeLobbyBootstrap feeds
+        /// that directly. Echo fans to every seat so the rename shows up
+        /// on every client's HUD.
+        public bool SubmitDisplayName(int seatIndex, int playerId, string displayName)
+            => SubmitAuthoritative(seatIndex, LedgeAction.SetDisplayName(playerId, displayName));
 
         public bool SubmitTakeback(int seatIndex, int stepsRequested, string reason)
         {
@@ -491,6 +567,13 @@ namespace Magi.LedgeBoardGame.Net
 
         private void RaiseJoin(int seatIndex, JoinSnapshot<SpecGameState> snap)
         {
+            // Latch the observed seat count before fanning out to subscribers
+            // so anything reading SeatCount inside OnServerJoin sees the
+            // server-authoritative value. Players is the seat roster on
+            // the projected state, so Count == SessionRuntime.SeatCount.
+            var playerCount = snap.State?.Players?.Count ?? 0;
+            if (playerCount > 0) _observedSeatCount = playerCount;
+
             var info = new LedgeSessionJoinInfo(
                 forSeatIndex: snap.ForSeat.Value,
                 revision: snap.Revision.Value,

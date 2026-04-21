@@ -134,6 +134,25 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
                 "Auto-skip is Movement-only; placement is always actionable.");
         }
 
+        /// Stacking safety: even with every space on the current player's own
+        /// board already covered by enemy counters, placement is still legal
+        /// (stacks on top) and the turn must NOT auto-skip. U8 audit.
+        [Test]
+        public void ShouldAutoSkipTurn_PlacementPhase_OwnBoardFullyOccupied_StillReturnsFalse()
+        {
+            var state = BuildGame();
+            state.CurrentPhase = GamePhase.Placement;
+            var rules = new GameRules(null);
+
+            foreach (var spaceId in state.Boards[0].Spaces.Keys.ToList())
+            {
+                state.Boards[0].SetStack(spaceId, new TokenStack(0, 1, Tone.Dark));
+            }
+
+            Assert.IsFalse(rules.ShouldAutoSkipTurn(state),
+                "Stacking is always legal — a fully-occupied own-board must not trigger auto-skip.");
+        }
+
         [Test]
         public void ShouldAutoSkipTurn_GameOver_ReturnsFalse()
         {

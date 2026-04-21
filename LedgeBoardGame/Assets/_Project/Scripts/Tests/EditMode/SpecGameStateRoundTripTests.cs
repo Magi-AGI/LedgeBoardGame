@@ -109,5 +109,44 @@ namespace Magi.LedgeBoardGame.Tests.EditMode
             Assert.AreEqual(2, move0.Count);
             Assert.AreEqual(MoveResult.Stack, move0.Result);
         }
+
+        // JIP/LIP: IsConnected must survive the wire so a snapshot delivered
+        // to a reconnecting client carries the full seat-occupancy picture.
+        // Turn-rotation (P2) consults this flag, so a dropped presence bit
+        // would silently re-include an absent seat in the rotation.
+        [Test]
+        public void GameState_RoundTrips_IsConnectedPerPlayer()
+        {
+            var players = new List<Player>
+            {
+                new Player(1, "Player1", 0) { IsConnected = true },
+                new Player(2, "Player2", 1) { IsConnected = false },
+                new Player(3, "Player3", 2) { IsConnected = true },
+                new Player(4, "Player4", 3) { IsConnected = false }
+            };
+
+            var original = new GameState(players, null);
+            var restored = RoundTrip(original);
+
+            Assert.AreEqual(4, restored.Players.Count);
+            Assert.IsTrue(restored.Players[0].IsConnected, "seat 0 present");
+            Assert.IsFalse(restored.Players[1].IsConnected, "seat 1 absent");
+            Assert.IsTrue(restored.Players[2].IsConnected, "seat 2 present");
+            Assert.IsFalse(restored.Players[3].IsConnected, "seat 3 absent");
+        }
+
+        // BuildDefaultRoster's initiallyConnected argument is how client and
+        // server agree on the network-mode initial state (all seats absent).
+        // A drift here lands in the hash on the very first shadow compare,
+        // so pin both the true and false paths explicitly.
+        [Test]
+        public void BuildDefaultRoster_InitiallyConnectedFlag_HonoredOnEverySeat()
+        {
+            var local = Player.BuildDefaultRoster(4);
+            foreach (var p in local) Assert.IsTrue(p.IsConnected, "Local default roster is all-present");
+
+            var network = Player.BuildDefaultRoster(4, initiallyConnected: false);
+            foreach (var p in network) Assert.IsFalse(p.IsConnected, "Network initial roster is all-absent");
+        }
     }
 }

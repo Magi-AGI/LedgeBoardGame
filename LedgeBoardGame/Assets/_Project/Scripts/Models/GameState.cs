@@ -199,11 +199,33 @@ namespace Magi.LedgeBoardGame.Models
 
         private void AdvanceToNextPlayer()
         {
-            var activePlayers = Players.Where(p => !p.IsEliminated).OrderBy(p => p.Id).ToList();
+            // Participation = not eliminated AND connected. Disconnected
+            // seats (JIP/LIP) are skipped in turn rotation but their board
+            // stays in play as a target for other players' attacks.
+            // Canonical id-ordered rotation means a reconnecting seat
+            // rejoins at their original slot in the cycle, never in front
+            // of or behind anyone who stayed.
+            var activePlayers = Players
+                .Where(p => !p.IsEliminated && p.IsConnected)
+                .OrderBy(p => p.Id)
+                .ToList();
             if (activePlayers.Count == 0) return;
 
             var currentIndex = activePlayers.FindIndex(p => p.Id == CurrentPlayerId);
-            var nextIndex = (currentIndex + 1) % activePlayers.Count;
+            int nextIndex;
+            if (currentIndex >= 0)
+            {
+                nextIndex = (currentIndex + 1) % activePlayers.Count;
+            }
+            else
+            {
+                // Current player is no longer active (disconnected or
+                // eliminated mid-turn). Pick the next active id greater
+                // than the current id, wrapping if none found. Preserves
+                // the canonical direction of rotation.
+                var nextById = activePlayers.FindIndex(p => p.Id > CurrentPlayerId);
+                nextIndex = nextById >= 0 ? nextById : 0;
+            }
             CurrentPlayerId = activePlayers[nextIndex].Id;
         }
 
@@ -227,13 +249,17 @@ namespace Magi.LedgeBoardGame.Models
                 }
             }
 
-            var activePlayers = Players.Where(p => !p.IsEliminated).ToList();
-            if (activePlayers.Count == 1)
+            // Win condition is gated on elimination, NOT connectivity: a
+            // seat that dropped but isn't dark-locked is still "alive" and
+            // blocks the last-standing check. Otherwise a transient drop
+            // would hand the game to whoever stayed connected.
+            var notEliminated = Players.Where(p => !p.IsEliminated).ToList();
+            if (notEliminated.Count == 1)
             {
                 GameOver = true;
-                WinnerId = activePlayers.First().Id;
+                WinnerId = notEliminated.First().Id;
             }
-            else if (activePlayers.Count == 0)
+            else if (notEliminated.Count == 0)
             {
                 GameOver = true;
             }
@@ -287,14 +313,50 @@ namespace Magi.LedgeBoardGame.Models
             CurrentTurnPlacements.Clear();
             CurrentTurnPlacements.AddRange(other.CurrentTurnPlacements);
 
+            // Grow-to-match for JIP: when the server's snapshot carries more
+            // seats than the client currently knows about (e.g. a joiner that
+            // configured a placeholder seatCount), clone the extras in so
+            // rotation, win-checks, and board iteration all see the full
+            // roster. Never shrink — the server pre-populates MaxSeats at
+            // session open and only flips IsConnected flags thereafter.
+            while (Players.Count < other.Players.Count)
+            {
+                var src = other.Players[Players.Count];
+                Players.Add(new Player
+                {
+                    Id = src.Id,
+                    Name = src.Name,
+                    BoardId = src.BoardId,
+                    IsHuman = src.IsHuman,
+                    IsEliminated = src.IsEliminated,
+                    IsConnected = src.IsConnected
+                });
+            }
+
             for (int i = 0; i < Players.Count && i < other.Players.Count; i++)
             {
                 Players[i].IsEliminated = other.Players[i].IsEliminated;
+                Players[i].IsConnected = other.Players[i].IsConnected;
+            }
+
+            while (Boards.Count < other.Boards.Count)
+            {
+                Boards.Add(other.Boards[Boards.Count].Clone());
             }
 
             for (int i = 0; i < Boards.Count && i < other.Boards.Count; i++)
             {
                 Boards[i].CopyFrom(other.Boards[i]);
+            }
+
+            // Cross-board ledge edges are derived from Boards. If the board
+            // list grew, the existing edge map no longer references the new
+            // boards — rebuild by deep-copying from `other`, which was freshly
+            // inflated via FromSpecState and therefore has up-to-date edges.
+            CrossBoardLedgeEdges = new Dictionary<string, List<CrossBoardEdge>>();
+            foreach (var kvp in other.CrossBoardLedgeEdges)
+            {
+                CrossBoardLedgeEdges[kvp.Key] = new List<CrossBoardEdge>(kvp.Value);
             }
         }
 
@@ -308,7 +370,8 @@ namespace Magi.LedgeBoardGame.Models
                     Name = p.Name,
                     BoardId = p.BoardId,
                     IsEliminated = p.IsEliminated,
-                    IsHuman = p.IsHuman
+                    IsHuman = p.IsHuman,
+                    IsConnected = p.IsConnected
                 }).ToList(),
                 Boards = Boards.Select(b => b.Clone()).ToList(),
                 CurrentPlayerId = CurrentPlayerId,
@@ -331,7 +394,8 @@ namespace Magi.LedgeBoardGame.Models
                 Id = p.Id.ToString(),
                 Name = p.Name,
                 BoardId = p.BoardId,
-                IsEliminated = p.IsEliminated
+                IsEliminated = p.IsEliminated,
+                IsConnected = p.IsConnected
             }).ToList();
 
             var ctx = new Spec.SpecCtx
@@ -375,7 +439,8 @@ namespace Magi.LedgeBoardGame.Models
                 Id = int.Parse(p.Id),
                 Name = p.Name,
                 BoardId = p.BoardId,
-                IsEliminated = p.IsEliminated
+                IsEliminated = p.IsEliminated,
+                IsConnected = p.IsConnected
             }).ToList();
 
             GameState gameState;

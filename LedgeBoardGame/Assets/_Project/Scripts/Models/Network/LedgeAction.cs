@@ -9,11 +9,14 @@ namespace Magi.LedgeBoardGame.Models.Network
     /// the wire and nothing in code clarity once callers route through the
     /// factory statics below.
     ///
-    /// Three committed actions map to the three GameRules/GameState mutations
-    /// the controller performs today:
-    ///   PlaceToken — mid-turn; gates on current-phase + per-turn placement budget.
-    ///   MoveToken  — mid-turn; gates on current-phase + per-turn movement budget.
-    ///   EndTurn    — turn-ending; triggers state-based effects + next-player advance.
+    /// Four committed actions map to GameRules/GameState mutations:
+    ///   PlaceToken      — mid-turn; gates on current-phase + per-turn placement budget.
+    ///   MoveToken       — mid-turn; gates on current-phase + per-turn movement budget.
+    ///   EndTurn         — turn-ending; triggers state-based effects + next-player advance.
+    ///   SetDisplayName  — identity metadata; renames the carrying PlayerId's Player.Name
+    ///                     at any time, independent of turn/phase. Client submits once per
+    ///                     session post-claim so "Anna" shows up on every opponent's HUD
+    ///                     instead of the default "Player4".
     ///
     /// UI-only intents (hover, select, drag-preview, undo-stack navigation) are
     /// deliberately NOT on the wire. Only commits that would mutate GameState
@@ -22,10 +25,19 @@ namespace Magi.LedgeBoardGame.Models.Network
     {
         public LedgeActionKind Kind { get; set; }
 
-        // PlaceToken + MoveToken fill these; EndTurn leaves them at defaults.
+        // PlaceToken + MoveToken fill these; EndTurn + SetDisplayName leave them at defaults.
         public SpaceId From { get; set; }
         public SpaceId To { get; set; }
         public Tone Tone { get; set; }
+
+        // SetDisplayName payload. PlayerId identifies which roster entry's
+        // Name to rewrite; today this is trusted (the client fills its own
+        // claimed seat's PlayerId). Server-side validation that PlayerId
+        // maps to the submitting envelope's Seat is a hardening follow-up
+        // — pre-playtest scope treats name spoofing as out-of-scope for a
+        // 6-player friendly session.
+        public int PlayerId { get; set; }
+        public string DisplayName { get; set; }
 
         public LedgeAction()
         {
@@ -50,6 +62,13 @@ namespace Magi.LedgeBoardGame.Models.Network
         {
             Kind = LedgeActionKind.EndTurn,
         };
+
+        public static LedgeAction SetDisplayName(int playerId, string displayName) => new LedgeAction
+        {
+            Kind = LedgeActionKind.SetDisplayName,
+            PlayerId = playerId,
+            DisplayName = displayName,
+        };
     }
 
     public enum LedgeActionKind
@@ -57,5 +76,6 @@ namespace Magi.LedgeBoardGame.Models.Network
         PlaceToken,
         MoveToken,
         EndTurn,
+        SetDisplayName,
     }
 }

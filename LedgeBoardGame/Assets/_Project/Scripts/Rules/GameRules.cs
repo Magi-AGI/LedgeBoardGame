@@ -464,8 +464,10 @@ namespace Magi.LedgeBoardGame.Rules
 
         /// True when the current player is in Movement phase with no legal sources to pick up —
         /// every controllable counter is locked. Used to auto-advance the turn so a deadended
-        /// player isn't stuck staring at an unresponsive board. Placement-phase locks aren't
-        /// checked here because placement never deadends.
+        /// player isn't stuck staring at an unresponsive board. Placement is never a skip
+        /// candidate: stacking is always legal, so every one of the player's own-board spaces
+        /// is a valid target regardless of what's already sitting on it. CanPlaceToken gates
+        /// only on phase, player, ownership, and per-turn tone quota — never on capacity.
         public bool ShouldAutoSkipTurn(GameState gameState)
         {
             if (gameState == null || gameState.GameOver) return false;

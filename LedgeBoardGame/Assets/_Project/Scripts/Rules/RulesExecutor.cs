@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using Magi.LedgeBoardGame.Models;
 using Magi.LedgeBoardGame.Models.Network;
 using Magi.LedgeBoardGame.Models.Spec;
@@ -56,6 +58,9 @@ namespace Magi.LedgeBoardGame.Rules
                 case LedgeActionKind.EndTurn:
                     applied = ApplyEndTurn(gs);
                     break;
+                case LedgeActionKind.SetDisplayName:
+                    applied = ApplySetDisplayName(gs, action);
+                    break;
                 default:
                     applied = false;
                     break;
@@ -95,6 +100,29 @@ namespace Magi.LedgeBoardGame.Rules
             // any resulting last-player-standing win. ApplyOverflowCap is NOT
             // run here — the 3-stack trim is an end-of-turn rule only.
             gs.ApplyStateBasedEffects();
+            return true;
+        }
+
+        private static bool ApplySetDisplayName(GameState gs, LedgeAction action)
+        {
+            // Phase- and turn-independent: a player may rename themselves at
+            // any point. Empty / whitespace names are rejected so the roster
+            // can't be clobbered back to blanks; length cap (32) keeps a
+            // malformed client from ballooning the echoed state. Both
+            // constraints are cheap and echo identically through the hash,
+            // so client and server agree on what "too long" looks like.
+            if (action.PlayerId <= 0) return false;
+            var name = action.DisplayName;
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            name = name.Trim();
+            if (name.Length > 32) name = name.Substring(0, 32);
+            var target = gs.Players.FirstOrDefault(p => p.Id == action.PlayerId);
+            if (target == null) return false;
+            // Name comparison is ordinal: if the incoming trimmed name
+            // matches, nothing moved — echo as rejected so no pointless
+            // state advance fires.
+            if (string.Equals(target.Name, name, StringComparison.Ordinal)) return false;
+            target.Name = name;
             return true;
         }
 

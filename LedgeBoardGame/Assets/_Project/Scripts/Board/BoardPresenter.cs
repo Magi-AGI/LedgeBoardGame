@@ -26,11 +26,13 @@ namespace Magi.LedgeBoardGame.Board
         private string _ownerName;
         private Image _backgroundImage;
         private Image _eliminatedOverlay;
+        private Text _titleLabel;
         private bool _isEliminated;
         private readonly Dictionary<int, SpaceView> _spaceViews = new Dictionary<int, SpaceView>();
 
         public BoardState BoardState => _boardState;
         public IReadOnlyDictionary<int, SpaceView> SpaceViews => _spaceViews;
+        public string OwnerName => _ownerName;
 
         public void Initialize(BoardState state, string ownerName = null)
         {
@@ -40,6 +42,71 @@ namespace Magi.LedgeBoardGame.Board
             BuildSpaceViews();
             PositionSpaceViews();
             UpdateView();
+            EnsureTitleLabel();
+            RefreshTitleLabel();
+        }
+
+        /// Propagates a renamed player (see LedgeAction.SetDisplayName / U14)
+        /// down to the board title banner and the owner's Center space label.
+        /// No-op if the name is unchanged — keeps the scene echo-driven refresh
+        /// from thrashing the text component every frame.
+        public void SetOwnerName(string ownerName)
+        {
+            if (string.Equals(_ownerName, ownerName, System.StringComparison.Ordinal)) return;
+            _ownerName = ownerName;
+            RefreshTitleLabel();
+            RefreshCenterSpaceLabel();
+        }
+
+        /// U-126 birds-eye board title banner. Spawned above the board at a
+        /// distance proportional to the outer radius so it scales sensibly
+        /// with the presenter's configured size. Text is plain UnityEngine.UI.Text
+        /// to stay inside the existing Canvas without a TMP dependency on
+        /// this prefab. Null-safe — if no Canvas ancestor is found the label
+        /// quietly stays unspawned (board still renders fine).
+        private void EnsureTitleLabel()
+        {
+            if (_titleLabel != null) return;
+            var go = new GameObject("BoardTitleLabel");
+            go.transform.SetParent(transform, false);
+            var rect = go.AddComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = new Vector2(0f, outerRadius + 60f);
+            rect.sizeDelta = new Vector2(outerRadius * 2.2f, 60f);
+            _titleLabel = go.AddComponent<Text>();
+            _titleLabel.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            _titleLabel.alignment = TextAnchor.MiddleCenter;
+            _titleLabel.fontSize = 28;
+            _titleLabel.color = Color.white;
+            _titleLabel.raycastTarget = false;
+            _titleLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
+            _titleLabel.verticalOverflow = VerticalWrapMode.Overflow;
+        }
+
+        private void RefreshTitleLabel()
+        {
+            if (_titleLabel == null) return;
+            _titleLabel.text = string.IsNullOrWhiteSpace(_ownerName)
+                ? (_boardState != null ? $"Board {_boardState.BoardId}" : "Board")
+                : _ownerName;
+        }
+
+        /// Only the Center space's label depends on ownerName
+        /// (SpaceNamer.Name formats it as "[Owner] Core"); other rings are
+        /// owner-agnostic. Scan the metadata map once, update whichever space
+        /// is the Center, and leave the rest untouched.
+        private void RefreshCenterSpaceLabel()
+        {
+            if (_boardState == null) return;
+            foreach (var kvp in _boardState.SpaceMetadata)
+            {
+                if (kvp.Value.Type != SpaceType.Center) continue;
+                if (_spaceViews.TryGetValue(kvp.Key, out var view) && view != null)
+                    view.SetSpaceLabel(SpaceNamer.Name(kvp.Key, kvp.Value, _ownerName));
+                break;
+            }
         }
 
         private void EnsureBackground()

@@ -93,6 +93,18 @@ namespace Magi.LedgeBoardGame
         // moment the state actually changes client-side. Null when no local
         // submission is in flight. Cleared on emit, on takeback, and on error.
         private string _pendingEchoNarration;
+        // Network-mode tween metadata. When a local submit batch is in flight
+        // _moveInProgress is raised to gate RefreshBoards in ApplyServerStateAndRefresh;
+        // the saved endpoints drive a single flying-counter tween fired from
+        // ReleaseSubmissionIfLocal when _pendingSubmissions hits zero. Null/zero when
+        // no batch is pending. Cleared on tween fire, on error, and on takeback.
+        private SpaceId? _pendingNetMoveFrom;
+        private SpaceId? _pendingNetMoveTo;
+        private int _pendingNetMoveLight;
+        private int _pendingNetMoveDark;
+        private SpaceId? _pendingNetPlaceTarget;
+        private Tone _pendingNetPlaceTone;
+        private Vector3 _pendingNetPlaceFromPos;
         // Last (phase, playerId) shown via the phase banner. Null on first
         // signal — subsequent signals compare against this to fire only when
         // the turn or phase actually changes. Set by MaybeSignalPhaseBanner.
@@ -284,6 +296,18 @@ namespace Magi.LedgeBoardGame
                 // so logging "X placed/moved ..." on the pending→0 transition
                 // would misrepresent the outcome.
                 _pendingEchoNarration = null;
+                // U1b: scrap any pending tween — the submission was rejected
+                // at the protocol layer, so a fly-from-source animation would
+                // misrepresent the nothing that happened on the server. Clear
+                // the phantom too so the source stops reading as "picked up."
+                _pendingNetMoveFrom = null;
+                _pendingNetMoveTo = null;
+                _pendingNetMoveLight = 0;
+                _pendingNetMoveDark = 0;
+                _pendingNetPlaceTarget = null;
+                _pendingNetPlaceFromPos = Vector3.zero;
+                _moveInProgress = false;
+                ClearSourcePhantom();
                 ReleaseSubmissionIfLocal(info.SubscribingSeatIndex);
                 RefreshBoards();
                 UpdateStatusUI();
@@ -317,6 +341,18 @@ namespace Magi.LedgeBoardGame
                 // described just got rewound, so logging it on the pending→0
                 // transition below would be false attribution.
                 _pendingEchoNarration = null;
+                // U1b: drop pending tween state too. A takeback supersedes
+                // whatever submit was in flight; animating a move that just
+                // got undone would be confusing. _moveInProgress is cleared
+                // so ApplyServerStateAndRefresh below runs RefreshBoards
+                // immediately on the rewound state.
+                _pendingNetMoveFrom = null;
+                _pendingNetMoveTo = null;
+                _pendingNetMoveLight = 0;
+                _pendingNetMoveDark = 0;
+                _pendingNetPlaceTarget = null;
+                _pendingNetPlaceFromPos = Vector3.zero;
+                _moveInProgress = false;
                 ApplyServerStateAndRefresh(info.State);
                 LogEvent($"↶ takeback granted ({info.StepsRewound} step{(info.StepsRewound == 1 ? "" : "s")})");
             }
@@ -396,12 +432,148 @@ namespace Magi.LedgeBoardGame
                     _pendingEchoNarration = null;
                 }
 
+                // U1b: fire the deferred fly-from-source tween now that the
+                // last echo in the batch has landed. ApplyServerStateAndRefresh
+                // suppressed RefreshBoards throughout the batch via
+                // _moveInProgress; the tween-complete callback is what finally
+                // re-runs RefreshBoards + auto-skip + highlights. For batches
+                // that don't carry a visual (pure EndTurn, takeback, display
+                // name), fall straight through to a hard-snap refresh.
+                if (_pendingNetMoveFrom.HasValue && _pendingNetMoveTo.HasValue)
+                {
+                    PlayNetworkMoveTween();
+                }
+                else if (_pendingNetPlaceTarget.HasValue)
+                {
+                    PlayNetworkPlaceTween();
+                }
+                else if (_moveInProgress)
+                {
+                    // Defensive: _moveInProgress was raised but no tween
+                    // endpoints recorded — shouldn't happen, but don't leave
+                    // the UI frozen.
+                    _moveInProgress = false;
+                    RefreshBoards();
+                    UpdateStatusUI();
+                    RebuildNetworkHighlights();
+                }
+
                 // UI was frozen while waiting for the authoritative echo.
                 // Re-enable interactive buttons now that the round-trip is
-                // done. Status/highlight refresh happens in
-                // ApplyServerStateAndRefresh above, not here, so this stays
-                // purely a lock-release.
+                // done.
                 RefreshUndoButton();
+            }
+        }
+
+        /// U1b: Network-mode tween from the local seat's move-source to the
+        /// last-reached hop. The source phantom set by SelectMovementSource
+        /// is still visible and provides the "picked up from here" anchor;
+        /// the flying counter hands off visually when RefreshBoards fires in
+        /// the tween-complete callback.
+        private void PlayNetworkMoveTween()
+        {
+            var from = _pendingNetMoveFrom.Value;
+            var to = _pendingNetMoveTo.Value;
+            int light = _pendingNetMoveLight;
+            int dark = _pendingNetMoveDark;
+            _pendingNetMoveFrom = null;
+            _pendingNetMoveTo = null;
+            _pendingNetMoveLight = 0;
+            _pendingNetMoveDark = 0;
+
+            var fromView = FindSpaceView(from);
+            var toView = FindSpaceView(to);
+            if (fromView == null || toView == null || (light + dark) == 0)
+            {
+                // Can't tween without endpoints — fall back to hard snap.
+                _moveInProgress = false;
+                ClearSourcePhantom();
+                RefreshBoards();
+                UpdateStatusUI();
+                RebuildNetworkHighlights();
+                return;
+            }
+            Vector3 fromPos = fromView.transform.position;
+            Vector3 toPos = toView.transform.position;
+            var overlayParent = ResolveOverlayParent(fromView);
+            MovingCounter.Play(overlayParent, fromPos, toPos, light, dark,
+                MoveTweenDuration, OnNetworkMoveTweenComplete, withPhantom: false);
+        }
+
+        private void OnNetworkMoveTweenComplete()
+        {
+            _moveInProgress = false;
+            ClearSourcePhantom();
+            RefreshBoards();
+            UpdateStatusUI();
+            RebuildNetworkHighlights();
+            RefreshUndoButton();
+        }
+
+        /// U1b: Network-mode placement tween from the cursor-tracked ghost
+        /// position captured at submit-time. Mirrors PlayPlacementTween's
+        /// visual shape; RefreshBoards is deferred to tween-complete so the
+        /// destination reads as arriving rather than snapping into place.
+        private void PlayNetworkPlaceTween()
+        {
+            var target = _pendingNetPlaceTarget.Value;
+            var tone = _pendingNetPlaceTone;
+            Vector3 fromPos = _pendingNetPlaceFromPos;
+            _pendingNetPlaceTarget = null;
+            _pendingNetPlaceFromPos = Vector3.zero;
+
+            var toView = FindSpaceView(target);
+            if (toView == null)
+            {
+                _moveInProgress = false;
+                RefreshBoards();
+                UpdateStatusUI();
+                RebuildNetworkHighlights();
+                return;
+            }
+            Vector3 toPos = toView.transform.position;
+            int light = tone == Tone.Light ? 1 : 0;
+            int dark = tone == Tone.Dark ? 1 : 0;
+            var overlayParent = ResolveOverlayParent(toView);
+            MovingCounter.Play(overlayParent, fromPos, toPos, light, dark,
+                MoveTweenDuration, OnNetworkPlaceTweenComplete, withPhantom: false);
+        }
+
+        private void OnNetworkPlaceTweenComplete()
+        {
+            _moveInProgress = false;
+            RefreshBoards();
+            UpdateStatusUI();
+            RebuildNetworkHighlights();
+            RefreshUndoButton();
+        }
+
+        /// U1b: Rebuild highlights + run auto-skip the way
+        /// ApplyServerStateAndRefresh does — mirrors the "Network mode" tail
+        /// block in that method, but callable from the deferred tween-complete
+        /// path too.
+        private void RebuildNetworkHighlights()
+        {
+            if (networkMode != NetworkMode.Network) return;
+            if (_gameState == null || _gameState.GameOver)
+            {
+                ClearHighlights();
+                return;
+            }
+            if (!IsLocalSeatsTurn())
+            {
+                ClearHighlights();
+                return;
+            }
+            if (_gameState.CurrentPhase == GamePhase.Placement)
+            {
+                HighlightPlacementTargets();
+            }
+            else
+            {
+                ClearHighlights();
+                if (!MaybeAutoSkipTurn())
+                    HighlightMovablePieces();
             }
         }
 
@@ -928,6 +1100,17 @@ namespace Magi.LedgeBoardGame
                     // not a reliable attribution source. Emitted once the
                     // last echo for this batch lands (see ReleaseSubmissionIfLocal).
                     _pendingEchoNarration = $"{currentPlayer.Name} placed {toneToPlace} at {FormatSpace(target)}";
+                    // Cache tween source now (cursor-tracked ghost) — by echo
+                    // time the ghost may have moved or been hidden. The tween
+                    // fires from ReleaseSubmissionIfLocal once the echo lands.
+                    var targetView = FindSpaceView(target);
+                    _pendingNetPlaceFromPos = (placementGhost != null && placementGhost.gameObject.activeInHierarchy)
+                        ? placementGhost.transform.position
+                        : (targetView != null ? targetView.transform.position : Vector3.zero);
+                    _pendingNetPlaceTarget = target;
+                    _pendingNetPlaceTone = toneToPlace;
+                    _moveInProgress = true;
+                    placementGhost?.SetVisible(false);
                     ClearHighlights();
                     RefreshUndoButton();
                 }
@@ -1439,14 +1622,34 @@ namespace Magi.LedgeBoardGame
                 _pendingEchoNarration = $"{mover.Name} moved " +
                     $"{FormatStackCounts(totalLightSubmitted, totalDarkSubmitted)}: " +
                     $"{FormatSpace(from)} → {FormatSpace(lastReachedHop)}";
-            }
+                // U1b: capture tween endpoints + counts. The source phantom
+                // stays visible until tween lands so the player reads
+                // "pieces flying home" instead of a teleport + hard snap.
+                // _moveInProgress gates RefreshBoards in ApplyServerStateAndRefresh
+                // so echoes don't snap the source/destination mid-flight.
+                _pendingNetMoveFrom = from;
+                _pendingNetMoveTo = lastReachedHop;
+                _pendingNetMoveLight = totalLightSubmitted;
+                _pendingNetMoveDark = totalDarkSubmitted;
+                _moveInProgress = true;
 
-            // Clear the in-hand selection immediately — the player has
-            // committed the action and can't re-target while echoes are in
-            // flight. Highlights go away for the same reason; the next
-            // echo-driven refresh will rehighlight based on the server's
-            // post-apply state.
-            ClearMovementSelection();
+                // Clear in-hand selection state but KEEP the source phantom —
+                // the phantom is the visual anchor for the flying counter.
+                // Mirrors ClearMovementSelection minus ClearSourcePhantom.
+                _selectedSpace = null;
+                _pickedUpLight = 0;
+                _pickedUpDark = 0;
+                _selectedReach = null;
+                _selectedReachMax = 0;
+                ClearHighlights();
+                NotifyInHandGhost();
+            }
+            else
+            {
+                // Nothing submitted (edge case — speculative clone rejected
+                // every hop). No tween to fire, no phantom to hold.
+                ClearMovementSelection();
+            }
             RefreshUndoButton();
         }
 
@@ -1869,6 +2072,25 @@ namespace Magi.LedgeBoardGame
                 presenter.UpdateView();
             }
             RefreshEliminatedOverlays();
+            RefreshBoardOwnerNames();
+        }
+
+        /// U-126 + U14 follow-through. Player names mutate via SetDisplayName;
+        /// BoardPresenter caches ownerName at Initialize time, so without a
+        /// post-echo push the board-title banner and Center-space label would
+        /// stay frozen on "PlayerN" even after a player typed their real name
+        /// in the lobby. SetOwnerName is a no-op when the name is unchanged,
+        /// so running this on every refresh stays cheap.
+        private void RefreshBoardOwnerNames()
+        {
+            if (_gameState == null) return;
+            foreach (var kvp in _boardPresenters)
+            {
+                var board = _gameState.GetBoard(kvp.Key);
+                if (board == null) continue;
+                var player = _gameState.Players?.FirstOrDefault(p => p.Id == board.PlayerId);
+                kvp.Value.SetOwnerName(player?.Name);
+            }
         }
 
         /// Drives BoardPresenter.SetEliminated from the authoritative Player list.
