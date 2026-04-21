@@ -9,6 +9,8 @@ using System.Threading.Tasks;
 using MagiGameServer.Codec;
 using MagiGameServer.Contracts.Core;
 using MagiGameServer.Contracts.Protocol;
+using MagiGameServer.Host.Session;
+using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
 
 namespace MagiGameServer.Host.Tests
@@ -703,6 +705,37 @@ namespace MagiGameServer.Host.Tests
             using var client = _factory.CreateClient();
             var resp = await client.GetAsync($"/session/{session.Session.Value}/state?seat=5");
             Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        }
+
+        // Graceful shutdown: SessionRegistry.ShutdownAllAsync must send a
+        // close frame to every attached seat so clients see a clean
+        // termination rather than a TCP RST. Drives the registry directly
+        // — exercising the hosted-service lifecycle from a test host is
+        // its own flake trap.
+        [Test]
+        public async Task ShutdownAllAsync_ClosesAttachedSocketsWithGoingAway()
+        {
+            var session = await OpenAsync(seatCount: 2);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            var ws0 = await ConnectAsync(session.Session, 0, cts.Token);
+            var ws1 = await ConnectAsync(session.Session, 1, cts.Token);
+            await ReceiveFrameAsync(ws0, cts.Token); // JoinSnapshot
+            await ReceiveFrameAsync(ws1, cts.Token); // JoinSnapshot
+
+            var registry = _factory.Services.GetRequiredService<SessionRegistry>();
+            await registry.ShutdownAllAsync(TimeSpan.FromSeconds(2), cts.Token);
+
+            var buffer = new byte[1024];
+            var res0 = await ws0.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
+            Assert.That(res0.MessageType, Is.EqualTo(WebSocketMessageType.Close),
+                "seat 0 must see a clean Close frame from the server-side drain");
+            Assert.That(res0.CloseStatus, Is.EqualTo(WebSocketCloseStatus.EndpointUnavailable));
+
+            var res1 = await ws1.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
+            Assert.That(res1.MessageType, Is.EqualTo(WebSocketMessageType.Close),
+                "seat 1 must see a clean Close frame from the server-side drain");
+            Assert.That(res1.CloseStatus, Is.EqualTo(WebSocketCloseStatus.EndpointUnavailable));
         }
 
         // Parallel claims must not double-assign. All 4 connects happen

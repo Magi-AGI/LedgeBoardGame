@@ -731,6 +731,39 @@ namespace MagiGameServer.Host.Session
             return default;
         }
 
+        /// Graceful close: send a WebSocket CloseOutput(GoingAway, reason) to
+        /// every attached seat and wait up to `perSocketTimeout` for each.
+        /// Runs in parallel across seats. Doesn't dispose the runtime — the
+        /// caller owns that ordering so it can await the receive/send loops
+        /// in Program.cs finishing first. Idempotent under repeat calls
+        /// because CloseOutputAsync on an already-closed socket is a no-op
+        /// that swallows WebSocketException.
+        public async Task CloseAllSocketsAsync(string reason, TimeSpan perSocketTimeout, CancellationToken ct)
+        {
+            var tasks = new List<Task>();
+            foreach (var conn in _seats.Values)
+            {
+                tasks.Add(CloseOneAsync(conn.Socket, reason, perSocketTimeout, ct));
+            }
+            if (tasks.Count > 0)
+            {
+                try { await Task.WhenAll(tasks).ConfigureAwait(false); }
+                catch { /* individual CloseOneAsync already swallowed per-socket errors */ }
+            }
+        }
+
+        private static async Task CloseOneAsync(WebSocket socket, string reason, TimeSpan timeout, CancellationToken ct)
+        {
+            if (socket.State != WebSocketState.Open && socket.State != WebSocketState.CloseReceived) return;
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(timeout);
+            try
+            {
+                await socket.CloseOutputAsync(WebSocketCloseStatus.EndpointUnavailable, reason, cts.Token).ConfigureAwait(false);
+            }
+            catch { /* socket already torn down or timed out — fine, the send/receive loops will mop up */ }
+        }
+
         public async ValueTask DisposeAsync()
         {
             _shutdown.Cancel();

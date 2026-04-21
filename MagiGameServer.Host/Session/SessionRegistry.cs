@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Security.Cryptography;
+using System.Threading;
+using System.Threading.Tasks;
 using MagiGameServer.Contracts.Core;
 
 namespace MagiGameServer.Host.Session
@@ -24,6 +27,33 @@ namespace MagiGameServer.Host.Session
         public bool TryAdd(SessionId id, SessionRuntime runtime) => _sessions.TryAdd(id, runtime);
 
         public bool TryGet(SessionId id, out SessionRuntime runtime) => _sessions.TryGetValue(id, out runtime);
+
+        /// Graceful shutdown pass for SIGINT/SIGTERM. Sends a GoingAway
+        /// close to every attached seat in parallel across all live
+        /// sessions, then disposes each runtime. Bounded by `drainTimeout`
+        /// so a stuck socket can't hang the host. Fresh calls to
+        /// `TryAdd`/`TryGet` are fine during shutdown (ASP.NET stops new
+        /// connections at the upgrade layer); this method is the
+        /// dispatcher-side half of the close handshake.
+        public async Task ShutdownAllAsync(TimeSpan drainTimeout, CancellationToken ct)
+        {
+            var closeTasks = new List<Task>();
+            foreach (var runtime in _sessions.Values)
+            {
+                closeTasks.Add(runtime.CloseAllSocketsAsync("server_shutdown", drainTimeout, ct));
+            }
+            if (closeTasks.Count > 0)
+            {
+                try { await Task.WhenAll(closeTasks).ConfigureAwait(false); }
+                catch { /* per-socket errors already swallowed */ }
+            }
+            foreach (var runtime in _sessions.Values)
+            {
+                try { await runtime.DisposeAsync().ConfigureAwait(false); }
+                catch { /* runtime dispose swallows dispatcher crashes already */ }
+            }
+            _sessions.Clear();
+        }
 
         /// Allocates a short, URL-safe, human-shareable session id. 8
         /// characters of the 32-symbol alphabet give 32^8 ≈ 10^12 codes —

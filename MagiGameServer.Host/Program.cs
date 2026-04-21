@@ -38,6 +38,12 @@ namespace MagiGameServer.Host
                 return registry;
             });
             builder.Services.AddSingleton<SessionRegistry>();
+            // SIGINT/SIGTERM drain — closes every attached socket with
+            // GoingAway and disposes runtimes before Kestrel stops
+            // accepting; registered as a hosted service so StopAsync runs
+            // on the async shutdown path instead of a blocking
+            // Lifetime.Register callback.
+            builder.Services.AddHostedService<Session.SessionShutdownHostedService>();
             // Align the minimal-API default JSON pipeline with the
             // codec's converters so HTTP bodies and WebSocket frames
             // agree on the wire shape of SessionId / SeatId / enums.
