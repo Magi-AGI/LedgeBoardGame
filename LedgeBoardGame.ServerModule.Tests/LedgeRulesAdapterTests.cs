@@ -23,6 +23,20 @@ namespace Magi.LedgeBoardGame.ServerModule.Tests
             return (SpecGameState)module.CreateInitialState(LedgeGameModule.DefaultConfig(seatCount));
         }
 
+        /// JIP default leaves every roster entry IsConnected=false, so the
+        /// P2 turn-skip advance walks past every seat and lands on the same
+        /// seat it started from. Tests that assert EndTurn advances the seat
+        /// pointer must first mark seats connected — mirroring what
+        /// SessionRuntime does when a real client attaches.
+        private static SpecGameState NewInitialStateAllConnected(int seatCount = 2)
+        {
+            var module = new LedgeGameModule();
+            var state = (SpecGameState)module.CreateInitialState(LedgeGameModule.DefaultConfig(seatCount));
+            for (int i = 0; i < seatCount; i++)
+                state = (SpecGameState)module.SetSeatPresence(state, new SeatId(i), true);
+            return state;
+        }
+
         private static SpaceId FirstValidPlacementTarget(SpecGameState state)
         {
             var gs = GameState.FromSpecState(state);
@@ -89,7 +103,7 @@ namespace Magi.LedgeBoardGame.ServerModule.Tests
         public void Apply_EndTurn_AdvancesToNextPlayerAndClearsTurnLog()
         {
             var adapter = new LedgeRulesAdapter();
-            var state = NewInitialState(seatCount: 2);
+            var state = NewInitialStateAllConnected(seatCount: 2);
             var startingPlayer = int.Parse(state.Ctx.CurrentPlayer);
 
             // Complete the placement budget (one Light + one Dark) before EndTurn —
@@ -133,6 +147,39 @@ namespace Magi.LedgeBoardGame.ServerModule.Tests
             Assert.That(partialOutcome, Is.EqualTo(ApplyOutcome.Rejected),
                 "EndTurn with only Light placed must be rejected");
             Assert.That(afterPartial, Is.SameAs(afterLight));
+        }
+
+        [Test]
+        public void Apply_SetDisplayName_RenamesMatchingPlayer()
+        {
+            var adapter = new LedgeRulesAdapter();
+            var state = NewInitialState(seatCount: 3);
+            var before = state.Players.First(p => p.Id == "2").Name;
+            Assert.That(before, Is.EqualTo("Player2"), "roster defaults start as PlayerN");
+
+            var outcome = adapter.Apply(state, LedgeAction.SetDisplayName(2, "Anna"), out var newState);
+
+            Assert.That(outcome, Is.EqualTo(ApplyOutcome.Applied));
+            Assert.That(newState.Players.First(p => p.Id == "2").Name, Is.EqualTo("Anna"));
+            Assert.That(newState.Players.First(p => p.Id == "1").Name, Is.EqualTo("Player1"),
+                "rename must affect only the addressed player");
+            Assert.That(state.Players.First(p => p.Id == "2").Name, Is.EqualTo("Player2"),
+                "input state must not be mutated");
+        }
+
+        [Test]
+        public void Apply_SetDisplayName_EmptyOrUnknownPlayer_IsRejected()
+        {
+            var adapter = new LedgeRulesAdapter();
+            var state = NewInitialState(seatCount: 2);
+
+            Assert.That(adapter.Apply(state, LedgeAction.SetDisplayName(1, "   "), out var afterWs),
+                Is.EqualTo(ApplyOutcome.Rejected));
+            Assert.That(afterWs, Is.SameAs(state));
+
+            Assert.That(adapter.Apply(state, LedgeAction.SetDisplayName(99, "Ghost"), out var afterGhost),
+                Is.EqualTo(ApplyOutcome.Rejected));
+            Assert.That(afterGhost, Is.SameAs(state));
         }
 
         [Test]

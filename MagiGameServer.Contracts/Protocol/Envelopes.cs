@@ -74,5 +74,14 @@ namespace MagiGameServer.Contracts.Protocol
         public ServerSeq Revision { get; init; }
         public TState State { get; init; }
         public long StateHash { get; init; }
+
+        /// Opaque per-seat reconnect token. Issued once on the fresh
+        /// attach/claim and echoed back verbatim by a later reattach so
+        /// the server can match the returning client to the seat it
+        /// already owns. Transport-layer only — not part of canonical
+        /// state, not hashed, not folded into StateHash. Null when the
+        /// host didn't provide one (older builds, or a server variant
+        /// that doesn't implement seat ownership).
+        public string ReconnectToken { get; init; }
     }
 }

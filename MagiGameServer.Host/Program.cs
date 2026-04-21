@@ -132,25 +132,75 @@ namespace MagiGameServer.Host
                     ctx.Response.StatusCode = StatusCodes.Status404NotFound;
                     return;
                 }
-                if (!ctx.Request.Query.TryGetValue("seat", out var seatRaw) || !int.TryParse(seatRaw, out int seatIndex))
+                // Two attach shapes:
+                //   * ?seat=N   — caller picks the seat explicitly (legacy /
+                //                 LedgeTCG / reconnect). Out-of-range → 400,
+                //                 duplicate → PolicyViolation.
+                //   * no query  — server claims the lowest free seat. Full
+                //                 session → PolicyViolation session_full.
+                // The claim path is authoritative when both are absent or
+                // the seat query doesn't parse, so a client that passes an
+                // empty ?seat= falls through to claim rather than 400.
+                int seatIndex = 0;
+                bool hasExplicitSeat = ctx.Request.Query.TryGetValue("seat", out var seatRaw)
+                                       && int.TryParse(seatRaw, out seatIndex);
+                if (hasExplicitSeat && (seatIndex < 0 || seatIndex >= runtime.SeatCount))
                 {
                     ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
                     return;
                 }
-                if (seatIndex < 0 || seatIndex >= runtime.SeatCount)
+                // ?reattach=<token> routes through the token-matching path.
+                // Without ?seat=N the server can't know which seat to
+                // restore — reject at 400 rather than let it fall into
+                // claim and silently hand out a new seat.
+                bool hasReattach = ctx.Request.Query.TryGetValue("reattach", out var reattachRaw)
+                                   && !string.IsNullOrEmpty(reattachRaw.ToString());
+                if (hasReattach && !hasExplicitSeat)
                 {
                     ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
                     return;
                 }
 
                 var socket = await ctx.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
-                var seat = new SeatId(seatIndex);
-                var attached = await runtime.TryAttachAsync(seat, socket, ctx.RequestAborted).ConfigureAwait(false);
-                if (!attached)
+                SeatId seat;
+                if (hasReattach)
                 {
-                    logger.LogInformation("Rejected duplicate attach on session {Session} seat {Seat}", runtime.Id, seat);
-                    await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "seat_already_attached", CancellationToken.None).ConfigureAwait(false);
-                    return;
+                    seat = new SeatId(seatIndex);
+                    var outcome = await runtime.TryReattachAsync(seat, reattachRaw.ToString(), socket, ctx.RequestAborted).ConfigureAwait(false);
+                    if (outcome != SessionRuntime.ReattachOutcome.Success)
+                    {
+                        var reason = outcome switch
+                        {
+                            SessionRuntime.ReattachOutcome.TokenMismatch => "token_mismatch",
+                            SessionRuntime.ReattachOutcome.SeatAlreadyAttached => "seat_already_attached",
+                            _ => "reattach_failed",
+                        };
+                        logger.LogInformation("Rejected reattach on session {Session} seat {Seat}: {Reason}", runtime.Id, seat, reason);
+                        await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, reason, CancellationToken.None).ConfigureAwait(false);
+                        return;
+                    }
+                }
+                else if (hasExplicitSeat)
+                {
+                    seat = new SeatId(seatIndex);
+                    var attached = await runtime.TryAttachAsync(seat, socket, ctx.RequestAborted).ConfigureAwait(false);
+                    if (!attached)
+                    {
+                        logger.LogInformation("Rejected duplicate attach on session {Session} seat {Seat}", runtime.Id, seat);
+                        await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "seat_already_attached", CancellationToken.None).ConfigureAwait(false);
+                        return;
+                    }
+                }
+                else
+                {
+                    var claimed = await runtime.TryClaimAndAttachAsync(socket, ctx.RequestAborted).ConfigureAwait(false);
+                    if (claimed == null)
+                    {
+                        logger.LogInformation("Rejected claim on session {Session} — session_full", runtime.Id);
+                        await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "session_full", CancellationToken.None).ConfigureAwait(false);
+                        return;
+                    }
+                    seat = claimed.Value;
                 }
 
                 logger.LogInformation("Socket accepted for session {Session} seat {Seat}", runtime.Id, seat);

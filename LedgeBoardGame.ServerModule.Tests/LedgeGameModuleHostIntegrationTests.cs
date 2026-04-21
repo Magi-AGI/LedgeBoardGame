@@ -118,6 +118,13 @@ namespace Magi.LedgeBoardGame.ServerModule.Tests
         {
             var (session, _) = NewHostedSession(seatCount: 2);
 
+            // P2 turn-skip logic advances past disconnected seats, and the JIP
+            // default leaves every roster entry IsConnected=false. Without
+            // presence flips here, EndTurn loops back to seat 0. Real sessions
+            // get presence=true from SessionRuntime when a client attaches.
+            session.SetSeatPresence(new SeatId(0), true);
+            session.SetSeatPresence(new SeatId(1), true);
+
             // Seat 0 places Light, then Dark, then ends turn.
             var lightTarget = FirstValidPlacementFor(session);
             session.Apply(new ActionEnvelope<object>
@@ -185,6 +192,111 @@ namespace Magi.LedgeBoardGame.ServerModule.Tests
                 Assert.That(echoedState.CurrentTurnPlacements, Is.Empty,
                     "rejected echo carries the pre-action state (still at zero placements)");
             }
+        }
+
+        [Test]
+        public void CreateInitialState_NoSeedOption_LeavesBoardsEmptyExceptCenter()
+        {
+            // Sanity: without the U12 seed option, every board starts with
+            // only the default Light-locked center stack. Regression guard
+            // against pacing-accelerator leaking into normal sessions.
+            var module = new LedgeGameModule();
+            var initial = (SpecGameState)module.CreateInitialState(LedgeGameModule.DefaultConfig(2));
+            var gs = GameState.FromSpecState(initial);
+            foreach (var board in gs.Boards)
+            {
+                foreach (var kvp in board.Spaces)
+                {
+                    var count = kvp.Value.TotalCount;
+                    if (board.IsCenterSpace(kvp.Key))
+                        Assert.That(count, Is.EqualTo(1), $"center stays default Light-locked; space={kvp.Key}");
+                    else
+                        Assert.That(count, Is.EqualTo(0), $"non-center stays empty without seeding; space={kvp.Key}");
+                }
+            }
+        }
+
+        [Test]
+        public void CreateInitialState_SeedPlacementsPerTone_FillsTwoPerToneOnEveryBoard()
+        {
+            var module = new LedgeGameModule();
+            var options = new System.Collections.Generic.Dictionary<string, string>
+            {
+                [LedgeGameModule.SeedPlacementsPerToneKey] = "2",
+            };
+            var initial = (SpecGameState)module.CreateInitialState(
+                LedgeGameModule.DefaultConfig(seatCount: 3, options: options));
+            var gs = GameState.FromSpecState(initial);
+
+            foreach (var board in gs.Boards)
+            {
+                int lightSeeds = 0, darkSeeds = 0;
+                foreach (var kvp in board.Spaces)
+                {
+                    if (board.IsCenterSpace(kvp.Key)) continue;
+                    var stack = kvp.Value;
+                    if (stack.LightCount == 1 && stack.DarkCount == 0) lightSeeds++;
+                    else if (stack.DarkCount == 1 && stack.LightCount == 0) darkSeeds++;
+                    else Assert.That(stack.TotalCount, Is.EqualTo(0),
+                        $"non-seeded non-center space should stay empty; board={board.BoardId} space={kvp.Key}");
+                }
+                Assert.That(lightSeeds, Is.EqualTo(2), $"board {board.BoardId} should have 2 seeded Light singletons");
+                Assert.That(darkSeeds, Is.EqualTo(2), $"board {board.BoardId} should have 2 seeded Dark singletons");
+            }
+        }
+
+        [Test]
+        public void CreateInitialState_SameSeed_ReproducesSameSeededLayout()
+        {
+            var module = new LedgeGameModule();
+            var options = new System.Collections.Generic.Dictionary<string, string>
+            {
+                [LedgeGameModule.SeedPlacementsPerToneKey] = "3",
+            };
+            MagiGameServer.Contracts.Rules.GameConfig MakeCfg(long seed) => new MagiGameServer.Contracts.Rules.GameConfig
+            {
+                Seed = seed,
+                SeatCount = 2,
+                Options = options,
+            };
+            var a = (SpecGameState)module.CreateInitialState(MakeCfg(42));
+            var b = (SpecGameState)module.CreateInitialState(MakeCfg(42));
+
+            // Deterministic: same seed, same options → byte-identical seeded
+            // board. Swap seeds and the layouts must diverge — guards against
+            // the RNG being globally shared or boardId being ignored.
+            var gsA = GameState.FromSpecState(a);
+            var gsB = GameState.FromSpecState(b);
+            for (int boardIx = 0; boardIx < gsA.Boards.Count; boardIx++)
+            {
+                var boardA = gsA.Boards[boardIx];
+                var boardB = gsB.Boards[boardIx];
+                foreach (var spaceId in boardA.Spaces.Keys)
+                {
+                    var sa = boardA.GetStack(spaceId);
+                    var sb = boardB.GetStack(spaceId);
+                    Assert.That(sa.LightCount, Is.EqualTo(sb.LightCount), $"board {boardIx} space {spaceId} Light");
+                    Assert.That(sa.DarkCount, Is.EqualTo(sb.DarkCount), $"board {boardIx} space {spaceId} Dark");
+                }
+            }
+
+            var c = (SpecGameState)module.CreateInitialState(MakeCfg(99));
+            var gsC = GameState.FromSpecState(c);
+            bool anyDifference = false;
+            for (int boardIx = 0; boardIx < gsA.Boards.Count && !anyDifference; boardIx++)
+            {
+                foreach (var spaceId in gsA.Boards[boardIx].Spaces.Keys)
+                {
+                    var sa = gsA.Boards[boardIx].GetStack(spaceId);
+                    var sc = gsC.Boards[boardIx].GetStack(spaceId);
+                    if (sa.LightCount != sc.LightCount || sa.DarkCount != sc.DarkCount)
+                    {
+                        anyDifference = true;
+                        break;
+                    }
+                }
+            }
+            Assert.That(anyDifference, Is.True, "different seeds must produce different layouts");
         }
 
         [Test]

@@ -37,6 +37,7 @@ namespace MagiGameServer.Modules.Tests
             public Type ActionType { get; }
             public Type StateType { get; }
             public object CreateInitialState(GameConfig config) => new FakeState();
+            public object SetSeatPresence(object state, SeatId seat, bool isConnected) => state;
         }
 
         [Test]
@@ -135,6 +136,7 @@ namespace MagiGameServer.Modules.Tests
             public Type ActionType => null;
             public Type StateType => typeof(FakeState);
             public object CreateInitialState(GameConfig config) => new FakeState();
+            public object SetSeatPresence(object state, SeatId seat, bool isConnected) => state;
         }
 
         private sealed class NullStateTypeModule : IGameModule
@@ -147,6 +149,7 @@ namespace MagiGameServer.Modules.Tests
             public Type ActionType => typeof(FakeAction);
             public Type StateType => null;
             public object CreateInitialState(GameConfig config) => new FakeState();
+            public object SetSeatPresence(object state, SeatId seat, bool isConnected) => state;
         }
     }
 }

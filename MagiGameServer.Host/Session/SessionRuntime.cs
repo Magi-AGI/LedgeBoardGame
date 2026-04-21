@@ -39,6 +39,17 @@ namespace MagiGameServer.Host.Session
         // outbound Channel. A plain Dictionary would be undefined behavior
         // under that access pattern even if tests don't hit it.
         private readonly ConcurrentDictionary<int, SeatConnection> _seats = new ConcurrentDictionary<int, SeatConnection>();
+        // Persistent seat ownership. Entries are added on a fresh attach/
+        // claim and kept across disconnects — a reattach matches the token
+        // and reuses the same seat, while a new claim must skip any seat
+        // that still has an owner. "No seat-reclaim timeout" is the scope:
+        // once a seat is claimed it belongs to that client for the
+        // session's lifetime. Mutation runs from the dispatcher thread
+        // only, but ConcurrentDictionary is used for the same reason as
+        // _seats — it's read from other tasks when we route reattach
+        // lookups and resist future refactors that might introduce
+        // additional writers.
+        private readonly ConcurrentDictionary<int, string> _seatOwners = new ConcurrentDictionary<int, string>();
         private readonly Task _dispatcherTask;
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
 
@@ -71,6 +82,42 @@ namespace MagiGameServer.Host.Session
             var connection = new SeatConnection(seat, socket);
             await _work.Writer.WriteAsync(new AttachWork(seat, connection, tcs), ct).ConfigureAwait(false);
             return await tcs.Task.ConfigureAwait(false);
+        }
+
+        /// Claim the lowest-numbered free seat and attach the socket to it.
+        /// Returns the assigned SeatId, or null if every seat is already
+        /// occupied. The scan + insert runs on the dispatcher thread, so
+        /// two simultaneous claims can never land on the same seat — the
+        /// single-reader channel serializes them by construction.
+        public async ValueTask<SeatId?> TryClaimAndAttachAsync(WebSocket socket, CancellationToken ct)
+        {
+            var tcs = new TaskCompletionSource<SeatId?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            await _work.Writer.WriteAsync(new ClaimWork(socket, tcs), ct).ConfigureAwait(false);
+            return await tcs.Task.ConfigureAwait(false);
+        }
+
+        /// Reattach a seat using a reconnect token issued on the original
+        /// claim. Returns one of the ReattachOutcome values; on Success the
+        /// socket is live and the caller should run the send loop. The
+        /// seat/token match and liveness checks run on the dispatcher
+        /// thread — same channel-serialization guarantee as the other
+        /// attach paths.
+        public async ValueTask<ReattachOutcome> TryReattachAsync(SeatId seat, string token, WebSocket socket, CancellationToken ct)
+        {
+            if (seat.Value < 0 || seat.Value >= _session.SeatCount) return ReattachOutcome.SeatOutOfRange;
+            if (string.IsNullOrEmpty(token)) return ReattachOutcome.TokenMismatch;
+            var tcs = new TaskCompletionSource<ReattachOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var connection = new SeatConnection(seat, socket);
+            await _work.Writer.WriteAsync(new ReattachWork(seat, token, connection, tcs), ct).ConfigureAwait(false);
+            return await tcs.Task.ConfigureAwait(false);
+        }
+
+        public enum ReattachOutcome
+        {
+            Success,
+            SeatOutOfRange,
+            TokenMismatch,
+            SeatAlreadyAttached,
         }
 
         public ValueTask SubmitAsync(SeatId seat, JsonDocument frameDoc, CancellationToken ct)
@@ -114,6 +161,8 @@ namespace MagiGameServer.Host.Session
                         switch (item)
                         {
                             case AttachWork a: HandleAttach(a); break;
+                            case ClaimWork c: HandleClaim(c); break;
+                            case ReattachWork r: HandleReattach(r); break;
                             case DetachWork d: HandleDetach(d); break;
                             case FrameWork f: HandleFrame(f); break;
                             case ProtocolErrorWork e: SendError(e.Seat, e.Code, e.Message, e.Acked); break;
@@ -137,10 +186,112 @@ namespace MagiGameServer.Host.Session
             }
             _logger.LogInformation("Seat {Seat} attached to session {Session}", work.Seat, Id);
 
-            var snapshot = BuildJoinSnapshot(work.Seat);
+            // Seat ownership: if nobody owns this seat yet, the attacher
+            // becomes the owner and gets a fresh token. If an owner already
+            // exists (e.g. rapid reconnect on a seat whose prior socket
+            // hasn't detached yet), we hand the same token back — reattach
+            // semantics are seat-identity, not frame-identity. The client
+            // stashes the token for a later no-token-lost reattach via 5c.
+            string token = _seatOwners.GetOrAdd(work.Seat.Value, _ => NewReconnectToken());
+            // Flip IsConnected=true in canonical state BEFORE building the
+            // JoinSnapshot so the attaching seat sees its own presence set
+            // in the very first frame. Other seats receive the change as an
+            // echo below.
+            var presenceResult = TrySetPresence(work.Seat, true);
+            var snapshot = BuildJoinSnapshot(work.Seat, token);
             var frame = WrapServerFrame(ServerFrameKind.JoinSnapshot, joinSnapshot: snapshot);
             SendTo(work.Seat, frame);
+            BroadcastPresenceEchoExcluding(presenceResult, work.Seat);
             work.Completion.TrySetResult(true);
+        }
+
+        private void HandleClaim(ClaimWork work)
+        {
+            // Linear scan over the seat range. SeatCount is bounded by
+            // module.MaxSeats (8 for LedgeBoardGame today), so O(n) here
+            // is strictly cheaper than maintaining a sorted free-set.
+            for (int i = 0; i < _session.SeatCount; i++)
+            {
+                if (_seats.ContainsKey(i)) continue;
+                // Skip seats that have been claimed earlier in the session
+                // but are currently disconnected — they're owned, waiting
+                // for their original client to reattach. "No seat-reclaim
+                // timeout" is an explicit P5 constraint: once a seat is
+                // claimed it stays with the claimant for the session.
+                if (_seatOwners.ContainsKey(i)) continue;
+
+                var seat = new SeatId(i);
+                var connection = new SeatConnection(seat, work.Socket);
+                // _seats is the source of truth the scan just consulted; a
+                // concurrent external write is impossible because only the
+                // dispatcher thread mutates it. TryAdd still guards against
+                // future refactors that might add another writer.
+                if (!_seats.TryAdd(i, connection))
+                {
+                    connection.Outgoing.Writer.TryComplete();
+                    continue;
+                }
+
+                string token = NewReconnectToken();
+                // Record ownership before the JoinSnapshot so a concurrent
+                // claim on the next iteration of this scan (or a follow-up
+                // work item) sees the seat as taken. In practice the
+                // dispatcher is single-threaded so the ordering only
+                // matters across separate work items, not within one.
+                _seatOwners[i] = token;
+                _logger.LogInformation("Seat {Seat} claimed on session {Session}", seat, Id);
+                var presenceResult = TrySetPresence(seat, true);
+                var snapshot = BuildJoinSnapshot(seat, token);
+                var frame = WrapServerFrame(ServerFrameKind.JoinSnapshot, joinSnapshot: snapshot);
+                SendTo(seat, frame);
+                BroadcastPresenceEchoExcluding(presenceResult, seat);
+                work.Completion.TrySetResult(seat);
+                return;
+            }
+
+            // Every seat taken (or owned-but-disconnected) — caller
+            // closes the socket with PolicyViolation "session_full".
+            work.Completion.TrySetResult(null);
+        }
+
+        private void HandleReattach(ReattachWork work)
+        {
+            // Token must match the owner recorded on the original claim.
+            // Unknown seat = nobody ever claimed it, so it can't be
+            // reattached — the client should claim fresh instead.
+            if (!_seatOwners.TryGetValue(work.Seat.Value, out var owner))
+            {
+                work.Completion.TrySetResult(ReattachOutcome.TokenMismatch);
+                return;
+            }
+            if (!string.Equals(owner, work.Token, StringComparison.Ordinal))
+            {
+                work.Completion.TrySetResult(ReattachOutcome.TokenMismatch);
+                return;
+            }
+            // If the seat is already live, the previous socket hasn't
+            // detached yet (client reconnected faster than the old
+            // connection's close propagated). Report the collision so the
+            // caller can 409 — the original client needs to drop its old
+            // socket or wait for its close to land.
+            if (!_seats.TryAdd(work.Seat.Value, work.Connection))
+            {
+                work.Completion.TrySetResult(ReattachOutcome.SeatAlreadyAttached);
+                return;
+            }
+
+            _logger.LogInformation("Seat {Seat} reattached to session {Session}", work.Seat, Id);
+
+            // Presence flips back to true and the snapshot echoes the
+            // EXISTING token (not a new one) — a reattach must be
+            // idempotent in token-identity so the client's stash stays
+            // valid across multiple reconnects.
+            var presenceResult = TrySetPresence(work.Seat, true);
+            var snapshot = BuildJoinSnapshot(work.Seat, owner);
+            var frame = WrapServerFrame(ServerFrameKind.JoinSnapshot, joinSnapshot: snapshot);
+            SendTo(work.Seat, frame);
+            BroadcastPresenceEchoExcluding(presenceResult, work.Seat);
+            work.Completion.TrySetResult(ReattachOutcome.Success);
         }
 
         private void HandleDetach(DetachWork work)
@@ -149,6 +300,51 @@ namespace MagiGameServer.Host.Session
             {
                 conn.Outgoing.Writer.TryComplete();
                 _logger.LogInformation("Seat {Seat} detached from session {Session}", work.Seat, Id);
+                // _seatOwners is deliberately NOT cleared — the seat stays
+                // owned for the remainder of the session. A fresh claim
+                // will skip it; a reattach (5c) will match the stashed
+                // token and revive the seat with its original identity.
+                // After removal from _seats so the fan-out skips the
+                // departing socket (its outbound channel is already closed
+                // by TryComplete above). Echo to every remaining seat so
+                // their rosters reflect the departure.
+                var presenceResult = TrySetPresence(work.Seat, false);
+                BroadcastPresenceEchoExcluding(presenceResult, work.Seat);
+            }
+        }
+
+        private static string NewReconnectToken() => Guid.NewGuid().ToString("N");
+
+        private SessionApplyResult TrySetPresence(SeatId seat, bool isConnected)
+        {
+            try
+            {
+                return _session.SetSeatPresence(seat, isConnected);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "SetSeatPresence threw for seat {Seat} on session {Session}", seat, Id);
+                return new SessionApplyResult
+                {
+                    Outcome = ApplyOutcome.Rejected,
+                    Revision = _session.CurrentRevision,
+                    Echoes = Array.Empty<StateEcho<object>>(),
+                };
+            }
+        }
+
+        private void BroadcastPresenceEchoExcluding(SessionApplyResult result, SeatId exclude)
+        {
+            // Rejected == module returned the input ref (no-op). Nothing to
+            // broadcast; nobody's view changed. Applied means state + revision
+            // moved and the echo set is populated.
+            if (result == null || result.Outcome != ApplyOutcome.Applied || result.Echoes == null) return;
+            foreach (var echo in result.Echoes)
+            {
+                if (echo.ForSeat == exclude) continue;
+                if (!_seats.ContainsKey(echo.ForSeat.Value)) continue;
+                var wrapped = WrapServerFrameWithTypedEcho(echo);
+                SendTo(echo.ForSeat, wrapped);
             }
         }
 
@@ -303,7 +499,7 @@ namespace MagiGameServer.Host.Session
             }
         }
 
-        private object BuildJoinSnapshot(SeatId seat)
+        private object BuildJoinSnapshot(SeatId seat, string reconnectToken)
         {
             var (projected, hash, revision) = _session.ProjectForSeat(seat);
             var snapshotType = typeof(JoinSnapshot<>).MakeGenericType(_module.StateType);
@@ -313,6 +509,7 @@ namespace MagiGameServer.Host.Session
             SetProp(snap, "Revision", revision);
             SetProp(snap, "State", projected);
             SetProp(snap, "StateHash", hash);
+            SetProp(snap, "ReconnectToken", reconnectToken);
             return snap;
         }
 
@@ -431,6 +628,8 @@ namespace MagiGameServer.Host.Session
 
         private interface IWorkItem { }
         private sealed record AttachWork(SeatId Seat, SeatConnection Connection, TaskCompletionSource<bool> Completion) : IWorkItem;
+        private sealed record ClaimWork(WebSocket Socket, TaskCompletionSource<SeatId?> Completion) : IWorkItem;
+        private sealed record ReattachWork(SeatId Seat, string Token, SeatConnection Connection, TaskCompletionSource<ReattachOutcome> Completion) : IWorkItem;
         private sealed record DetachWork(SeatId Seat) : IWorkItem;
         private sealed record FrameWork(SeatId Seat, JsonDocument Frame) : IWorkItem;
         private sealed record ProtocolErrorWork(SeatId Seat, string Code, string Message, ClientSeq Acked) : IWorkItem;

@@ -63,6 +63,63 @@ namespace MagiGameServer.Core
             return (projected, hash, _revision);
         }
 
+        public SessionApplyResult SetSeatPresence(SeatId seat, bool isConnected)
+        {
+            if (seat.Value < 0 || seat.Value >= SeatCount)
+                throw new ArgumentOutOfRangeException(nameof(seat),
+                    $"Seat {seat} out of range [0,{SeatCount}) for session {Id}");
+
+            object nextState = _module.SetSeatPresence(_state, seat, isConnected);
+            // Reference-equality no-op contract: the module returns the
+            // input ref when the flip is a no-op (presence already matches
+            // or the game doesn't model presence). We skip the log /
+            // revision / echo work in that case — a "no-op with full
+            // broadcast" would force clients to re-apply unchanged state
+            // and log a phantom revision advance in their diff stream.
+            if (ReferenceEquals(nextState, _state))
+            {
+                return new SessionApplyResult
+                {
+                    Outcome = ApplyOutcome.Rejected,
+                    Revision = _revision,
+                    Echoes = Array.Empty<StateEcho<object>>(),
+                };
+            }
+
+            _state = nextState;
+            _revision = _revision.Next();
+            // Build a synthetic envelope for the log entry so takeback
+            // rewinds that cross this presence change restore the pre-flip
+            // state. The log has always held ActionEnvelope<object> — we
+            // reuse it with Action=null, Seat=the-changing-seat, Seq=default
+            // so the shape stays uniform; callers that walk the log for
+            // replay/debug should treat a null Action as "presence
+            // transition at this revision".
+            var syntheticEnvelope = new ActionEnvelope<object>
+            {
+                Session = Id,
+                Seat = seat,
+                Seq = default,
+                Action = null,
+                PredictedStateHash = 0,
+            };
+            _log.Add(new LogEntry(syntheticEnvelope, _rules.SnapshotState(_state), _revision));
+
+            var echoes = BuildEchoes(
+                submittingSeat: seat,
+                ackedSeq: default,
+                state: _state,
+                outcome: ApplyOutcome.Applied,
+                revision: _revision);
+
+            return new SessionApplyResult
+            {
+                Outcome = ApplyOutcome.Applied,
+                Revision = _revision,
+                Echoes = echoes,
+            };
+        }
+
         public SessionApplyResult Apply(ActionEnvelope<object> envelope)
         {
             if (envelope == null) throw new ArgumentNullException(nameof(envelope));

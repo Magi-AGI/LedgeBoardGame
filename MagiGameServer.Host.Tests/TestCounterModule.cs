@@ -59,5 +59,7 @@ namespace MagiGameServer.Host.Tests
             }
             return new CounterState { Value = start };
         }
+
+        public object SetSeatPresence(object state, SeatId seat, bool isConnected) => state;
     }
 }

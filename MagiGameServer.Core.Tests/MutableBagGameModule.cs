@@ -69,6 +69,8 @@ namespace MagiGameServer.Core.Tests
 
         public object CreateInitialState(GameConfig config) => new MutableBagState();
 
+        public object SetSeatPresence(object state, SeatId seat, bool isConnected) => state;
+
         public static GameConfig DefaultConfig(int seatCount = 1)
             => new GameConfig
             {

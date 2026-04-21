@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using MagiGameServer.Contracts.Core;
 
 namespace MagiGameServer.Contracts.Rules
 {
@@ -52,6 +53,21 @@ namespace MagiGameServer.Contracts.Rules
         /// a gameId with a module tells the client which concrete TState
         /// to expect from echoes.
         Type StateType { get; }
+
+        /// Applies a seat presence change (connect / disconnect) to `state`.
+        /// Called by the server transport when a WebSocket attaches or
+        /// detaches — outside the normal action pipeline, so the module is
+        /// the single point of truth for how presence is represented in its
+        /// state type (LedgeBoardGame flips Players[seat].IsConnected; a
+        /// sibling game might maintain a separate presence set).
+        ///
+        /// Must not mutate the input `state`. When the change is a no-op
+        /// (presence already matches, or this game doesn't model presence),
+        /// return the input reference and the host will skip the revision
+        /// bump + broadcast. Otherwise return a fresh state with the flip
+        /// applied — the host snapshots this into the session's log so
+        /// takeback rewinds after a presence change behave sensibly.
+        object SetSeatPresence(object state, SeatId seat, bool isConnected);
     }
 
     /// Per-session configuration passed to CreateInitialState. Kept as a

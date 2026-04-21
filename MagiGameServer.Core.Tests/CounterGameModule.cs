@@ -65,6 +65,8 @@ namespace MagiGameServer.Core.Tests
             return new CounterState { Value = start };
         }
 
+        public object SetSeatPresence(object state, SeatId seat, bool isConnected) => state;
+
         public static GameConfig DefaultConfig(int seatCount = 2, IReadOnlyDictionary<string, string> options = null)
             => new GameConfig
             {

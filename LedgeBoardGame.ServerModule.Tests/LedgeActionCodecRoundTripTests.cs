@@ -58,5 +58,16 @@ namespace Magi.LedgeBoardGame.ServerModule.Tests
             Assert.That(decoded.To.BoardId, Is.EqualTo(2));
             Assert.That(decoded.To.Id, Is.EqualTo(11));
         }
+
+        [Test]
+        public void LedgeAction_SetDisplayName_RoundTripsPayload()
+        {
+            var action = LedgeAction.SetDisplayName(4, "Anna");
+            string json = EnvelopeCodec.SerializeToString(action);
+            var decoded = EnvelopeCodec.Deserialize<LedgeAction>(json);
+            Assert.That(decoded.Kind, Is.EqualTo(LedgeActionKind.SetDisplayName));
+            Assert.That(decoded.PlayerId, Is.EqualTo(4));
+            Assert.That(decoded.DisplayName, Is.EqualTo("Anna"));
+        }
     }
 }

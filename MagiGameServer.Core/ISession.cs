@@ -37,5 +37,16 @@ namespace MagiGameServer.Core
         /// returns the module's chosen outcome plus — when Granted — a
         /// fresh per-seat echo set carrying the post-rewind state.
         SessionTakebackResult Takeback(TakebackRequest request);
+
+        /// Flips a seat's presence in the canonical state. Delegates to
+        /// IGameModule.SetSeatPresence; when the module returns the input
+        /// unchanged (no-op flip or game doesn't model presence), Outcome
+        /// is Rejected and Revision is unchanged — the transport should
+        /// skip the broadcast. On a real change, state is snapshotted into
+        /// the log and Revision advances by one, so takeback crossing a
+        /// presence transition rewinds the flip along with the actions.
+        /// SubmittingSeat in the echoes is the seat whose presence changed
+        /// (there is no real submitter); AckedSeq is default.
+        SessionApplyResult SetSeatPresence(SeatId seat, bool isConnected);
     }
 }
