@@ -26,6 +26,15 @@ namespace Magi.LedgeBoardGame.Board
         private bool _dragging;
         private Vector2 _lastPointer;
         private int _lastBoardCount = -1;
+        // Per-board hover-scoped zoom/pan. When the pointer is over a
+        // specific board's rect, mouse-wheel zoom and middle/right drag
+        // operate on that board alone instead of the whole container —
+        // lets players inspect one opponent without shifting everybody
+        // else. Drops back to container-scope when no board is hovered
+        // (e.g. margin drag for a quick recenter).
+        private readonly Dictionary<BoardPresenter, float> _boardScale = new Dictionary<BoardPresenter, float>();
+        private readonly Dictionary<BoardPresenter, Vector2> _boardPanOffset = new Dictionary<BoardPresenter, Vector2>();
+        private BoardPresenter _activeDragBoard;
 
         private void Awake()
         {
@@ -58,24 +67,34 @@ namespace Magi.LedgeBoardGame.Board
             // reported being able to zoom but not slide the board around,
             // so the minimum useful inspection gesture is drag-to-pan
             // regardless of mode.
-            HandlePan();
+            HandlePan(presenters);
             if (locked) return;
 
-            HandleZoom();
+            HandleZoom(presenters);
             HandleHotkeys(presenters);
         }
 
         /// Force a refit — called after a view-mode change when the set of
         /// visible boards changes but the total presenter count hasn't.
+        /// Also clears per-board hover state so a fresh layout starts at
+        /// uniform scale and zero offset.
         public void RequestFit()
         {
             _lastBoardCount = -1;
+            ResetPerBoardState();
         }
 
-        private void HandleZoom()
+        private void HandleZoom(BoardPresenter[] presenters)
         {
             if (!TryReadScroll(out float scrollY) || Mathf.Approximately(scrollY, 0f)) return;
             if (!TryReadPointer(out var pointer)) return;
+
+            var hovered = FindHoveredBoard(presenters, pointer);
+            if (hovered != null)
+            {
+                ZoomBoard(hovered, scrollY);
+                return;
+            }
 
             float current = _rect.localScale.x;
             float next = Mathf.Clamp(current + Mathf.Sign(scrollY) * zoomStep, minScale, maxScale);
@@ -91,7 +110,19 @@ namespace Magi.LedgeBoardGame.Board
             _rect.localScale = new Vector3(next, next, 1f);
         }
 
-        private void HandlePan()
+        private void ZoomBoard(BoardPresenter board, float scrollY)
+        {
+            var rt = board.GetComponent<RectTransform>();
+            if (rt == null) return;
+            float current = rt.localScale.x;
+            if (current <= 0f) current = 1f;
+            float next = Mathf.Clamp(current + Mathf.Sign(scrollY) * zoomStep, minScale, maxScale);
+            if (Mathf.Approximately(next, current)) return;
+            rt.localScale = new Vector3(next, next, 1f);
+            _boardScale[board] = next;
+        }
+
+        private void HandlePan(BoardPresenter[] presenters)
         {
             bool pressed = TryReadMiddleOrRightButton(out bool justPressed, out bool justReleased);
             if (!TryReadPointer(out var pointer)) return;
@@ -100,18 +131,59 @@ namespace Magi.LedgeBoardGame.Board
             {
                 _dragging = true;
                 _lastPointer = pointer;
+                // Capture which board (if any) the press started on —
+                // the drag stays scoped to that board for its duration
+                // even if the pointer wanders into another board's rect
+                // partway through, which would otherwise cause a visual
+                // jump as different boards start shifting.
+                _activeDragBoard = FindHoveredBoard(presenters, pointer);
             }
             else if (justReleased)
             {
                 _dragging = false;
+                _activeDragBoard = null;
             }
 
             if (_dragging && pressed)
             {
                 var delta = pointer - _lastPointer;
-                _rect.anchoredPosition += delta;
+                if (_activeDragBoard != null)
+                {
+                    var rt = _activeDragBoard.GetComponent<RectTransform>();
+                    if (rt != null) rt.anchoredPosition += delta;
+                    if (_boardPanOffset.TryGetValue(_activeDragBoard, out var acc)) _boardPanOffset[_activeDragBoard] = acc + delta;
+                    else _boardPanOffset[_activeDragBoard] = delta;
+                }
+                else
+                {
+                    _rect.anchoredPosition += delta;
+                }
                 _lastPointer = pointer;
             }
+        }
+
+        private static BoardPresenter FindHoveredBoard(BoardPresenter[] presenters, Vector2 screenPoint)
+        {
+            if (presenters == null) return null;
+            // Reverse iterate so boards drawn on top (later in the sibling
+            // order) win hover ties — matches the natural UI stacking.
+            for (int i = presenters.Length - 1; i >= 0; i--)
+            {
+                var p = presenters[i];
+                if (p == null || !p.isActiveAndEnabled) continue;
+                var rt = p.GetComponent<RectTransform>();
+                if (rt == null) continue;
+                if (RectTransformUtility.RectangleContainsScreenPoint(rt, screenPoint, null))
+                    return p;
+            }
+            return null;
+        }
+
+        private void ResetPerBoardState()
+        {
+            _boardScale.Clear();
+            _boardPanOffset.Clear();
+            _activeDragBoard = null;
         }
 
         private void HandleHotkeys(BoardPresenter[] presenters)
@@ -154,6 +226,15 @@ namespace Magi.LedgeBoardGame.Board
 
             _rect.localScale = new Vector3(scale, scale, 1f);
             _rect.anchoredPosition = Vector2.zero;
+            // Any per-board zoom/pan residue is now inconsistent with the
+            // fresh container fit — reset so boards start uniform.
+            foreach (var p in presenters)
+            {
+                if (p == null) continue;
+                var rt = p.GetComponent<RectTransform>();
+                if (rt != null) rt.localScale = Vector3.one;
+            }
+            ResetPerBoardState();
         }
 
 #if ENABLE_INPUT_SYSTEM
