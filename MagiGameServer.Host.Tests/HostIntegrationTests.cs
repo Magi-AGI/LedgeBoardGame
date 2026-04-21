@@ -560,6 +560,56 @@ namespace MagiGameServer.Host.Tests
             await ws1.CloseAsync(WebSocketCloseStatus.NormalClosure, null, cts.Token);
         }
 
+        // GET /session/{id}/state — read-only snapshot endpoint. Must
+        // reflect current canonical state, route through the dispatcher
+        // so it never races an in-flight Apply, and stay consistent with
+        // what attached sockets see via StateEcho.
+        [Test]
+        public async Task GetSessionState_ReflectsCanonicalRevisionAndHash()
+        {
+            var session = await OpenAsync(seatCount: 2);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            var ws0 = await ConnectAsync(session.Session, 0, cts.Token);
+            await ReceiveFrameAsync(ws0, cts.Token); // JoinSnapshot
+
+            await SendActionAsync(ws0, session.Session, 0, seq: 1, delta: 7, predictedHash: 0, cts.Token);
+            var echo = await ReceiveFrameAsync(ws0, cts.Token);
+            Assert.That(echo.Kind, Is.EqualTo(ServerFrameKind.StateEcho));
+
+            using var client = _factory.CreateClient();
+            var resp = await client.GetAsync($"/session/{session.Session.Value}/state");
+            Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            var root = doc.RootElement;
+            Assert.That(root.GetProperty("session").GetString(), Is.EqualTo(session.Session.Value));
+            Assert.That(root.GetProperty("gameId").GetString(), Is.EqualTo("counter"));
+            Assert.That(root.GetProperty("seatCount").GetInt32(), Is.EqualTo(2));
+            Assert.That(root.GetProperty("seat").GetInt32(), Is.EqualTo(0));
+            Assert.That(root.GetProperty("revision").GetInt64(), Is.EqualTo(echo.Echo.Revision.Value));
+            Assert.That(root.GetProperty("stateHash").GetInt64(), Is.EqualTo(echo.Echo.StateHash));
+            Assert.That(root.GetProperty("state").GetProperty("value").GetInt32(), Is.EqualTo(7));
+
+            await ws0.CloseAsync(WebSocketCloseStatus.NormalClosure, null, cts.Token);
+        }
+
+        [Test]
+        public async Task GetSessionState_UnknownSession_Returns404()
+        {
+            using var client = _factory.CreateClient();
+            var resp = await client.GetAsync("/session/no-such-session/state");
+            Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.NotFound));
+        }
+
+        [Test]
+        public async Task GetSessionState_SeatOutOfRange_Returns400()
+        {
+            var session = await OpenAsync(seatCount: 2);
+            using var client = _factory.CreateClient();
+            var resp = await client.GetAsync($"/session/{session.Session.Value}/state?seat=5");
+            Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        }
+
         // Parallel claims must not double-assign. All 4 connects happen
         // before any one reads its JoinSnapshot. Every seat in [0..3] must
         // appear exactly once across the four ForSeat values.

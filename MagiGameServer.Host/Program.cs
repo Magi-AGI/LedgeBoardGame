@@ -120,6 +120,37 @@ namespace MagiGameServer.Host
                 });
             });
 
+            // Read-only snapshot endpoint for debug / admin / M5b driver tests.
+            // No authentication — scope is localhost-only / trusted-network use.
+            // ?seat=N projects for a specific seat; default 0 is equivalent to
+            // canonical state for every perfect-info module today. Routed
+            // through the runtime's dispatcher queue so the read never races
+            // an in-flight Apply.
+            app.MapGet("/session/{sessionId}/state", async (HttpContext ctx, string sessionId, int? seat, SessionRegistry registry) =>
+            {
+                if (!registry.TryGet(new SessionId(sessionId), out var runtime))
+                {
+                    return Results.NotFound(new { code = "unknown_session", message = $"No session {sessionId}" });
+                }
+                int seatValue = seat ?? 0;
+                if (seatValue < 0 || seatValue >= runtime.SeatCount)
+                {
+                    return Results.BadRequest(new { code = "seat_out_of_range",
+                        message = $"seat {seatValue} outside [0,{runtime.SeatCount})" });
+                }
+                var snap = await runtime.SnapshotAsync(new SeatId(seatValue), ctx.RequestAborted).ConfigureAwait(false);
+                return Results.Ok(new
+                {
+                    session = sessionId,
+                    gameId = runtime.GameId,
+                    seatCount = runtime.SeatCount,
+                    seat = seatValue,
+                    revision = snap.Revision.Value,
+                    stateHash = snap.StateHash,
+                    state = snap.State,
+                });
+            });
+
             app.MapGet("/session/{sessionId}", async (HttpContext ctx, string sessionId, SessionRegistry registry, ILogger<SessionRuntime> logger) =>
             {
                 if (!ctx.WebSockets.IsWebSocketRequest)

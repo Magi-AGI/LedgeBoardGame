@@ -126,56 +126,133 @@ namespace MagiGameServer.Host.Session
         public ValueTask DetachAsync(SeatId seat, CancellationToken ct)
             => _work.Writer.WriteAsync(new DetachWork(seat), ct);
 
+        /// Projects the current canonical state for debug/admin reads. The
+        /// read routes through the dispatcher channel so it never races an
+        /// in-flight Apply mid-mutation — same single-writer invariant the
+        /// attach/detach/frame paths honour. Seat defaults to 0 since every
+        /// current module is perfect-info; private-info modules will want
+        /// the explicit seat projection.
+        public async ValueTask<SnapshotResult> SnapshotAsync(SeatId seat, CancellationToken ct)
+        {
+            if (seat.Value < 0 || seat.Value >= _session.SeatCount)
+                throw new ArgumentOutOfRangeException(nameof(seat),
+                    $"Seat {seat} out of range [0,{_session.SeatCount}) for session {Id}");
+            var tcs = new TaskCompletionSource<SnapshotResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            await _work.Writer.WriteAsync(new SnapshotWork(seat, tcs), ct).ConfigureAwait(false);
+            return await tcs.Task.ConfigureAwait(false);
+        }
+
+        public sealed class SnapshotResult
+        {
+            public object State { get; }
+            public long StateHash { get; }
+            public ServerSeq Revision { get; }
+
+            public SnapshotResult(object state, long stateHash, ServerSeq revision)
+            {
+                State = state;
+                StateHash = stateHash;
+                Revision = revision;
+            }
+        }
+
         /// Drains outbound frames into the seat's WebSocket. Runs as a
         /// per-seat task so slow clients don't block the session
         /// dispatcher.
         public async Task RunSendLoopAsync(SeatId seat, CancellationToken ct)
         {
             if (!_seats.TryGetValue(seat.Value, out var conn)) return;
-            try
+            using (_logger.BeginScope(SeatScope(seat)))
             {
-                while (await conn.Outgoing.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
+                try
                 {
-                    while (conn.Outgoing.Reader.TryRead(out var bytes))
+                    while (await conn.Outgoing.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
                     {
-                        if (conn.Socket.State != WebSocketState.Open) return;
-                        await conn.Socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
+                        while (conn.Outgoing.Reader.TryRead(out var bytes))
+                        {
+                            if (conn.Socket.State != WebSocketState.Open) return;
+                            await conn.Socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
+                        }
                     }
                 }
-            }
-            catch (OperationCanceledException) { }
-            catch (WebSocketException ex)
-            {
-                _logger.LogInformation(ex, "Send loop terminated for session {Session} seat {Seat}", Id, seat);
+                catch (OperationCanceledException) { }
+                catch (WebSocketException ex)
+                {
+                    _logger.LogInformation(ex, "Send loop terminated");
+                }
             }
         }
 
         private async Task DispatchLoopAsync()
         {
-            try
+            using (_logger.BeginScope(SessionScope()))
             {
-                while (await _work.Reader.WaitToReadAsync(_shutdown.Token).ConfigureAwait(false))
+                try
                 {
-                    while (_work.Reader.TryRead(out var item))
+                    while (await _work.Reader.WaitToReadAsync(_shutdown.Token).ConfigureAwait(false))
                     {
-                        switch (item)
+                        while (_work.Reader.TryRead(out var item))
                         {
-                            case AttachWork a: HandleAttach(a); break;
-                            case ClaimWork c: HandleClaim(c); break;
-                            case ReattachWork r: HandleReattach(r); break;
-                            case DetachWork d: HandleDetach(d); break;
-                            case FrameWork f: HandleFrame(f); break;
-                            case ProtocolErrorWork e: SendError(e.Seat, e.Code, e.Message, e.Acked); break;
+                            DispatchOne(item);
                         }
                     }
                 }
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Dispatcher crashed for session {Session}", Id);
+                catch (OperationCanceledException) { }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Dispatcher crashed");
+                }
             }
         }
+
+        private void DispatchOne(IWorkItem item)
+        {
+            // Attach a Seat scope for every work item that has one so the log
+            // line for the handler (and anything it calls transitively) carries
+            // SessionId + Seat automatically. ClaimWork has no seat yet (the
+            // handler assigns one), so it runs under the session scope only.
+            SeatId? seat = item switch
+            {
+                AttachWork a => a.Seat,
+                ReattachWork r => r.Seat,
+                DetachWork d => d.Seat,
+                FrameWork f => f.Seat,
+                SnapshotWork s => s.Seat,
+                ProtocolErrorWork e => e.Seat,
+                _ => (SeatId?)null,
+            };
+            IDisposable seatScope = seat.HasValue ? _logger.BeginScope(SeatScope(seat.Value)) : null;
+            try
+            {
+                switch (item)
+                {
+                    case AttachWork a: HandleAttach(a); break;
+                    case ClaimWork c: HandleClaim(c); break;
+                    case ReattachWork r: HandleReattach(r); break;
+                    case DetachWork d: HandleDetach(d); break;
+                    case FrameWork f: HandleFrame(f); break;
+                    case SnapshotWork s: HandleSnapshot(s); break;
+                    case ProtocolErrorWork e: SendError(e.Seat, e.Code, e.Message, e.Acked); break;
+                }
+            }
+            finally
+            {
+                seatScope?.Dispose();
+            }
+        }
+
+        private Dictionary<string, object> SessionScope() => new Dictionary<string, object>
+        {
+            ["SessionId"] = Id.Value,
+            ["GameId"] = GameId,
+        };
+
+        private Dictionary<string, object> SeatScope(SeatId seat) => new Dictionary<string, object>
+        {
+            ["SessionId"] = Id.Value,
+            ["GameId"] = GameId,
+            ["Seat"] = seat.Value,
+        };
 
         private void HandleAttach(AttachWork work)
         {
@@ -184,7 +261,7 @@ namespace MagiGameServer.Host.Session
                 work.Completion.TrySetResult(false);
                 return;
             }
-            _logger.LogInformation("Seat {Seat} attached to session {Session}", work.Seat, Id);
+            _logger.LogInformation("Seat attached");
 
             // Seat ownership: if nobody owns this seat yet, the attacher
             // becomes the owner and gets a fresh token. If an owner already
@@ -239,7 +316,7 @@ namespace MagiGameServer.Host.Session
                 // dispatcher is single-threaded so the ordering only
                 // matters across separate work items, not within one.
                 _seatOwners[i] = token;
-                _logger.LogInformation("Seat {Seat} claimed on session {Session}", seat, Id);
+                _logger.LogInformation("Seat claimed (seat={Seat})", seat.Value);
                 var presenceResult = TrySetPresence(seat, true);
                 var snapshot = BuildJoinSnapshot(seat, token);
                 var frame = WrapServerFrame(ServerFrameKind.JoinSnapshot, joinSnapshot: snapshot);
@@ -280,7 +357,7 @@ namespace MagiGameServer.Host.Session
                 return;
             }
 
-            _logger.LogInformation("Seat {Seat} reattached to session {Session}", work.Seat, Id);
+            _logger.LogInformation("Seat reattached");
 
             // Presence flips back to true and the snapshot echoes the
             // EXISTING token (not a new one) — a reattach must be
@@ -294,12 +371,25 @@ namespace MagiGameServer.Host.Session
             work.Completion.TrySetResult(ReattachOutcome.Success);
         }
 
+        private void HandleSnapshot(SnapshotWork work)
+        {
+            try
+            {
+                var (projected, hash, revision) = _session.ProjectForSeat(work.Seat);
+                work.Completion.TrySetResult(new SnapshotResult(projected, hash, revision));
+            }
+            catch (Exception ex)
+            {
+                work.Completion.TrySetException(ex);
+            }
+        }
+
         private void HandleDetach(DetachWork work)
         {
             if (_seats.TryRemove(work.Seat.Value, out var conn))
             {
                 conn.Outgoing.Writer.TryComplete();
-                _logger.LogInformation("Seat {Seat} detached from session {Session}", work.Seat, Id);
+                _logger.LogInformation("Seat detached");
                 // _seatOwners is deliberately NOT cleared — the seat stays
                 // owned for the remainder of the session. A fresh claim
                 // will skip it; a reattach (5c) will match the stashed
@@ -323,7 +413,7 @@ namespace MagiGameServer.Host.Session
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "SetSeatPresence threw for seat {Seat} on session {Session}", seat, Id);
+                _logger.LogWarning(ex, "SetSeatPresence threw (seat={Seat})", seat.Value);
                 return new SessionApplyResult
                 {
                     Outcome = ApplyOutcome.Rejected,
@@ -375,7 +465,7 @@ namespace MagiGameServer.Host.Session
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to dispatch frame on session {Session} seat {Seat}", Id, work.Seat);
+                _logger.LogWarning(ex, "Failed to dispatch frame");
                 SendError(work.Seat, "frame_error", ex.Message, default);
             }
         }
@@ -408,20 +498,19 @@ namespace MagiGameServer.Host.Session
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Apply threw on session {Session}", Id);
+                _logger.LogWarning(ex, "Apply threw");
                 SendError(seat, "apply_failed", ex.Message, envelope.Seq);
                 return;
             }
 
             if (result.Outcome == ApplyOutcome.Desynced)
             {
-                _logger.LogWarning("Desync on session {Session} seat {Seat} revision {Revision}",
-                    Id, seat, result.Revision);
+                _logger.LogWarning("Desync at revision {Revision}", result.Revision);
             }
             else
             {
-                _logger.LogInformation("Apply {Outcome} on session {Session} seat {Seat} revision {Revision}",
-                    result.Outcome, Id, seat, result.Revision);
+                _logger.LogInformation("Apply {Outcome} at revision {Revision}",
+                    result.Outcome, result.Revision);
             }
 
             FanOutEchoes(result.Echoes);
@@ -459,21 +548,19 @@ namespace MagiGameServer.Host.Session
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Takeback threw on session {Session}", Id);
+                _logger.LogWarning(ex, "Takeback threw");
                 SendError(seat, "takeback_failed", ex.Message, request.SeqAtRequestTime);
                 return;
             }
 
             if (result.Response.Outcome == TakebackOutcome.Granted)
             {
-                _logger.LogInformation("Takeback granted on session {Session} for seat {Seat} ({Steps} steps)",
-                    Id, seat, result.Response.StepsGranted);
+                _logger.LogInformation("Takeback granted ({Steps} steps)", result.Response.StepsGranted);
                 FanOutTakebackBroadcast(seat, request.SeqAtRequestTime, result);
             }
             else
             {
-                _logger.LogInformation("Takeback {Outcome} on session {Session} for seat {Seat}",
-                    result.Response.Outcome, Id, seat);
+                _logger.LogInformation("Takeback {Outcome}", result.Response.Outcome);
                 SendTo(seat, WrapServerFrame(ServerFrameKind.TakebackResponse, takebackResponse: result.Response));
             }
         }
@@ -577,7 +664,7 @@ namespace MagiGameServer.Host.Session
             if (!_seats.TryGetValue(seat.Value, out var conn)) return;
             if (!conn.Outgoing.Writer.TryWrite(bytes))
             {
-                _logger.LogWarning("Failed to enqueue outbound frame for session {Session} seat {Seat}", Id, seat);
+                _logger.LogWarning("Failed to enqueue outbound frame (seat={Seat})", seat.Value);
             }
         }
 
@@ -632,6 +719,7 @@ namespace MagiGameServer.Host.Session
         private sealed record ReattachWork(SeatId Seat, string Token, SeatConnection Connection, TaskCompletionSource<ReattachOutcome> Completion) : IWorkItem;
         private sealed record DetachWork(SeatId Seat) : IWorkItem;
         private sealed record FrameWork(SeatId Seat, JsonDocument Frame) : IWorkItem;
+        private sealed record SnapshotWork(SeatId Seat, TaskCompletionSource<SnapshotResult> Completion) : IWorkItem;
         private sealed record ProtocolErrorWork(SeatId Seat, string Code, string Message, ClientSeq Acked) : IWorkItem;
 
         private sealed class SeatConnection
