@@ -257,7 +257,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &105810220
 RectTransform:
   m_ObjectHideFlags: 0
@@ -568,6 +568,7 @@ MonoBehaviour:
   inHandGhost: {fileID: 0}
   statusBanner: {fileID: 0}
   statusLog: {fileID: 0}
+  identityBadge: {fileID: 0}
   showEventLog: 1
   defaultMovementTone: 0
   networkMode: 0
@@ -1058,7 +1059,6 @@ MonoBehaviour:
   controller: {fileID: 306378764}
   defaultHostBaseUri: https://play.magi-agi.org/ledge
   defaultSeatCount: 6
-  defaultOwnedSeat: 0
   defaultSessionCode: 
 --- !u!4 &898628995
 Transform:

@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using Magi.LedgeBoardGame.UI;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -36,15 +37,18 @@ namespace Magi.LedgeBoardGame.Board
         private void EnsureVisuals()
         {
             var selfRect = (RectTransform)transform;
-            selfRect.anchorMin = new Vector2(0.5f, 0f);
-            selfRect.anchorMax = new Vector2(0.5f, 0f);
-            selfRect.pivot = new Vector2(0.5f, 0f);
-            selfRect.anchoredPosition = new Vector2(0f, 48f);
-            selfRect.sizeDelta = new Vector2(720f, 72f);
+            // Top-center transient toast. Slides down (well, fades in) for
+            // dramatic moments ("Player 2 eliminated") without competing with
+            // the persistent TL "You" panel or the TR view toggle.
+            selfRect.anchorMin = new Vector2(0.5f, 1f);
+            selfRect.anchorMax = new Vector2(0.5f, 1f);
+            selfRect.pivot = new Vector2(0.5f, 1f);
+            selfRect.anchoredPosition = new Vector2(0f, -LedgeUITokens.PanelEdgeInset);
+            selfRect.sizeDelta = new Vector2(560f, 72f);
 
             if (background == null)
             {
-                var bgGo = new GameObject("Background", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                var bgGo = new GameObject("Background", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline));
                 var bgRt = (RectTransform)bgGo.transform;
                 bgRt.SetParent(transform, false);
                 bgRt.anchorMin = Vector2.zero;
@@ -52,8 +56,11 @@ namespace Magi.LedgeBoardGame.Board
                 bgRt.offsetMin = Vector2.zero;
                 bgRt.offsetMax = Vector2.zero;
                 background = bgGo.GetComponent<Image>();
-                background.color = new Color(0f, 0f, 0f, 0.75f);
+                background.color = LedgeUITokens.Panel;
                 background.raycastTarget = false;
+                var outline = bgGo.GetComponent<Outline>();
+                outline.effectColor = LedgeUITokens.PanelEdge;
+                outline.effectDistance = new Vector2(LedgeUITokens.HairlineWidth, -LedgeUITokens.HairlineWidth);
             }
 
             if (label == null)
@@ -67,8 +74,12 @@ namespace Magi.LedgeBoardGame.Board
                 labelRt.offsetMax = new Vector2(-24f, -8f);
                 label = labelGo.AddComponent<TextMeshProUGUI>();
                 label.alignment = TextAlignmentOptions.Center;
-                label.fontSize = 28f;
-                label.color = Color.white;
+                label.fontSize = LedgeUITokens.TurnBannerSize;
+                // Display font (Fraunces italic) for the theatrical "Your turn" feel
+                // when the asset is present; falls back to UI font otherwise.
+                label.font = LedgeUITokens.DisplayFont;
+                label.fontStyle = FontStyles.Italic;
+                label.color = LedgeUITokens.Ink;
                 label.raycastTarget = false;
             }
         }

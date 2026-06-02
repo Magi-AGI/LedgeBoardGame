@@ -34,7 +34,7 @@ namespace Magi.LedgeBoardGame.Board
         // Odd  wedges 1,3,5,7,9,11 are the vertex      directions (60°, 0°,-60°,-120°,180°,120°).
         private const float Sqrt3   = 1.7320508f;
         private const float Sqrt28  = 5.2915026f;           // |Ring3-off| = R·√28
-        private const float Ring3OffOffsetDeg = 19.106605f; // arctan(1/√27) off the vertex axis
+        private const float Ring3OffOffsetDeg = 19.106605f; // arctan(√3/5) off the vertex axis
 
         // InnerWall sits at 2.14·R, not the pure hex-grid 2·R. Walls must NOT touch the
         // Center space — that is the definitional property of a wall. When the Bridges

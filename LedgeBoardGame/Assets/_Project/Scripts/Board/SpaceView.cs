@@ -731,11 +731,14 @@ namespace Magi.LedgeBoardGame.Board
                 {
                     // Wedge is always even (outer axis). The authored bridge sprite is drawn
                     // flipped relative to the rosette's convention, so we tessellate by adding 180°
-                    // to the wedge-aligned rotation.
+                    // to the wedge-aligned rotation. The 180° flip means the sprite-local +Y end
+                    // (named `outerColor` by the sprite factory) lands on world-inner. To get
+                    // world-outer = own / world-inner = complement (matching Ring 2), we pass
+                    // own as the sprite's *inner* arg and complement as the sprite's *outer* arg.
                     rotZ = 180f - 30f * meta.WedgeIndex;
-                    var outerColor = LedgePalette.GetSpiritColor(meta.WedgeIndex);
-                    var innerColor = LedgePalette.GetOppositeSpiritColor(meta.WedgeIndex);
-                    fillSprite = LedgeSpriteFactory.GetBridgeFill(outerColor, innerColor);
+                    var ownColor = LedgePalette.GetOwnColor(meta.WedgeIndex);
+                    var complementColor = LedgePalette.GetComplementColor(meta.WedgeIndex);
+                    fillSprite = LedgeSpriteFactory.GetBridgeFill(outerColor: complementColor, innerColor: ownColor);
                     frameSprite = LedgeSpriteFactory.BridgeFrame;
                     glowSprite = LedgeSpriteFactory.BridgeFrameGlow;
                     break;
@@ -761,8 +764,16 @@ namespace Magi.LedgeBoardGame.Board
 
                 case SpaceType.Ring2:
                 {
-                    var color = LedgePalette.GetSpiritColor(meta.WedgeIndex);
-                    fillSprite = LedgeSpriteFactory.GetHexFill(color);
+                    // Split: world-outer = own, world-inner = complement. BuildHexSplitFill
+                    // computes dy as (Size-1-fy)-cx, which is y-down in sprite-local space —
+                    // so the baked +normal at `splitNormal` points to world-(-splitNormal) after
+                    // rendering. rotZ = splitNormal + wedgeAngle = 2·wedgeAngle = 180° - 60°·w
+                    // cancels the flip and aligns sideA (own) with the wedge's outer radial.
+                    var own = LedgePalette.GetOwnColor(meta.WedgeIndex);
+                    var complement = LedgePalette.GetComplementColor(meta.WedgeIndex);
+                    float splitNormal = LedgePalette.GetWedgeAngleDeg(meta.WedgeIndex);
+                    fillSprite = LedgeSpriteFactory.GetHexSplitFill(own, complement, splitNormal);
+                    rotZ = 180f - 60f * meta.WedgeIndex;
                     frameSprite = LedgeSpriteFactory.HexFrame;
                     glowSprite = LedgeSpriteFactory.HexFrameGlow;
                     break;
@@ -773,9 +784,8 @@ namespace Magi.LedgeBoardGame.Board
                     bool hasLabel = !string.IsNullOrEmpty(meta.ColorLabel);
                     if (hasLabel)
                     {
-                        // Ring3 vertex ledge: inner-half = own spirit, outer-half = opposite.
-                        fillSprite = BuildLedgeSplit(meta.WedgeIndex);
-                        rotZ = 180f - 60f * meta.WedgeIndex;
+                        // Ring3 vertex ledge: solid own color.
+                        fillSprite = LedgeSpriteFactory.GetHexFill(LedgePalette.GetOwnColor(meta.WedgeIndex));
                     }
                     else
                     {
@@ -789,9 +799,8 @@ namespace Magi.LedgeBoardGame.Board
 
                 case SpaceType.OuterAdded:
                 {
-                    // Outer-axis ledge: same rule as Ring3 vertex.
-                    fillSprite = BuildLedgeSplit(meta.WedgeIndex);
-                    rotZ = 180f - 60f * meta.WedgeIndex;
+                    // Outer-axis ledge: solid own color.
+                    fillSprite = LedgeSpriteFactory.GetHexFill(LedgePalette.GetOwnColor(meta.WedgeIndex));
                     frameSprite = LedgeSpriteFactory.HexFrame;
                     glowSprite = LedgeSpriteFactory.HexFrameGlow;
                     break;
@@ -828,28 +837,24 @@ namespace Magi.LedgeBoardGame.Board
             }
         }
 
-        private static Sprite BuildLedgeSplit(int wedgeIndex)
-        {
-            var own = LedgePalette.GetSpiritColor(wedgeIndex);
-            var opp = LedgePalette.GetOppositeSpiritColor(wedgeIndex);
-            // Ring3-vertex and OuterAdded spaces are drawn corner-to-corner: the split line
-            // runs from one pointy-top vertex to the opposite vertex of the baked hex, then
-            // the whole fill rotates with rotZ to line up with the hex frame.
-            float splitNormal = LedgePalette.GetWedgeAngleDeg(wedgeIndex);
-            return LedgeSpriteFactory.GetHexSplitFill(opp, own, splitNormal);
-        }
-
-        // Per-space rotZ for Ring3-off hexes (ids 25..36). Baked to match the ledge-color
-        // arrow semantics authored by hand in the scene. Within each (ccw, cw) sector pair,
-        // the cw rotation equals the ccw rotation plus 180°.
+        // Per-space rotZ for Ring3-off hexes (ids 25..36). Drives the on-screen
+        // direction of the colour split. Within each (ccw, cw) sector pair the
+        // cw rotation differs from the ccw by ±180° (same line, opposite sides).
+        //
+        // Values (2026-05-05) were derived by hand-tuning each tile's rotation
+        // in the Unity editor against the canonical reference wheel image, then
+        // folding the per-tile root rotation back into this table so the
+        // SpaceView root transforms can stay at identity. Compared to the
+        // pre-2026-05-05 table the per-sector pair rotates by 60° (even-k pair
+        // CW 60°, odd-k pair CCW 60°) — which is one hex-edge of rotation.
         private static readonly float[] Ring3OffRotZ = new float[]
         {
-             60f, -120f,  // 25 (k=0 ccw), 26 (k=0 cw)
-            -120f,   60f, // 27 (k=1 ccw), 28 (k=1 cw)
-             180f,    0f, // 29 (k=2 ccw), 30 (k=2 cw)
-               0f, -180f, // 31 (k=3 ccw), 32 (k=3 cw)
-             -60f,  120f, // 33 (k=4 ccw), 34 (k=4 cw)
-             120f,  -60f, // 35 (k=5 ccw), 36 (k=5 cw)
+               0f, -180f, // 25 (k=0 ccw), 26 (k=0 cw)
+             -60f,  120f, // 27 (k=1 ccw), 28 (k=1 cw)
+             120f,  -60f, // 29 (k=2 ccw), 30 (k=2 cw)
+              60f, -120f, // 31 (k=3 ccw), 32 (k=3 cw)
+            -120f,   60f, // 33 (k=4 ccw), 34 (k=4 cw)
+             180f,    0f, // 35 (k=5 ccw), 36 (k=5 cw)
         };
 
         private static float GetRing3OffRotation(int spaceId)
@@ -866,8 +871,8 @@ namespace Magi.LedgeBoardGame.Board
             bool isCcw = (offset % 2) == 0;
             int partnerWedge = 2 * k + 1;
 
-            var primary = LedgePalette.GetSpiritColor(primaryWedgeIndex);
-            var partner = LedgePalette.GetSpiritColor(partnerWedge);
+            var primary = LedgePalette.GetOwnColor(primaryWedgeIndex);
+            var partner = LedgePalette.GetOwnColor(partnerWedge);
 
             // Ring3-off splits are midpoint-to-midpoint: splitNormal points along a vertex
             // direction of the unrotated hex (30°, 90°, 150°, ...), so the dividing line

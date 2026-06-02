@@ -1,19 +1,19 @@
+using Magi.LedgeBoardGame.UI;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace Magi.LedgeBoardGame.Board
 {
-    /// Minimal HUD for switching between bird's-eye and comparison view modes
-    /// at 3-8 seats. Auto-creates three buttons + an opponent-name label on the
-    /// top-right of the canvas, bound to MultiBoardLayout. Kept as a runtime
-    /// builder (no scene prefab) so existing scenes adopt the controls
-    /// automatically without a re-save.
+    /// Top-right HUD for switching between bird's-eye and comparison view modes
+    /// at 3-8 seats. Mirrors the kit chrome (glass panel + LedgeButton) so it
+    /// reads as part of the same UI family as the TL "You" panel and BL action
+    /// belt. Built procedurally so existing scenes adopt the controls without a
+    /// re-save.
     public class BoardViewHud : MonoBehaviour
     {
         private MultiBoardLayout _layout;
-        private Button _toggleButton;
-        private TextMeshProUGUI _toggleLabel;
+        private LedgeButton _toggleButton;
         private RectTransform _comparisonGroup;
         private TextMeshProUGUI _opponentLabel;
 
@@ -28,7 +28,7 @@ namespace Magi.LedgeBoardGame.Board
         {
             if (_layout == null) return;
             bool comparison = _layout.Mode == MultiBoardLayout.ViewMode.Comparison;
-            if (_toggleLabel != null) _toggleLabel.text = comparison ? "Bird's-eye" : "Compare";
+            if (_toggleButton != null) _toggleButton.Text = comparison ? "Bird's-eye" : "Compare";
             if (_comparisonGroup != null) _comparisonGroup.gameObject.SetActive(comparison);
             UpdateOpponentLabel();
         }
@@ -61,66 +61,75 @@ namespace Magi.LedgeBoardGame.Board
             rootRect.anchorMin = new Vector2(1f, 1f);
             rootRect.anchorMax = new Vector2(1f, 1f);
             rootRect.pivot = new Vector2(1f, 1f);
-            rootRect.anchoredPosition = new Vector2(-20f, -20f);
+            rootRect.anchoredPosition = new Vector2(-LedgeUITokens.PanelEdgeInset, -LedgeUITokens.PanelEdgeInset);
             rootRect.sizeDelta = new Vector2(280f, 120f);
             rootRect.SetAsLastSibling();
 
-            _toggleButton = CreateButton(rootRect, "ToggleViewButton", "Compare", new Vector2(0f, 0f), new Vector2(260f, 40f), new Vector2(1f, 1f), new Vector2(1f, 1f));
-            _toggleLabel = _toggleButton.GetComponentInChildren<TextMeshProUGUI>();
-            _toggleButton.onClick.AddListener(OnToggleClicked);
+            // Glass panel backdrop so this matches the TL/BL chrome.
+            var glass = LedgeGlassPanel.Build(rootRect, "Glass");
+            var gRt = glass.GetComponent<RectTransform>();
+            gRt.anchorMin = Vector2.zero;
+            gRt.anchorMax = Vector2.one;
+            gRt.offsetMin = Vector2.zero;
+            gRt.offsetMax = Vector2.zero;
 
+            // Toggle button — Primary variant (state-changing action), pinned to
+            // the top of the glass panel's content slot.
+            var toggleHost = new GameObject("Toggle", typeof(RectTransform));
+            var toggleRt = (RectTransform)toggleHost.transform;
+            toggleRt.SetParent(glass.Content, false);
+            toggleRt.anchorMin = new Vector2(0f, 1f);
+            toggleRt.anchorMax = new Vector2(1f, 1f);
+            toggleRt.pivot = new Vector2(0.5f, 1f);
+            toggleRt.anchoredPosition = Vector2.zero;
+            toggleRt.sizeDelta = new Vector2(0f, 36f);
+            _toggleButton = toggleHost.AddComponent<LedgeButton>();
+            _toggleButton.CurrentVariant = LedgeButton.Variant.Ghost;
+            _toggleButton.Text = "Compare";
+            _toggleButton.EnsureBuilt();
+            _toggleButton.SetClickHandler(OnToggleClicked);
+
+            // Comparison row — Prev | OpponentLabel | Next, beneath the toggle.
             _comparisonGroup = new GameObject("ComparisonControls", typeof(RectTransform)).GetComponent<RectTransform>();
-            _comparisonGroup.SetParent(rootRect, false);
-            _comparisonGroup.anchorMin = new Vector2(1f, 1f);
+            _comparisonGroup.SetParent(glass.Content, false);
+            _comparisonGroup.anchorMin = new Vector2(0f, 1f);
             _comparisonGroup.anchorMax = new Vector2(1f, 1f);
-            _comparisonGroup.pivot = new Vector2(1f, 1f);
-            _comparisonGroup.anchoredPosition = new Vector2(0f, -50f);
-            _comparisonGroup.sizeDelta = new Vector2(260f, 40f);
+            _comparisonGroup.pivot = new Vector2(0.5f, 1f);
+            _comparisonGroup.anchoredPosition = new Vector2(0f, -44f);
+            _comparisonGroup.sizeDelta = new Vector2(0f, 36f);
+            var hl = _comparisonGroup.gameObject.AddComponent<HorizontalLayoutGroup>();
+            hl.spacing = 8f;
+            hl.childAlignment = TextAnchor.MiddleCenter;
+            hl.childControlWidth = false;
+            hl.childControlHeight = true;
+            hl.childForceExpandWidth = false;
+            hl.childForceExpandHeight = true;
 
-            var prev = CreateButton(_comparisonGroup, "PrevOpponent", "<", new Vector2(0f, 0f), new Vector2(50f, 40f), new Vector2(0f, 1f), new Vector2(0f, 1f));
-            prev.onClick.AddListener(() => { _layout?.CycleOpponent(-1); Refresh(); });
-
-            var next = CreateButton(_comparisonGroup, "NextOpponent", ">", new Vector2(0f, 0f), new Vector2(50f, 40f), new Vector2(1f, 1f), new Vector2(1f, 1f));
-            next.onClick.AddListener(() => { _layout?.CycleOpponent(1); Refresh(); });
+            var prev = LedgeButton.Build(_comparisonGroup, "<", LedgeButton.Variant.Ghost, LedgeButton.Size.Sm,
+                () => { _layout?.CycleOpponent(-1); Refresh(); });
+            var prevLe = prev.gameObject.AddComponent<LayoutElement>();
+            prevLe.preferredWidth = 44f;
+            prevLe.minWidth = 44f;
 
             var labelGo = new GameObject("OpponentLabel", typeof(RectTransform));
             var labelRect = (RectTransform)labelGo.transform;
             labelRect.SetParent(_comparisonGroup, false);
-            labelRect.anchorMin = new Vector2(0f, 0.5f);
-            labelRect.anchorMax = new Vector2(1f, 0.5f);
-            labelRect.pivot = new Vector2(0.5f, 0.5f);
-            labelRect.anchoredPosition = Vector2.zero;
-            labelRect.sizeDelta = new Vector2(-120f, 40f);
             _opponentLabel = labelGo.AddComponent<TextMeshProUGUI>();
             _opponentLabel.text = "—";
             _opponentLabel.alignment = TextAlignmentOptions.Center;
-            _opponentLabel.fontSize = 18f;
-        }
+            _opponentLabel.fontSize = LedgeUITokens.IdentNameSize;
+            _opponentLabel.font = LedgeUITokens.UIFont;
+            _opponentLabel.color = LedgeUITokens.Ink;
+            _opponentLabel.raycastTarget = false;
+            var labelLe = labelGo.AddComponent<LayoutElement>();
+            labelLe.flexibleWidth = 1f;
+            labelLe.minWidth = 80f;
 
-        private static Button CreateButton(RectTransform parent, string name, string label, Vector2 anchoredPos, Vector2 size, Vector2 anchorMin, Vector2 anchorMax)
-        {
-            var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
-            var rt = (RectTransform)go.transform;
-            rt.SetParent(parent, false);
-            rt.anchorMin = anchorMin;
-            rt.anchorMax = anchorMax;
-            rt.pivot = anchorMax;
-            rt.anchoredPosition = anchoredPos;
-            rt.sizeDelta = size;
-            go.GetComponent<Image>().color = new Color(0.12f, 0.14f, 0.18f, 0.85f);
-
-            var textGo = new GameObject("Label", typeof(RectTransform));
-            var textRt = (RectTransform)textGo.transform;
-            textRt.SetParent(rt, false);
-            textRt.anchorMin = Vector2.zero;
-            textRt.anchorMax = Vector2.one;
-            textRt.offsetMin = Vector2.zero;
-            textRt.offsetMax = Vector2.zero;
-            var tmp = textGo.AddComponent<TextMeshProUGUI>();
-            tmp.text = label;
-            tmp.alignment = TextAlignmentOptions.Center;
-            tmp.fontSize = 18f;
-            return go.GetComponent<Button>();
+            var next = LedgeButton.Build(_comparisonGroup, ">", LedgeButton.Variant.Ghost, LedgeButton.Size.Sm,
+                () => { _layout?.CycleOpponent(1); Refresh(); });
+            var nextLe = next.gameObject.AddComponent<LayoutElement>();
+            nextLe.preferredWidth = 44f;
+            nextLe.minWidth = 44f;
         }
 
         private void OnToggleClicked()

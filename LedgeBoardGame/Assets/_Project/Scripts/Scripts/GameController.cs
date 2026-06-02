@@ -10,6 +10,7 @@ using Magi.LedgeBoardGame.Models.Network;
 using Magi.LedgeBoardGame.Models.Spec;
 using Magi.LedgeBoardGame.Rules;
 using Magi.LedgeBoardGame.Board;
+using Magi.LedgeBoardGame.UI;
 
 namespace Magi.LedgeBoardGame
 {
@@ -821,9 +822,14 @@ namespace Magi.LedgeBoardGame
 
             EnsureInHandGhost();
             EnsurePlacementGhost();
+            EnsureDreamCanvas();
+            EnsureYouPanel();
+            EnsureActionBar();
             EnsureStatusBanner();
             EnsureStatusLog();
-            EnsureIdentityBadge();
+            // EnsureIdentityBadge() — superseded by YouPanel (identity row +
+            // turn line at TL). Code preserved in IdentityBadge.cs in case we
+            // need to fall back, but no longer wired in.
 
             SpaceClickedEvent.Register(OnSpaceClicked);
 
@@ -919,8 +925,55 @@ namespace Magi.LedgeBoardGame
             }
 
             EnsureBoardViewHud();
+            EnsureBoardHaloes();
 
             gameHud?.UpdateHud(_gameState);
+            _youPanel?.UpdateFromState(_gameState, _localSeatId, networkMode == NetworkMode.Network);
+        }
+
+        /// Register each board with the dream canvas so a corona ring + core
+        /// halo follow the board's screen center. Active-board glow is driven
+        /// separately (see <see cref="UpdateDreamCanvasActiveBoard"/>).
+        private void EnsureBoardHaloes()
+        {
+            if (_dreamCanvas == null) EnsureDreamCanvas();
+            if (_dreamCanvas == null) return;
+
+            foreach (var kvp in _boardPresenters)
+            {
+                var presenter = kvp.Value;
+                if (presenter == null) continue;
+                var rt = presenter.transform as RectTransform;
+                if (rt == null) continue;
+                // Multipliers of the board's CURRENT rendered min-dimension —
+                // recomputed each frame inside the dream canvas, so the halo
+                // tracks pan/zoom. Corona ring extends slightly beyond the
+                // board, core halo punches inside.
+                _dreamCanvas.EnsureBoardHalo(rt, coronaMul: 0.85f, haloMul: 0.40f, LedgeUITokens.AccentCool);
+            }
+
+            UpdateDreamCanvasActiveBoard();
+        }
+
+        /// Tell the dream canvas which board is currently active so its halo
+        /// fades to full intensity while the rest cool down. Called whenever
+        /// the active player changes (see MaybeSignalPhaseBanner). BoardId
+        /// and PlayerId are separate domains, so we resolve via Boards.
+        private void UpdateDreamCanvasActiveBoard()
+        {
+            if (_dreamCanvas == null) return;
+            if (_gameState == null || _gameState.Boards == null) return;
+            int currentPlayerId = _gameState.CurrentPlayerId;
+            BoardState activeBoard = null;
+            foreach (var b in _gameState.Boards)
+            {
+                if (b != null && b.PlayerId == currentPlayerId) { activeBoard = b; break; }
+            }
+            if (activeBoard == null) return;
+            if (!_boardPresenters.TryGetValue(activeBoard.BoardId, out var presenter) || presenter == null) return;
+            var rt = presenter.transform as RectTransform;
+            if (rt == null) return;
+            _dreamCanvas.SetActiveBoard(rt);
         }
 
         private int ResolveLocalBoardId()
@@ -1749,6 +1802,90 @@ namespace Magi.LedgeBoardGame
             inHandGhost = go.AddComponent<InHandGhost>();
         }
 
+        private LedgeDreamCanvas _dreamCanvas;
+        private LedgeYouPanel _youPanel;
+        private LedgeActionBar _actionBar;
+
+        private Canvas FindHudCanvas()
+        {
+            var canvas = GetComponentInParent<Canvas>();
+            if (canvas != null) return canvas;
+            foreach (var presenter in _boardPresenters.Values)
+            {
+                if (presenter == null) continue;
+                canvas = presenter.GetComponentInParent<Canvas>();
+                if (canvas != null) return canvas;
+            }
+            return null;
+        }
+
+        private void EnsureYouPanel()
+        {
+            if (_youPanel != null) return;
+            var canvas = FindHudCanvas();
+            if (canvas == null) return;
+            var go = new GameObject("YouPanel", typeof(RectTransform));
+            go.transform.SetParent(canvas.transform, false);
+            go.transform.SetAsLastSibling();
+            _youPanel = go.AddComponent<LedgeYouPanel>();
+        }
+
+        /// Build the bottom-left action belt and fold the existing scene-
+        /// assigned end-turn / undo buttons into it. Idempotent — running it
+        /// twice doesn't double-reparent. Also disables the legacy "HudPanel"
+        /// the buttons used to live under, since the YouPanel + ActionBar now
+        /// cover everything HudPanel used to display (phase / player / status
+        /// text were folded into the YouPanel; the buttons are reparented).
+        private void EnsureActionBar()
+        {
+            if (_actionBar != null) return;
+            var canvas = FindHudCanvas();
+            if (canvas == null) return;
+
+            // Capture the buttons' shared parent BEFORE adoption so we can
+            // disable the legacy panel they leave behind.
+            Transform legacyHudPanel = null;
+            if (endTurnButton != null) legacyHudPanel = endTurnButton.transform.parent;
+            if (legacyHudPanel == null && undoButton != null) legacyHudPanel = undoButton.transform.parent;
+
+            var go = new GameObject("ActionBar", typeof(RectTransform));
+            go.transform.SetParent(canvas.transform, false);
+            go.transform.SetAsLastSibling();
+            _actionBar = go.AddComponent<LedgeActionBar>();
+
+            // Adopt scene-assigned buttons. Both Ghost: the gold-halo Primary
+            // variant clashed against the cool-blue dream chrome, and the
+            // YouPanel + active-board halo already telegraph whose turn it is.
+            // Undo first so it sits to the LEFT of End Turn — End Turn is the
+            // commit affordance and conventionally hugs the BR corner.
+            if (undoButton    != null) _actionBar.Adopt(undoButton,    LedgeButton.Variant.Ghost);
+            if (endTurnButton != null) _actionBar.Adopt(endTurnButton, LedgeButton.Variant.Ghost);
+
+            // Hide the legacy panel (background image + redundant phase/player/
+            // status texts). GameHud's references stay valid — writes just go
+            // to inactive components, which is harmless.
+            if (legacyHudPanel != null && legacyHudPanel != _actionBar.transform)
+            {
+                legacyHudPanel.gameObject.SetActive(false);
+            }
+        }
+
+        private void EnsureDreamCanvas()
+        {
+            if (_dreamCanvas != null) return;
+            var canvas = GetComponentInParent<Canvas>();
+            if (canvas == null)
+            {
+                foreach (var presenter in _boardPresenters.Values)
+                {
+                    canvas = presenter.GetComponentInParent<Canvas>();
+                    if (canvas != null) break;
+                }
+            }
+            if (canvas == null) return;
+            _dreamCanvas = LedgeDreamCanvas.EnsureOnCanvas(canvas);
+        }
+
         private void EnsureStatusBanner()
         {
             if (statusBanner != null) return;
@@ -2516,6 +2653,7 @@ namespace Magi.LedgeBoardGame
         private void UpdateStatusUI()
         {
             gameHud?.UpdateHud(_gameState);
+            _youPanel?.UpdateFromState(_gameState, _localSeatId, networkMode == NetworkMode.Network);
             placementGhost?.Refresh(_gameState, _localSeatId);
             UpdateIdentityBadge();
             MaybeSignalPhaseBanner();
@@ -2537,6 +2675,9 @@ namespace Magi.LedgeBoardGame
 
             _lastSignaledPhase = currentPhase;
             _lastSignaledPlayerId = currentPlayerId;
+
+            // Active-board glow follows the current player's turn.
+            UpdateDreamCanvasActiveBoard();
 
             var player = _gameState.GetCurrentPlayer();
             string who;

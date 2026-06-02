@@ -1,3 +1,4 @@
+using Magi.LedgeBoardGame.UI;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -38,7 +39,7 @@ namespace Magi.LedgeBoardGame.Board
 
             if (background == null)
             {
-                var bgGo = new GameObject("Background", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                var bgGo = new GameObject("Background", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline));
                 var bgRt = (RectTransform)bgGo.transform;
                 bgRt.SetParent(transform, false);
                 bgRt.anchorMin = Vector2.zero;
@@ -46,8 +47,11 @@ namespace Magi.LedgeBoardGame.Board
                 bgRt.offsetMin = Vector2.zero;
                 bgRt.offsetMax = Vector2.zero;
                 background = bgGo.GetComponent<Image>();
-                background.color = new Color(0f, 0f, 0f, 0.55f);
+                background.color = LedgeUITokens.Panel;
                 background.raycastTarget = false;
+                var outline = bgGo.GetComponent<Outline>();
+                outline.effectColor = LedgeUITokens.PanelEdge;
+                outline.effectDistance = new Vector2(LedgeUITokens.HairlineWidth, -LedgeUITokens.HairlineWidth);
             }
 
             if (label == null)
@@ -61,8 +65,9 @@ namespace Magi.LedgeBoardGame.Board
                 labelRt.offsetMax = new Vector2(-16f, -4f);
                 label = labelGo.AddComponent<TextMeshProUGUI>();
                 label.alignment = TextAlignmentOptions.MidlineLeft;
-                label.fontSize = 20f;
-                label.color = Color.white;
+                label.fontSize = LedgeUITokens.IdentNameSize;
+                label.font = LedgeUITokens.UIFont;
+                label.color = LedgeUITokens.Ink;
                 label.raycastTarget = false;
             }
         }

@@ -160,3 +160,6 @@ Thumbs.db
 
 # dotnet publish output
 **/publish/
+
+# Build output (weekly cleanup)
+LedgeBoardGame.Host/publish-linux/

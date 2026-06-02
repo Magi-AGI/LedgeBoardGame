@@ -18,6 +18,8 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private float maxScale = 1.5f;
         [SerializeField] private float zoomStep = 0.1f;
         [SerializeField] private float fitPadding = 100f;
+        [Tooltip("Multiplier applied to the auto-fit scale so boards don't bleed into the HUD chrome. ~0.9 = roughly one zoomStep less than a tight fit.")]
+        [SerializeField] private float fitScaleMultiplier = 0.9f;
         [SerializeField] private KeyCode recenterKey = KeyCode.F;
 
         private RectTransform _rect;
@@ -222,6 +224,7 @@ namespace Magi.LedgeBoardGame.Board
             float contentH = Mathf.Max(1f, maxY - minY) + fitPadding * 2f;
             var viewSize = _viewportRect.rect.size;
             float scale = Mathf.Min(viewSize.x / contentW, viewSize.y / contentH);
+            scale *= fitScaleMultiplier;
             scale = Mathf.Clamp(scale, minScale, maxScale);
 
             _rect.localScale = new Vector3(scale, scale, 1f);

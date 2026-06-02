@@ -257,7 +257,7 @@ namespace Magi.LedgeBoardGame.Net
                     WireSeatSession(seatIndex, session);
                     localTransports.Add(transport);
                     localSessions.Add(session);
-                    await session.ConnectAsync(magiConfig, new SeatId(seatIndex), ct).ConfigureAwait(false);
+                    await session.ConnectAsync(magiConfig, new SeatId(seatIndex), ct);
                     if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
                 }
             }
@@ -265,7 +265,7 @@ namespace Magi.LedgeBoardGame.Net
             {
                 foreach (var s in localSessions)
                 {
-                    try { await s.DisposeAsync().ConfigureAwait(false); } catch { }
+                    try { await s.DisposeAsync(); } catch { }
                 }
                 throw;
             }
@@ -286,7 +286,7 @@ namespace Magi.LedgeBoardGame.Net
             {
                 foreach (var s in localSessions)
                 {
-                    try { await s.DisposeAsync().ConfigureAwait(false); } catch { }
+                    try { await s.DisposeAsync(); } catch { }
                 }
                 throw new OperationCanceledException();
             }
@@ -322,7 +322,9 @@ namespace Magi.LedgeBoardGame.Net
                 Options = options,
             };
 
+            UnityEngine.Debug.Log($"[driver-diag] StartHostBacked begin baseUri={baseUri} seatCount={_seatCount} ownedSeats={_ownedSeats.Length} useServerClaim={_useServerClaim} expectedSession={(_expectedSessionId?.Value ?? "<none>")}");
             _hostHttp = new HttpClient();
+            UnityEngine.Debug.Log("[driver-diag] HttpClient constructed");
 
             // Seat 0's transport POSTs /session/open and learns the
             // SessionId. Subsequent seats get the pre-seeded ctor so they
@@ -363,7 +365,9 @@ namespace Magi.LedgeBoardGame.Net
                         // the real seat rather than the placeholder _ownedSeats[0].
                         localTransports.Add(transport);
                         localSessions.Add(session);
-                        await session.ConnectAsync(magiConfig, ct).ConfigureAwait(false);
+                        UnityEngine.Debug.Log($"[driver-diag] about to ConnectAsync(claim) k={k}");
+                        await session.ConnectAsync(magiConfig, ct);
+                        UnityEngine.Debug.Log($"[driver-diag] ConnectAsync(claim) returned k={k} claimedSeat={session.Seat.Value}");
                         if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
                         _ownedSeats[k] = session.Seat.Value;
                         WireSeatSession(session.Seat.Value, session);
@@ -373,7 +377,9 @@ namespace Magi.LedgeBoardGame.Net
                         WireSeatSession(seatIndex, session);
                         localTransports.Add(transport);
                         localSessions.Add(session);
-                        await session.ConnectAsync(magiConfig, new SeatId(seatIndex), ct).ConfigureAwait(false);
+                        UnityEngine.Debug.Log($"[driver-diag] about to ConnectAsync(seat={seatIndex}) k={k} useSecondary={useSecondaryCtor}");
+                        await session.ConnectAsync(magiConfig, new SeatId(seatIndex), ct);
+                        UnityEngine.Debug.Log($"[driver-diag] ConnectAsync(seat={seatIndex}) returned k={k}");
                         if (Volatile.Read(ref _disposed) != 0) throw new OperationCanceledException();
                     }
                     // First seat on the host-open path learns the session
@@ -386,7 +392,7 @@ namespace Magi.LedgeBoardGame.Net
             {
                 foreach (var s in localSessions)
                 {
-                    try { await s.DisposeAsync().ConfigureAwait(false); } catch { }
+                    try { await s.DisposeAsync(); } catch { }
                 }
                 throw;
             }
@@ -407,7 +413,7 @@ namespace Magi.LedgeBoardGame.Net
             {
                 foreach (var s in localSessions)
                 {
-                    try { await s.DisposeAsync().ConfigureAwait(false); } catch { }
+                    try { await s.DisposeAsync(); } catch { }
                 }
                 throw new OperationCanceledException();
             }
@@ -732,7 +738,7 @@ namespace Magi.LedgeBoardGame.Net
             }
             for (int i = 0; i < snapshot.Length; i++)
             {
-                try { await snapshot[i].DisposeAsync().ConfigureAwait(false); }
+                try { await snapshot[i].DisposeAsync(); }
                 catch (Exception ex) { UnityEngine.Debug.LogError($"[shadow] dispose seat {i}: {ex}"); }
             }
             if (_hostHttp != null)

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Magi.LedgeBoardGame.UI;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -28,18 +29,19 @@ namespace Magi.LedgeBoardGame.Board
         private void EnsureVisuals()
         {
             var selfRect = (RectTransform)transform;
-            // Bottom-center, stacked directly above the banner. Sized (470×108) to
-            // slip between the boards' lower edge and the banner — tuned during
-            // playtest so the log doesn't overlap board spaces.
-            selfRect.anchorMin = new Vector2(0.5f, 0f);
-            selfRect.anchorMax = new Vector2(0.5f, 0f);
-            selfRect.pivot = new Vector2(0.5f, 0f);
-            selfRect.anchoredPosition = new Vector2(0f, 130f);
-            selfRect.sizeDelta = new Vector2(470f, 108f);
+            // Bottom-left: paired with future chat strip. Action bar lives BR
+            // (the conventional "end turn" corner most strategy games use), so
+            // the log/chat takes BL. Narrower than the BC stretch so it stays
+            // out of the player's own board on the left half of the canvas.
+            selfRect.anchorMin = new Vector2(0f, 0f);
+            selfRect.anchorMax = new Vector2(0f, 0f);
+            selfRect.pivot = new Vector2(0f, 0f);
+            selfRect.anchoredPosition = new Vector2(Magi.LedgeBoardGame.UI.LedgeUITokens.PanelEdgeInset, Magi.LedgeBoardGame.UI.LedgeUITokens.PanelEdgeInset);
+            selfRect.sizeDelta = new Vector2(420f, 180f);
 
             if (background == null)
             {
-                var bgGo = new GameObject("Background", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                var bgGo = new GameObject("Background", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline));
                 var bgRt = (RectTransform)bgGo.transform;
                 bgRt.SetParent(transform, false);
                 bgRt.anchorMin = Vector2.zero;
@@ -47,8 +49,11 @@ namespace Magi.LedgeBoardGame.Board
                 bgRt.offsetMin = Vector2.zero;
                 bgRt.offsetMax = Vector2.zero;
                 background = bgGo.GetComponent<Image>();
-                background.color = new Color(0f, 0f, 0f, 0.55f);
+                background.color = LedgeUITokens.Panel;
                 background.raycastTarget = true;
+                var outline = bgGo.GetComponent<Outline>();
+                outline.effectColor = LedgeUITokens.PanelEdge;
+                outline.effectDistance = new Vector2(LedgeUITokens.HairlineWidth, -LedgeUITokens.HairlineWidth);
             }
 
             if (scrollRect == null)
@@ -89,9 +94,10 @@ namespace Magi.LedgeBoardGame.Board
             contentRt.sizeDelta = new Vector2(0f, 0f);
             label = labelGo.AddComponent<TextMeshProUGUI>();
             label.alignment = TextAlignmentOptions.TopLeft;
-            label.fontSize = 16f;
+            label.fontSize = LedgeUITokens.BodySize;
+            label.font = LedgeUITokens.UIFont;
             label.enableWordWrapping = true;
-            label.color = new Color(1f, 1f, 1f, 0.9f);
+            label.color = LedgeUITokens.InkFaint;
             label.raycastTarget = false;
             label.enableAutoSizing = false;
             var labelFitter = labelGo.AddComponent<ContentSizeFitter>();
@@ -108,7 +114,7 @@ namespace Magi.LedgeBoardGame.Board
             scrollbarRt.anchoredPosition = new Vector2(-8f, 0f);
             scrollbarRt.sizeDelta = new Vector2(12f, -16f);
             var scrollbarBg = scrollbarGo.GetComponent<Image>();
-            scrollbarBg.color = new Color(1f, 1f, 1f, 0.12f);
+            scrollbarBg.color = LedgeUITokens.Rule;
             scrollbarBg.raycastTarget = true;
 
             var slidingArea = new GameObject("SlidingArea", typeof(RectTransform));
@@ -127,7 +133,7 @@ namespace Magi.LedgeBoardGame.Board
             handleRt.offsetMin = Vector2.zero;
             handleRt.offsetMax = Vector2.zero;
             var handleImg = handleGo.GetComponent<Image>();
-            handleImg.color = new Color(1f, 1f, 1f, 0.55f);
+            handleImg.color = LedgeUITokens.InkDim;
             handleImg.raycastTarget = true;
 
             verticalScrollbar = scrollbarGo.AddComponent<Scrollbar>();

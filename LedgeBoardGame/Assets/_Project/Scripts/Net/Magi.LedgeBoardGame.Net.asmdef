@@ -5,7 +5,8 @@
         "Magi.LedgeBoardGame",
         "Magi.UnityTools",
         "Magi.UnityTools.Net",
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

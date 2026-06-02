@@ -4,9 +4,10 @@ using UnityEngine;
 
 namespace Magi.LedgeBoardGame.Board
 {
-    /// Central color palette for the Ledge board visuals. Spirit colors are the vibrant
-    /// 12-hue wheel pulled from the authoritative SVG; they render flat (no pastelize) so
-    /// the wheel reads with its intended saturation.
+    /// Central color palette for the Ledge board visuals. The 12-hue wheel is the
+    /// canonical palette from the design kit (design_handoff_v2/ledge-tokens.js);
+    /// wedge index w corresponds to the color displayed at angle (90° − 30°·w) in the
+    /// rosette, clockwise from the top.
     public static class LedgePalette
     {
         // Neutral fallbacks for spaces that aren't on the color wheel.
@@ -26,22 +27,23 @@ namespace Magi.LedgeBoardGame.Board
         public static readonly Color CounterDark = new Color(0.12f, 0.11f, 0.10f, 1f);
         public static readonly Color GhostTint = new Color(1f, 1f, 1f, 0.55f);
 
-        // 12 hex colors pulled from Ledge Wheel EN 20 (Board Game).svg arranged clockwise
-        // starting at 90° (top). Wedge index 0..11 corresponds to angle = 90 - 30*index.
+        // 12 wheel colors, indexed 0..11 clockwise from top. Each entry is the OWN
+        // identity color of that wedge on the board. Authoritative source:
+        // design_handoff_v2/current-attempt/ledge-tokens.js.
         private static readonly Color[] SpiritByWedge =
         {
-            HexToColor("C04040"), // 0  Ela   @ 90°
-            HexToColor("C04080"), // 1  Biz   @ 60°
-            HexToColor("C040BF"), // 2  Yun   @ 30°
-            HexToColor("8040C0"), // 3  Jutu  @ 0°
-            HexToColor("4040C0"), // 4  Glei  @ -30°
-            HexToColor("4080C0"), // 5  Sace  @ -60°
-            HexToColor("40BFC0"), // 6  Rha   @ -90°
-            HexToColor("40C080"), // 7  Dau   @ -120°
-            HexToColor("40C040"), // 8  Wim   @ -150°
-            HexToColor("7FC040"), // 9  Pfi   @ 180°
-            HexToColor("BDBF3F"), // 10 Quae  @ 150°
-            HexToColor("C07F40"), // 11 Vei   @ 120°
+            HexToColor("40BFC0"), //  0 Ela   @  90°  cyan
+            HexToColor("40C080"), //  1 Biz   @  60°  green
+            HexToColor("40C040"), //  2 Yun   @  30°  green
+            HexToColor("7FC040"), //  3 Jutu  @   0°  lime
+            HexToColor("BDBF3F"), //  4 Glei  @ -30°  yellow
+            HexToColor("C07F40"), //  5 Sace  @ -60°  orange
+            HexToColor("C04040"), //  6 Rha   @ -90°  red
+            HexToColor("C04080"), //  7 Dau   @-120°  pink
+            HexToColor("C040BF"), //  8 Wim   @-150°  magenta
+            HexToColor("8040C0"), //  9 Pfi   @ 180°  purple
+            HexToColor("4040C0"), // 10 Quae  @ 150°  blue
+            HexToColor("4080C0"), // 11 Vei   @ 120°  azure
         };
 
         private static readonly Dictionary<string, int> WedgeByLabel = new Dictionary<string, int>
@@ -51,21 +53,19 @@ namespace Magi.LedgeBoardGame.Board
             { "Wim",  8 }, { "Pfi",  9 }, { "Quae", 10 }, { "Vei",  11 },
         };
 
-        /// Returns the fill color for the hex at a given wedge. The visual scheme has
-        /// each wedge-hex rendered in its *opposite* wedge's spirit color (across the
-        /// wheel center), so labels stay canonical while the fill pairs its complement.
-        public static Color GetSpiritColor(int wedgeIndex)
+        /// Own identity color of the given wedge (e.g., Ela=0 → cyan).
+        public static Color GetOwnColor(int wedgeIndex)
         {
-            int i = ((((wedgeIndex + 6) % 12) + 12) % 12);
+            int i = ((wedgeIndex % 12) + 12) % 12;
             return SpiritByWedge[i];
         }
 
-        /// Returns the complement of `GetSpiritColor(wedgeIndex)` — i.e., the original
-        /// "own" spirit color of that wedge. Used for the inner half of bridges and
-        /// ledges, which pair outer/inner from opposite sides of the wheel.
-        public static Color GetOppositeSpiritColor(int wedgeIndex)
+        /// Complement color of the given wedge (e.g., Ela=0 → Rha=red). Complement
+        /// pairing wedge i ↔ wedge (i+6) mod 12 is a game mechanic, not an aesthetic.
+        public static Color GetComplementColor(int wedgeIndex)
         {
-            return GetSpiritColor(wedgeIndex + 6);
+            int i = ((((wedgeIndex + 6) % 12) + 12) % 12);
+            return SpiritByWedge[i];
         }
 
         /// Wedge angle in degrees (math convention: CCW from +X). Wedge 0 = 90°.
@@ -85,13 +85,12 @@ namespace Magi.LedgeBoardGame.Board
         public static Color GetFillColor(string colorLabel)
         {
             if (TryGetWedgeByLabel(colorLabel, out var w))
-                return GetSpiritColor(w);
+                return GetOwnColor(w);
             return NeutralSpaceFill;
         }
 
         public static Color GetFrameBaseColor(string colorLabel)
         {
-            // Frames are uniformly dark now — the wheel's spirit colors carry the ID, not the frames.
             return FrameIdle;
         }
 
