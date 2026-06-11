@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <RootNamespace>Magi.LedgeBoardGame.ServerModule</RootNamespace>
+    <AssemblyName>Magi.LedgeBoardGame.ServerModule</AssemblyName>
+    <!--
+      Source lives under LedgeBoardGame/Assets/_Project/Scripts/Net/ServerModule
+      so the Unity in-process driver (Magi.LedgeBoardGame.Net asmdef) and this
+      pure-.NET server module compile from the same .cs files. Disabling the
+      SDK's default compile item picker lets the explicit <Compile Include>
+      below point at the Unity Assets path without also pulling every unrelated
+      .cs that happens to sit next to this csproj.
+
+      Same pattern LedgeBoardGame.Core.csproj uses.
+    -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <!--
+    Per-game plugin that teaches the game-agnostic MagiGameServer how to run
+    LedgeBoardGame sessions. Depends on LedgeBoardGame.Core for the rules /
+    state types and on MagiGameServer.Contracts for IGameModule +
+    RulesAdapterBase. Intentionally does NOT live inside
+    MagiGameServer.Modules — that assembly is a deliberately minimal module
+    registry, and folding per-game code into it would require the registry
+    to reference every game's domain. The dependency arrow points the other
+    way: games depend on the framework, not vice versa.
+
+    netstandard2.1 to stay consumable by the Unity-side in-process transport
+    (M6 commit 2) which targets Unity 6 mono. The server host (net8.0) picks
+    it up as a transitive ProjectReference without issue.
+  -->
+  <ItemGroup>
+    <Compile Include="..\LedgeBoardGame\Assets\_Project\Scripts\Net\ServerModule\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LedgeBoardGame.Core\LedgeBoardGame.Core.csproj" />
+    <ProjectReference Include="..\MagiGameServer.Contracts\MagiGameServer.Contracts.csproj" />
+    <!--
+      Added for the SpaceId JsonConverter that plugs into EnvelopeCodec.
+      STJ 8 won't bind readonly struct properties through a parameterised
+      ctor when the implicit parameterless ctor also exists (which is
+      always, for structs), so SpaceId needs an explicit converter. The
+      converter source lives in Net/ServerModule/LedgeCodecInit.cs and is
+      registered from LedgeGameModule's ctor.
+    -->
+    <ProjectReference Include="..\MagiGameServer.Codec\MagiGameServer.Codec.csproj" />
+  </ItemGroup>
+
+</Project>

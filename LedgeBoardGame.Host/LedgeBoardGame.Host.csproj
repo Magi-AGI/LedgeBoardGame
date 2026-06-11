@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>Magi.LedgeBoardGame.Host</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!--
+    Thin launcher over MagiGameServer.Host that registers LedgeGameModule
+    at startup. The game-agnostic host binary does NOT reference any game
+    module; tests and launchers supply modules through the registerModules
+    callback on Program.CreateApp. This project is that launcher for the
+    LedgeBoardGame smoke/dev path: "dotnet run" brings up the ASP.NET
+    endpoints with "ledge-board" registered.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\MagiGameServer.Host\MagiGameServer.Host.csproj" />
+    <ProjectReference Include="..\LedgeBoardGame.ServerModule\LedgeBoardGame.ServerModule.csproj" />
+  </ItemGroup>
+
+  <!--
+    The upstream MagiGameServer.Host ships an appsettings.json for its own
+    test harnesses. Publishing the launcher via ProjectReference copies it
+    into the launcher's output directory; if the launcher also carried an
+    appsettings.json, NETSDK1152 would fire on the duplicate. Deployment
+    relies on the upstream file (Logging + AllowedHosts) and injects
+    ASPNETCORE_URLS via the systemd unit.
+  -->
+
+</Project>

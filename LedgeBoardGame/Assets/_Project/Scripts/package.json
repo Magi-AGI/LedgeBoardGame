@@ -1,0 +1,16 @@
+{
+    "name": "com.magi.ledgeboardgame",
+    "displayName": "Magi Ledge Board Game",
+    "version": "0.1.0",
+    "unity": "6000.0",
+    "description": "Reusable Ledge mechanics library (board, TokenStack, adjacency, rules, movement, behavior-tree ordering) consumed by sibling Magi Unity projects (e.g. cardcore) as a local UPM package via a `file:` reference to this folder. DO NOT DELETE: this `package.json` must stay colocated with `Magi.LedgeBoardGame.asmdef` at the package root, or dependent projects fail to resolve with `The file [...]/package.json cannot be found`. This repo also opens this folder as an in-project asmdef in its own Unity editor; both uses are intentional.",
+    "author": {
+        "name": "Magi-AGI"
+    },
+    "dependencies": {
+        "com.unity.mathematics": "1.3.3",
+        "com.unity.burst": "1.8.29",
+        "com.unity.inputsystem": "1.19.0",
+        "com.unity.ugui": "2.0.0"
+    }
+}

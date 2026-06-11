@@ -1,0 +1,87 @@
+using MagiGameServer.Contracts.Core;
+
+namespace MagiGameServer.Contracts.Protocol
+{
+    /// Client-to-server: a pending action the server should attempt to apply.
+    /// `PredictedStateHash` is the hash the client got after optimistically
+    /// applying the action locally — if the server's post-apply hash doesn't
+    /// match, the client is considered desynced on this line and must replay
+    /// from the next StateEcho instead of reconciling forward. Leave zero to
+    /// skip the check (non-predicting clients, e.g. bots).
+    public sealed record ActionEnvelope<TAction>
+    {
+        public SessionId Session { get; init; }
+        public SeatId Seat { get; init; }
+        public ClientSeq Seq { get; init; }
+        public TAction Action { get; init; }
+        public long PredictedStateHash { get; init; }
+    }
+
+    /// Server-to-client: the canonical state after applying an action, already
+    /// projected for the receiving seat. Clients never see cross-seat hidden
+    /// information — the hidden-info guarantee is enforced server-side inside
+    /// ProjectStateFor, not by the client voluntarily ignoring fields.
+    ///
+    /// Ordering and identity: `Revision` is the server-authoritative timeline
+    /// position after this action and is meaningful to every recipient; it's
+    /// the field broadcast-receivers should order by. `AckedSeq` +
+    /// `SubmittingSeat` together identify the originating client action —
+    /// `AckedSeq` alone is ambiguous for broadcasts since ClientSeq is
+    /// per-client. A predicting client only matches an echo to its pending
+    /// optimistic stack when `SubmittingSeat == ForSeat`.
+    ///
+    /// `StateHash` is the hash of `State` as `ForSeat` sees it (i.e. the hash
+    /// of the already-projected state), matching what the submitting client
+    /// would have sent as PredictedStateHash.
+    public sealed record StateEcho<TState>
+    {
+        public SessionId Session { get; init; }
+        public SeatId ForSeat { get; init; }
+        public SeatId SubmittingSeat { get; init; }
+        public ClientSeq AckedSeq { get; init; }
+        public ServerSeq Revision { get; init; }
+        public TState State { get; init; }
+        public long StateHash { get; init; }
+        public ApplyOutcome Outcome { get; init; }
+    }
+
+    /// Server-to-client: informational error envelope for actions the server
+    /// couldn't even reach the rules adapter with (malformed payload, wrong
+    /// seat, no active session). Rules rejections come back as StateEcho with
+    /// Outcome=Rejected so the client still gets a valid post-state; this
+    /// envelope is for protocol-level failures that don't advance state.
+    public sealed record ErrorEnvelope
+    {
+        public SessionId Session { get; init; }
+        public ClientSeq AckedSeq { get; init; }
+        public string Code { get; init; }
+        public string Message { get; init; }
+    }
+
+    /// Server-to-client: initial state handed to a seat when it joins (or
+    /// rejoins) a session. Distinct from StateEcho because the recipient
+    /// didn't trigger the snapshot — there is no `SubmittingSeat` or
+    /// `AckedSeq` to attach, and the dispatcher routing that classifies
+    /// echoes into OnStateAdvanced / OnPredictionMatched /
+    /// OnPredictionDiverged does not apply. `State` is already projected
+    /// for `ForSeat`; `StateHash` is the hash of the projected state and
+    /// matches what a predicting client would compute locally after
+    /// seeding its optimistic view.
+    public sealed record JoinSnapshot<TState>
+    {
+        public SessionId Session { get; init; }
+        public SeatId ForSeat { get; init; }
+        public ServerSeq Revision { get; init; }
+        public TState State { get; init; }
+        public long StateHash { get; init; }
+
+        /// Opaque per-seat reconnect token. Issued once on the fresh
+        /// attach/claim and echoed back verbatim by a later reattach so
+        /// the server can match the returning client to the seat it
+        /// already owns. Transport-layer only — not part of canonical
+        /// state, not hashed, not folded into StateHash. Null when the
+        /// host didn't provide one (older builds, or a server variant
+        /// that doesn't implement seat ownership).
+        public string ReconnectToken { get; init; }
+    }
+}

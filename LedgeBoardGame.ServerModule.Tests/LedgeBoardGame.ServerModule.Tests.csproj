@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Magi.LedgeBoardGame.ServerModule.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LedgeBoardGame.ServerModule\LedgeBoardGame.ServerModule.csproj" />
+    <ProjectReference Include="..\LedgeBoardGame.Core\LedgeBoardGame.Core.csproj" />
+    <ProjectReference Include="..\MagiGameServer.Contracts\MagiGameServer.Contracts.csproj" />
+    <ProjectReference Include="..\MagiGameServer.Core\MagiGameServer.Core.csproj" />
+    <ProjectReference Include="..\MagiGameServer.Codec\MagiGameServer.Codec.csproj" />
+  </ItemGroup>
+
+  <!--
+    Copy the canonical ledge spec JSON into the test output so spec-driven
+    tests can feed GameConfig.Options the same payload a real client would.
+    LedgeSpecValidator enforces full board-config matching, so a hand-written
+    minimal JSON would not validate; pinning to the real spec keeps these
+    tests on the same source-of-truth the Unity game loads.
+  -->
+  <ItemGroup>
+    <None Include="..\LedgeBoardGame\Assets\_Project\Specs\ledge\ledge-game.v1.json"
+          Link="Specs\ledge-game.v1.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

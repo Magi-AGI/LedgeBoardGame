@@ -1,0 +1,126 @@
+{
+  "schemaVersion": "1.0.0",
+  "basedOn": "magi.turnbased.core@1.0.0",
+  "specId": "magi.ledge.v1",
+  "name": "Ledge",
+  "description": "Digital ruleset for the Ledge board game, expressed in a portable turn-based spec format.",
+
+  "config": {
+    "minPlayers": 2,
+    "maxPlayers": 8,
+    "board": {
+      "spaces": 49,
+      "rings": [
+        { "name": "center", "spaceIds": [0] },
+        { "name": "inner", "spaceIds": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
+        { "name": "innerMiddle", "spaceIds": [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] },
+        { "name": "outerMiddle", "spaceIds": [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42] },
+        { "name": "outer", "spaceIds": [37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48] }
+      ],
+      "ledgeColors": [
+        "Ela", "Biz", "Yun", "Jutu", "Glei", "Sace",
+        "Rha", "Dau", "Wim", "Pfi", "Quae", "Vei"
+      ]
+    }
+  },
+
+  "state": {
+    "description": "Mapping of Ledge concepts into the generic G/data container.",
+    "dataFields": {
+      "players": "List of players with id, name, boardId, and elimination status.",
+      "boards": "Array of board states; each board owns 49 spaces with stacks, metadata, and adjacency.",
+      "currentPlayerId": "ID of the player whose turn it is.",
+      "phase": "Either 'placement' or 'movement'.",
+      "turnNumber": "Current turn index (starting at 1).",
+      "currentTurnPlacements": "Placements made this turn (for enforcing Light+Dark).",
+      "currentTurnMoves": "Moves made this turn (for control semantics).",
+      "winnerId": "Optional winner player id when the game ends.",
+      "gameOver": "Boolean flag when no further moves are allowed."
+    }
+  },
+
+  "phases": [
+    {
+      "name": "placement",
+      "moves": ["placeToken", "endTurn"],
+      "turn": {
+        "minMoves": 2,
+        "maxMoves": 2
+      },
+      "description": "Each player must place exactly one Light and one Dark token per turn on their own board."
+    },
+    {
+      "name": "movement",
+      "moves": ["moveToken", "endTurn"],
+      "turn": {
+        "minMoves": 0,
+        "maxMoves": 999
+      },
+      "description": "Players move stacks across their own and other boards, leaving locks and resolving stacks/clears."
+    }
+  ],
+
+  "moves": {
+    "placeToken": {
+      "parameters": [
+        { "name": "boardId", "type": "int" },
+        { "name": "spaceId", "type": "int" },
+        { "name": "tone", "type": "Tone" }
+      ],
+      "allowedPhases": ["placement"],
+      "constraints": [
+        "targetBoard == currentPlayer.boardId",
+        "tone not already placed by current player this turn"
+      ],
+      "effects": [
+        "Add one token of given tone to the target stack.",
+        "Resolve Lock/Stack/Clear on entry.",
+        "When both Light and Dark have been placed, automatically advance to 'movement' phase."
+      ]
+    },
+
+    "moveToken": {
+      "parameters": [
+        { "name": "fromBoardId", "type": "int" },
+        { "name": "fromSpaceId", "type": "int" },
+        { "name": "toBoardId", "type": "int" },
+        { "name": "toSpaceId", "type": "int" },
+        { "name": "tone", "type": "Tone" }
+      ],
+      "allowedPhases": ["movement"],
+      "constraints": [
+        "source stack must be movable for given tone",
+        "destination must be adjacent (intra-board) or a valid cross-board ledge target",
+        "player must control the source space (own board or visited this turn)"
+      ],
+      "effects": [
+        "Remove one token of given tone from the source stack.",
+        "Apply Lock/Stack/Clear rules on destination stack.",
+        "Record move for control semantics and history."
+      ]
+    },
+
+    "endTurn": {
+      "parameters": [],
+      "allowedPhases": ["placement", "movement"],
+      "constraints": [
+        "in placement phase, may only end turn after both Light and Dark placed or if no valid placements remain"
+      ],
+      "effects": [
+        "Check eliminations (center elimination condition).",
+        "Advance to next non-eliminated player.",
+        "Reset placement/move history for the new turn.",
+        "Set phase to 'placement' for the next player unless the game is over."
+      ]
+    }
+  },
+
+  "endIf": {
+    "type": "lastPlayerStanding",
+    "details": {
+      "eliminationCondition": "Player is eliminated when their center stack has a Dark token locked at the bottom (after resolving a move into their center).",
+      "winnerRule": "If exactly one player remains non-eliminated, that player wins; if zero remain, the game ends with no winner."
+    }
+  }
+}
+

@@ -26,6 +26,11 @@
 # Recordings can get excessive in size
 */[Rr]ecordings/
 
+# Ad-hoc screenshots and captures (MCP/editor debugging artifacts, not project content)
+**/[Cc]aptures/
+**/[Aa]ssets/[Ss]creenshots/
+**/[Aa]ssets/[Ss]creenshots.meta
+
 # Uncomment this line if you wish to ignore the asset store tools plugin
 # */[Aa]ssets/AssetStoreTools*
 
@@ -92,3 +97,69 @@
 
 # Auto-generated scenes by play mode tests
 */[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
+
+# Enhanced recursive Unity ignores (support nested subprojects)
+**/.utmp/
+**/[Ll]ibrary/
+**/[Tt]emp/
+**/[Oo]bj/
+**/[Bb]uild/
+**/[Bb]uilds/
+**/[Ll]ogs/
+**/[Uu]ser[Ss]ettings/
+**/*.log
+**/[Mm]emoryCaptures/
+**/[Rr]ecordings/
+**/.vs/
+**/.gradle/
+**/*.csproj
+**/*.unityproj
+**/*.sln
+**/*.suo
+**/*.tmp
+**/*.user
+**/*.userprefs
+**/*.pidb
+**/*.booproj
+**/*.svd
+**/*.pdb
+**/*.mdb
+**/*.opendb
+**/*.VC.db
+**/*.DotSettings.user
+
+# Root OS/IDE ignores
+.idea/
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db
+
+# Unity crash-recovery scenes (auto-generated, per-machine)
+**/_Recovery/
+
+# .NET build output (M1 extraction: LedgeBoardGame.Core + future MagiGameServer projects)
+# Unity auto-generates csproj/sln files at the project root and they're ignored above;
+# the hand-authored csproj for the extracted netstandard core needs to be tracked.
+**/bin/
+!LedgeBoardGame.Core/LedgeBoardGame.Core.csproj
+!MagiGameServer.Contracts/MagiGameServer.Contracts.csproj
+!MagiGameServer.Core/MagiGameServer.Core.csproj
+!MagiGameServer.Core.Tests/MagiGameServer.Core.Tests.csproj
+!MagiGameServer.Client/MagiGameServer.Client.csproj
+!MagiGameServer.Client.Tests/MagiGameServer.Client.Tests.csproj
+!MagiGameServer.Modules/MagiGameServer.Modules.csproj
+!MagiGameServer.Modules.Tests/MagiGameServer.Modules.Tests.csproj
+!MagiGameServer.Codec/MagiGameServer.Codec.csproj
+!MagiGameServer.Codec.Tests/MagiGameServer.Codec.Tests.csproj
+!MagiGameServer.Host/MagiGameServer.Host.csproj
+!MagiGameServer.Host.Tests/MagiGameServer.Host.Tests.csproj
+!LedgeBoardGame.ServerModule/LedgeBoardGame.ServerModule.csproj
+!LedgeBoardGame.ServerModule.Tests/LedgeBoardGame.ServerModule.Tests.csproj
+!LedgeBoardGame.Host/LedgeBoardGame.Host.csproj
+
+# dotnet publish output
+**/publish/
+
+# Build output (weekly cleanup)
+LedgeBoardGame.Host/publish-linux/

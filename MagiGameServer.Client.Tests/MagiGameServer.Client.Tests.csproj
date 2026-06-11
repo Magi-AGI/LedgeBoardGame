@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>MagiGameServer.Client.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Deliberately only references Client + Contracts. No MagiGameServer.Core
+      reference — dispatcher tests craft inbound envelopes directly rather
+      than coupling client routing logic to in-process server types. If a
+      future test genuinely needs a round-trip against a real Session it
+      belongs in a separate integration-tests project, not here.
+    -->
+    <ProjectReference Include="..\MagiGameServer.Client\MagiGameServer.Client.csproj" />
+    <ProjectReference Include="..\MagiGameServer.Contracts\MagiGameServer.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

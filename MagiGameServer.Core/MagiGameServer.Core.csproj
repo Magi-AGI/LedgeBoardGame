@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>MagiGameServer.Core</RootNamespace>
+    <AssemblyName>MagiGameServer.Core</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!-- Pure .NET server-side host/session/reconcile. No Unity or
+       LedgeBoardGame-specific dependencies. Relocates to the sibling
+       MagiGameServer repo in a later milestone; consumed by the server
+       binary (M4) and by tests. -->
+  <ItemGroup>
+    <ProjectReference Include="..\MagiGameServer.Contracts\MagiGameServer.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

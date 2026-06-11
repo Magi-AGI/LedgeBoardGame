@@ -1,0 +1,25 @@
+{
+    "name": "Magi.LedgeBoardGame.Tests.EditMode",
+    "rootNamespace": "Magi.LedgeBoardGame.Tests.EditMode",
+    "references": [
+        "Magi.LedgeBoardGame",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll",
+        "Newtonsoft.Json.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

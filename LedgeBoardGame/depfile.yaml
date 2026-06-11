@@ -1,54 +1,162 @@
+# Magi Unity Dependency File
+# Generated for LedgeBoardGame
+# Managed by MagiUnityDependencyManager
+# Updated: 2026-04-14 - Tier 1 reset: minimal set, let Unity auto-resolve transitive deps
+
+version: 1.0
+
+project:
+  name: LedgeBoardGame
+  unityVersion: 6000.4.2f1
+  targetPlatforms:
+    - StandaloneWindows64
+    - WebGL
+
 registries:
-  magi: https://registry.magi.dev
-scopes:
-  - com.magi
-  - com.inktools
-unity:
-  editor: 6000.2.5f1
-  rp: urp
-  rp_version: 17.2.0
+  - name: Unity
+    url: https://packages.unity.com
+    scopes:
+      - com.unity
+  - name: OpenUPM
+    url: https://package.openupm.com
+    scopes:
+      - com.coplaydev
+
 packages:
-  # Core Unity packages
-  com.unity.inputsystem: 1.14.2
-  com.unity.burst: 1.8.25
-  com.unity.mathematics: 1.3.1
+  # Local Magi packages
+  - name: com.magi.unitytools
+    path: ../../MagiUnityTools/MagiUnityTools/Assets/_Project/Scripts
+    source: local
 
-  # 2D packages for board game
-  com.unity.2d.animation: 12.0.2
-  com.unity.2d.aseprite: 2.0.2
-  com.unity.2d.enhancers: 1.0.0
-  com.unity.2d.psdimporter: 11.0.1
-  com.unity.2d.sprite: 1.0.0
-  com.unity.2d.spriteshape: 12.0.1
-  com.unity.2d.tilemap: 1.0.0
-  com.unity.2d.tilemap.extras: 5.0.1
+  # JSON serialization - REQUIRED for LedgeGameSpecLoader
+  - name: com.unity.nuget.newtonsoft-json
+    version: 3.2.2
+    source: registry
 
-  # AI packages (for Unity AI Assistant)
-  com.unity.ai.assistant: 1.0.0-pre.12
-  com.unity.ai.generators: 1.0.0-pre.20
-  com.unity.ai.inference: 2.3.0
+  # Core engine packages referenced by Magi.LedgeBoardGame.asmdef
+  - name: com.unity.inputsystem
+    version: 1.19.0
+    source: registry
 
-  # IDE support
-  com.unity.collab-proxy: 2.9.3
-  com.unity.ide.rider: 3.0.38
-  com.unity.ide.visualstudio: 2.0.23
+  - name: com.unity.mathematics
+    version: 1.3.3
+    source: registry
 
-  # Other Unity packages
-  com.unity.multiplayer.center: 1.0.0
-  com.unity.test-framework: 1.5.1
-  com.unity.textmeshpro: 3.0.9
-  com.unity.timeline: 1.8.9
-  com.unity.ugui: 2.0.0
-  com.unity.visualscripting: 1.9.8
+  - name: com.unity.burst
+    version: 1.8.29
+    source: registry
 
-  # Magi packages
-  com.magi.unitytools: file:../../../MagiUnityTools/MagiUnityTools/Assets/_Project/MagiUnityTools
+  # UI — ships TextMeshPro in Unity 6
+  - name: com.unity.ugui
+    version: 2.0.0
+    source: registry
 
+  # Rendering — scene uses URP
+  - name: com.unity.render-pipelines.universal
+    version: 17.4.0
+    source: registry
+
+  # URP 17.4's URPCameraBinder.cs references VFX Graph types (VFXBinderBase,
+  # ExposedProperty, etc.). VFX Graph must be installed or URP fails to compile.
+  - name: com.unity.visualeffectgraph
+    version: 17.4.0
+    source: registry
+
+  # VFX Graph's Runtime asmdef hard-references Unity.Timeline; without it the
+  # VFX Graph runtime DLL fails to build, which in turn breaks URP's VFX bindings.
+  - name: com.unity.timeline
+    version: 1.8.7
+    source: registry
+
+  # 2D — scene uses UI.Image backed by sprites
+  - name: com.unity.2d.sprite
+    version: 1.0.0
+    source: registry
+
+  # Testing — Magi.LedgeBoardGame tests are edit-mode
+  - name: com.unity.test-framework
+    version: 1.6.0
+    source: registry
+
+  - name: com.unity.ext.nunit
+    version: 2.0.5
+    source: registry
+
+  # IDE integrations
+  - name: com.unity.ide.rider
+    version: 3.0.39
+    source: registry
+
+  - name: com.unity.ide.visualstudio
+    version: 2.0.27
+    source: registry
+
+  # Unity official MCP + chat
+  - name: com.unity.ai.assistant
+    version: 2.6.0-pre.1
+    source: registry
+    policyException: development-tool
+
+  # Coplay MCP bridge (OpenUPM)
+  - name: com.coplaydev.unity-mcp
+    version: 9.6.6
+    source: registry
+    policyException: development-tool
+
+  # Engine modules — Unity no longer auto-includes these when depfile is minimal.
+  # Coplay's Runtime asmdef is autoReferenced with no explicit module refs, so it
+  # needs these implicitly: EncodeToPNG, ScreenCapture, JsonUtility, UnityWebRequest,
+  # UIElements editor windows, IMGUIContainer. Plus UGUI/UI basics and 2D physics
+  # for potential URP shader graph variants.
+  - name: com.unity.modules.imageconversion
+    version: 1.0.0
+    source: registry
+  - name: com.unity.modules.screencapture
+    version: 1.0.0
+    source: registry
+  - name: com.unity.modules.jsonserialize
+    version: 1.0.0
+    source: registry
+  - name: com.unity.modules.unitywebrequest
+    version: 1.0.0
+    source: registry
+  - name: com.unity.modules.uielements
+    version: 1.0.0
+    source: registry
+  - name: com.unity.modules.imgui
+    version: 1.0.0
+    source: registry
+  - name: com.unity.modules.ui
+    version: 1.0.0
+    source: registry
+  - name: com.unity.modules.animation
+    version: 1.0.0
+    source: registry
+  - name: com.unity.modules.physics2d
+    version: 1.0.0
+    source: registry
+
+# Policy configuration
 policy:
   allowGitDependencies: false
-  bannedApis:
-    - Resources.Load
-    - FindObjectOfType
+  allowPrerelease: true  # ai.assistant ships as pre-release
+  requireLockFile: true
+  bannedAPIs:
     - GameObject.Find
     - SendMessage
-    - Object.FindObjectsOfType
+    # Note: Resources.Load is allowed for ScriptableObject config loading
+  requiredPackages:
+    - com.magi.unitytools
+    - com.unity.nuget.newtonsoft-json
+  maxPackageCount: 60
+
+# Notes:
+# - Target Unity 6000.4.2f1 (stable); NOT 6000.5 Beta (Coplay's GetInstanceID is obsolete there)
+# - Dropped from prior depfile to unblock compile:
+#     ai.toolkit, ai.generators   — ai.assistant 2.5+ is self-contained; old toolkit conflicts
+#     2d.enhancers                 — hard-pinned old ai.generators; not needed for gameplay
+#     2d.animation/aseprite/psd/spriteshape/tilemap-extras/common — unused
+#     timeline, visualscripting, collab-proxy, multiplayer.center — unused
+#     dt.app-ui, serialization, settings-manager, searcher, mono-cecil — unused or transitive
+#     ai.inference, test-framework.performance — not currently exercised
+# - System.Text.Json is NOT available in Unity 6; use Newtonsoft.Json everywhere

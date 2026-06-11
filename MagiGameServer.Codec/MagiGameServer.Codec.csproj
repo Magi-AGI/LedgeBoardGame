@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <RootNamespace>MagiGameServer.Codec</RootNamespace>
+    <AssemblyName>MagiGameServer.Codec</AssemblyName>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!--
+      JSON wire codec shared by server host and any client transport. Contracts
+      are deliberately codec-agnostic at the type level (SessionId and friends
+      are plain readonly structs, records are plain records), so every
+      serialization decision — discriminators, casing, enum-as-string — lives
+      here in one place. Both the M4b host and the M5b Unity transport pull
+      from this project so a change to the wire format is a single-project
+      diff, not a coordinated churn across host + every client.
+
+      System.Text.Json chosen over Newtonsoft: ships in-box on net8, has a
+      netstandard2.1 package for Unity consumption, and its custom-converter
+      model handles our strong-typed identifiers without drag.
+    -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MagiGameServer.Contracts\MagiGameServer.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

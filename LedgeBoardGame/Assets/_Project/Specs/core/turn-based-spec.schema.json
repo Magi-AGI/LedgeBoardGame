@@ -1,0 +1,97 @@
+{
+  "schemaVersion": "1.0.0",
+  "specId": "magi.turnbased.core",
+  "description": "Generic structure for turn-based game specifications.",
+
+  "stateModel": {
+    "description": "Shape of the game state container G.",
+    "fields": {
+      "players": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" }
+          }
+        }
+      },
+      "ctx": {
+        "description": "Turn/phase context (current player, phase id, turn number).",
+        "type": "object",
+        "properties": {
+          "currentPlayer": { "type": "string" },
+          "phase": { "type": "string" },
+          "turnNumber": { "type": "integer" }
+        }
+      },
+      "data": {
+        "description": "Game-specific payload (opaque to the core schema).",
+        "type": "object"
+      }
+    }
+  },
+
+  "moveModel": {
+    "description": "Moves are named operations that mutate G.",
+    "move": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "phaseModel": {
+    "description": "Phases constrain which moves are available and how turns behave.",
+    "phase": {
+      "type": "object",
+      "required": ["name", "moves"],
+      "properties": {
+        "name": { "type": "string" },
+        "moves": {
+          "description": "Names of moves allowed in this phase.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "turn": {
+          "description": "Optional per-phase turn constraints.",
+          "type": "object",
+          "properties": {
+            "minMoves": { "type": "integer" },
+            "maxMoves": { "type": "integer" }
+          }
+        }
+      }
+    }
+  },
+
+  "endConditions": {
+    "description": "Generic hooks for game-specific victory/end logic.",
+    "type": "object",
+    "properties": {
+      "type": {
+        "type": "string",
+        "description": "High-level pattern, e.g. 'custom', 'lastPlayerStanding'."
+      },
+      "details": {
+        "type": "object",
+        "description": "Game-specific information understood by the engine implementing this spec."
+      }
+    }
+  }
+}
+
