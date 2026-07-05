@@ -54,6 +54,9 @@ namespace Magi.LedgeBoardGame.Net
         [SerializeField] private string defaultSessionCode = "";
 
         private const string PlayerNamePrefKey = "ledge.playerName";
+        private const string SkinPrefKey = "ledge.boardSkin";
+        private const string TutorialNudgePrefKey = "ledge.tutorialNudgeShown";
+        private const string DefaultSkinId = "nightfall";
 
         private LobbyMode _mode = LobbyMode.Host;
         private int _seatCount;
@@ -81,6 +84,13 @@ namespace Magi.LedgeBoardGame.Net
 
         // ── Canvas widgets ──────────────────────────────────────────────────
         private Canvas _lobbyCanvas;
+        private GameObject _dreamBackdropGo;
+        private LedgeTitlePanel _titlePanel;
+        private LedgeTutorialPanel _tutorialPanel;
+        private LedgeSetupPanel _setupPanel;
+        private LedgeSettingsPanel _settingsPanel;
+        private bool _titleDismissed;
+        private string _selectedSkinId = DefaultSkinId;
         private GameObject _mainPanelGo;
         private GameObject _connectedBannerGo;
         private GameObject _quitOverlayGo;
@@ -120,9 +130,31 @@ namespace Magi.LedgeBoardGame.Net
             // non-empty, keeping the roster unchanged for anyone who leaves
             // the field blank.
             _playerName = PlayerPrefs.GetString(PlayerNamePrefKey, "") ?? "";
+            // F5: skin persists across sessions. Empty/missing falls back
+            // to the kit default ("nightfall"). The setup screen rehydrates
+            // from this value and writes the chosen one back on Ready.
+            _selectedSkinId = PlayerPrefs.GetString(SkinPrefKey, DefaultSkinId);
+            if (string.IsNullOrEmpty(_selectedSkinId)) _selectedSkinId = DefaultSkinId;
 
             BuildCanvas();
             RefreshUi();
+
+            // First-launch flow: no persisted name → start in setup so the
+            // player picks identity (name + skin) before seeing the title.
+            // Subsequent launches go straight to the title. F6 also tags
+            // the title's "How to play" button with a one-time pulse for
+            // first-launch sessions (gated on TutorialNudgePrefKey).
+            bool firstLaunch = string.IsNullOrEmpty(_playerName);
+            bool nudgeShown = PlayerPrefs.GetInt(TutorialNudgePrefKey, 0) != 0;
+            bool highlight = firstLaunch && !nudgeShown;
+            if (firstLaunch)
+            {
+                ShowSetup(onComplete: () => ShowTitle(highlightHowToPlay: highlight));
+            }
+            else
+            {
+                ShowTitle(highlightHowToPlay: false);
+            }
         }
 
         private void Update()
@@ -131,8 +163,32 @@ namespace Magi.LedgeBoardGame.Net
             var kb = Keyboard.current;
             if (kb != null && kb.escapeKey.wasPressedThisFrame)
             {
-                _showQuitConfirm = !_showQuitConfirm;
-                RefreshUi();
+                // Pop overlays in z-order: settings → setup → tutorial →
+                // title → quit confirm. (Each transient overlay can sit on
+                // top of any other; ESC backs out one layer at a time.)
+                if (_settingsPanel != null && _settingsPanel.IsShowing)
+                {
+                    _settingsPanel.Hide();
+                }
+                else if (_setupPanel != null && _setupPanel.IsShowing)
+                {
+                    _setupPanel.Hide();
+                }
+                else if (_tutorialPanel != null && _tutorialPanel.IsShowing)
+                {
+                    _tutorialPanel.Hide();
+                }
+                else if (!_titleDismissed && _titlePanel != null)
+                {
+                    _titleDismissed = true;
+                    _titlePanel.Hide();
+                    SelectMode(LobbyMode.Host);
+                }
+                else
+                {
+                    _showQuitConfirm = !_showQuitConfirm;
+                    RefreshUi();
+                }
             }
         }
 
@@ -439,10 +495,150 @@ namespace Magi.LedgeBoardGame.Net
             dreamGo.transform.SetParent(canvasGo.transform, false);
             dreamGo.transform.SetAsFirstSibling();
             dreamGo.AddComponent<LedgeDreamCanvas>();
+            _dreamBackdropGo = dreamGo;
 
             BuildMainPanel(canvasGo.transform);
             BuildConnectedBanner(canvasGo.transform);
             BuildQuitOverlay(canvasGo.transform);
+            BuildTutorialOverlay(canvasGo.transform);
+            BuildSetupOverlay(canvasGo.transform);
+            BuildSettingsOverlay(canvasGo.transform);
+            BuildTitleOverlay(canvasGo.transform);
+        }
+
+        /// Sibling Settings instance on the lobby canvas (the gameplay
+        /// canvas spawns its own). Title's "Settings" and the ESC menu's
+        /// Settings button both route here.
+        private void BuildSettingsOverlay(Transform canvasRoot)
+        {
+            var go = new GameObject("SettingsHost", typeof(RectTransform));
+            go.transform.SetParent(canvasRoot, false);
+            _settingsPanel = go.AddComponent<LedgeSettingsPanel>();
+        }
+
+        /// Open the full Settings panel (Audio / Motion / Accessibility /
+        /// Account). The Account section's "Edit display name" / "Change
+        /// skin" buttons route to Setup (F1 sub-route). onClose fires
+        /// when the user clicks Done.
+        public void ShowSettings(System.Action onClose = null)
+        {
+            if (_settingsPanel == null) return;
+            _settingsPanel.Show(
+                onClose: onClose,
+                // Account → Setup. After Setup commits/cancels, re-open
+                // Settings so the user can keep adjusting other tabs.
+                onEditProfile: () => ShowSetup(onComplete: () => ShowSettings(onClose)));
+        }
+
+        /// Setup (skin picker + name editor) starts hidden. Reachable via
+        /// the public ShowSetup() method — a future title/settings entry
+        /// point can call into it. Ready commits the chosen name + skin
+        /// and re-shows the lobby's main panel; Back just dismisses.
+        private void BuildSetupOverlay(Transform canvasRoot)
+        {
+            var go = new GameObject("SetupHost", typeof(RectTransform));
+            go.transform.SetParent(canvasRoot, false);
+            _setupPanel = go.AddComponent<LedgeSetupPanel>();
+        }
+
+        /// Trigger the setup screen with the currently-persisted name + skin.
+        /// Ready commits the chosen name to PlayerPrefs (same key the lobby
+        /// uses) and updates the in-memory skin selection. Both Ready and
+        /// Back fire <paramref name="onComplete"/> so the caller can route
+        /// what happens next (back to title, stay in lobby, etc.).
+        /// Skin doesn't persist yet — needs a separate PlayerPrefs key
+        /// once the skin catalog ships.
+        public void ShowSetup(System.Action onComplete = null)
+        {
+            if (_setupPanel == null) return;
+            _setupPanel.Show(
+                initialName: _playerName,
+                initialSkinId: _selectedSkinId,
+                onReady: (name, skinId) =>
+                {
+                    _playerName = (name ?? "").Trim();
+                    _selectedSkinId = string.IsNullOrEmpty(skinId) ? DefaultSkinId : skinId;
+                    if (_nameField != null) _nameField.SetTextWithoutNotify(_playerName);
+                    PlayerPrefs.SetString(PlayerNamePrefKey, _playerName);
+                    PlayerPrefs.SetString(SkinPrefKey, _selectedSkinId);
+                    PlayerPrefs.Save();
+                    try { onComplete?.Invoke(); }
+                    catch (System.Exception ex) { UnityEngine.Debug.LogError($"[lobby] setup-complete callback threw: {ex}"); }
+                },
+                onBack: onComplete);
+        }
+
+        /// Tutorial overlay starts hidden; the title's "How to play" handler
+        /// fires .Show(...). Spawned before the title so the title sits on
+        /// top until tutorial is invoked; Show() bumps it to the last sibling.
+        private void BuildTutorialOverlay(Transform canvasRoot)
+        {
+            var tutorialGo = new GameObject("TutorialHost", typeof(RectTransform));
+            tutorialGo.transform.SetParent(canvasRoot, false);
+            _tutorialPanel = tutorialGo.AddComponent<LedgeTutorialPanel>();
+        }
+
+        /// Kit title screen lives above the lobby chrome on the same canvas.
+        /// Spawned last so it sits on top of the main panel; the boot path
+        /// decides whether to Show() it immediately or run setup first
+        /// (see Awake's first-launch branch).
+        private void BuildTitleOverlay(Transform canvasRoot)
+        {
+            var titleGo = new GameObject("TitleHost", typeof(RectTransform));
+            titleGo.transform.SetParent(canvasRoot, false);
+            titleGo.transform.SetAsLastSibling();
+            _titlePanel = titleGo.AddComponent<LedgeTitlePanel>();
+        }
+
+        /// Show the title screen with the standard callback wiring. Called
+        /// from Awake (after the first-launch check) and after the user
+        /// closes setup/settings from the title.
+        private void ShowTitle(bool highlightHowToPlay = false)
+        {
+            if (_titlePanel == null) return;
+            // F6: mark the tutorial nudge as shown so subsequent launches
+            // don't re-pulse the How-to-play button.
+            if (highlightHowToPlay)
+            {
+                PlayerPrefs.SetInt(TutorialNudgePrefKey, 1);
+                PlayerPrefs.Save();
+            }
+            _titlePanel.Show(
+                onPlay: () =>
+                {
+                    _titleDismissed = true;
+                    SelectMode(LobbyMode.Host);
+                },
+                onPractice: () =>
+                {
+                    _titleDismissed = true;
+                    SelectMode(LobbyMode.Practice);
+                },
+                onHowToPlay: () =>
+                {
+                    // Tutorial sits over the title on the same canvas.
+                    // Start practice → dismiss title + tutorial, jump
+                    // straight to lobby's Practice tab. Skip → just hide
+                    // the tutorial; title remains visible underneath.
+                    if (_tutorialPanel == null) return;
+                    _tutorialPanel.Show(
+                        onStartPractice: () =>
+                        {
+                            _titleDismissed = true;
+                            _titlePanel?.Hide();
+                            SelectMode(LobbyMode.Practice);
+                        },
+                        onSkip: () => { /* tutorial hides itself; title still on screen */ });
+                },
+                onSettings: () =>
+                {
+                    // F1: Title's "Settings" opens the full Settings panel
+                    // (Audio / Motion / Accessibility / Account). Account's
+                    // Edit/Change buttons route into Setup as a sub-route.
+                    // Done returns to the title.
+                    ShowSettings(onClose: () => ShowTitle());
+                },
+                highlightHowToPlay: highlightHowToPlay);
         }
 
         private void BuildMainPanel(Transform canvasRoot)
@@ -456,7 +652,13 @@ namespace Magi.LedgeBoardGame.Net
             rt.sizeDelta = new Vector2(540f, 560f);
             rt.anchoredPosition = Vector2.zero;
 
-            var glass = LedgeGlassPanel.Build(_mainPanelGo.transform, "Glass", elevated: true);
+            // Panel chrome per kit/ledge-board-game/project/ui/frame-lobby.jsx
+            // → LobbyFrame: elevated (panel-2) + strongly-edged (panel-edge-2)
+            // + 44×40 padding. The wider horizontal padding lets fields breathe
+            // at the 540px panel width.
+            var glass = LedgeGlassPanel.Build(_mainPanelGo.transform, "Glass",
+                elevated: true, stronglyEdged: true,
+                padding: new Vector2(44f, 40f));
             var gRt = glass.GetComponent<RectTransform>();
             gRt.anchorMin = Vector2.zero; gRt.anchorMax = Vector2.one;
             gRt.offsetMin = Vector2.zero; gRt.offsetMax = Vector2.zero;
@@ -477,12 +679,22 @@ namespace Magi.LedgeBoardGame.Net
             vl.childForceExpandWidth = true;
             vl.childForceExpandHeight = false;
 
-            // Title
-            var title = BuildLabel(col, "Ledge — Lobby", LedgeUITokens.TurnBannerSize, LedgeUITokens.Ink);
+            // Title: "Ledge" Fraunces italic 40pt, then a separate centered
+            // "LOBBY" SectionLabel below. Mirrors the kit's two-piece title
+            // block (frame-lobby.jsx → LobbyFrame).
+            var title = BuildLabel(col, "Ledge", 40f, LedgeUITokens.Ink);
             title.font = LedgeUITokens.DisplayFont;
             title.fontStyle = FontStyles.Italic;
             title.alignment = TextAlignmentOptions.Center;
-            AddLayoutHeight(title.gameObject, 44f);
+            title.characterSpacing = -2f; // ~0.02em tighten per kit
+            AddLayoutHeight(title.gameObject, 48f);
+
+            var subtitle = BuildLabel(col, "LOBBY", LedgeUITokens.SectionLabelSize, LedgeUITokens.InkDim);
+            subtitle.font = LedgeUITokens.MonoFont;
+            subtitle.fontStyle = FontStyles.UpperCase;
+            subtitle.characterSpacing = 22f;
+            subtitle.alignment = TextAlignmentOptions.Center;
+            AddLayoutHeight(subtitle.gameObject, 14f);
 
             // Mode tab row
             var tabsRow = BuildHorizontalRow(col, "Tabs", 36f, 8f, TextAnchor.MiddleCenter, equalWidth: true);
@@ -503,6 +715,15 @@ namespace Magi.LedgeBoardGame.Net
             BuildSectionLabel(nameSection, "Your name (optional)");
             _nameField = BuildInputField(nameSection, "NameField", _playerName, "Anonymous");
             _nameField.onValueChanged.AddListener(v => _playerName = v ?? "");
+
+            // Edit-profile entry into the kit-faithful setup screen (skin
+            // picker + name editor with "how others see you" preview).
+            // Beneath the name section so it reads as the natural follow-on
+            // to "your name". Small Ghost Sm — explicitly de-emphasised vs
+            // the lobby's primary Go button.
+            var editBtn = LedgeButton.Build(nameSection, "Edit profile  →", LedgeButton.Variant.Ghost, LedgeButton.Size.Sm,
+                () => ShowSetup());
+            AddLayoutHeight(editBtn.gameObject, 26f);
 
             _hostUriRow = BuildSection(col, "HostUriSection").gameObject;
             BuildSectionLabel(_hostUriRow.transform, "Host base URI");
@@ -534,9 +755,9 @@ namespace Magi.LedgeBoardGame.Net
             _statusLabel.fontStyle = FontStyles.Italic;
             AddLayoutHeight(_statusLabel.gameObject, 22f);
 
-            // Go button
+            // Go button — full-width Ghost, 48px tall per the kit.
             _goButton = LedgeButton.Build(col, "Go", LedgeButton.Variant.Ghost, LedgeButton.Size.Lg, () => StartCoroutine(BeginFlow()));
-            AddLayoutHeight(_goButton.gameObject, 44f);
+            AddLayoutHeight(_goButton.gameObject, 48f);
 
             // Shared code row (post-host-connect)
             _sharedCodeRow = BuildSection(col, "SharedCodeSection").gameObject;
@@ -623,8 +844,14 @@ namespace Magi.LedgeBoardGame.Net
             prt.anchorMax = new Vector2(0.5f, 0.5f);
             prt.pivot = new Vector2(0.5f, 0.5f);
             prt.anchoredPosition = Vector2.zero;
-            prt.sizeDelta = new Vector2(380f, 200f);
-            var glass = LedgeGlassPanel.Build(panelGo.transform, "Glass", elevated: true, stronglyEdged: true);
+            // Panel sized to fit the kit's larger title (26pt) + 2-line body
+            // copy with extra padding (30 vertical / 32 horizontal per the
+            // kit). 380px wide; height grew from 260 to 380 once the F2
+            // Settings button joined the BackToLobby + Cancel/Quit stack.
+            prt.sizeDelta = new Vector2(380f, 380f);
+            var glass = LedgeGlassPanel.Build(panelGo.transform, "Glass",
+                elevated: true, stronglyEdged: true,
+                padding: new Vector2(32f, 30f));
             var gRt = glass.GetComponent<RectTransform>();
             gRt.anchorMin = Vector2.zero; gRt.anchorMax = Vector2.one;
             gRt.offsetMin = Vector2.zero; gRt.offsetMax = Vector2.zero;
@@ -639,20 +866,43 @@ namespace Magi.LedgeBoardGame.Net
             vl.childControlWidth = true; vl.childControlHeight = false;
             vl.childForceExpandWidth = true; vl.childForceExpandHeight = false;
 
-            _quitTitle = BuildLabel(col, "Quit Ledge?", LedgeUITokens.IdentNameSize, LedgeUITokens.Ink);
+            // Kit specifies the dialog title at 26pt Fraunces italic — a
+            // larger commitment than the lobby's compact section copy.
+            _quitTitle = BuildLabel(col, "Quit Ledge?", 26f, LedgeUITokens.Ink);
             _quitTitle.font = LedgeUITokens.DisplayFont;
             _quitTitle.fontStyle = FontStyles.Italic;
             _quitTitle.alignment = TextAlignmentOptions.Center;
-            AddLayoutHeight(_quitTitle.gameObject, 28f);
+            AddLayoutHeight(_quitTitle.gameObject, 36f);
 
-            _quitBody = BuildLabel(col, "Exit to desktop?", LedgeUITokens.BodySize, LedgeUITokens.InkFaint);
+            // Body wraps to two lines on a 380px panel at 13pt; enable word
+            // wrap explicitly so the kit copy doesn't run off the edge.
+            _quitBody = BuildLabel(col, "Exit to desktop?", 13f, LedgeUITokens.InkFaint);
             _quitBody.alignment = TextAlignmentOptions.Center;
-            AddLayoutHeight(_quitBody.gameObject, 20f);
+            _quitBody.textWrappingMode = TextWrappingModes.Normal;
+            AddLayoutHeight(_quitBody.gameObject, 60f);
 
             // Back-to-lobby (only visible when connected)
             _quitBackToLobbyGo = LedgeButton.Build(col, "Back to lobby", LedgeButton.Variant.Ghost, LedgeButton.Size.Md,
                 () => { _showQuitConfirm = false; ReloadScene(); }).gameObject;
             AddLayoutHeight(_quitBackToLobbyGo, 36f);
+
+            // F2: Settings button on the ESC menu. The kit's choice over a
+            // TR gear icon — settings live where the player already pauses.
+            // Hides the quit overlay and routes to the full Settings panel;
+            // closing Settings returns to the quit overlay rather than the
+            // game so the player can confirm or cancel from a single ESC.
+            var settingsBtn = LedgeButton.Build(col, "Settings", LedgeButton.Variant.Ghost, LedgeButton.Size.Md,
+                () =>
+                {
+                    _showQuitConfirm = false;
+                    RefreshUi();
+                    ShowSettings(onClose: () =>
+                    {
+                        _showQuitConfirm = true;
+                        RefreshUi();
+                    });
+                });
+            AddLayoutHeight(settingsBtn.gameObject, 36f);
 
             // Cancel | Quit row
             var btnRow = BuildHorizontalRow(col, "QuitButtons", 36f, 8f, TextAnchor.MiddleCenter, equalWidth: true);
@@ -704,8 +954,26 @@ namespace Magi.LedgeBoardGame.Net
                 _goButton.UnityButton.interactable = canGo;
             }
 
-            // Status
-            if (_statusLabel != null) _statusLabel.text = _status ?? "";
+            // Status: dynamic message (connecting, failed, …) takes precedence;
+            // otherwise show the kit's mode-contextual tagline so the slot
+            // always reads intentional rather than empty.
+            if (_statusLabel != null)
+            {
+                if (!string.IsNullOrEmpty(_status))
+                {
+                    _statusLabel.text = _status;
+                }
+                else
+                {
+                    _statusLabel.text = _mode switch
+                    {
+                        LobbyMode.Practice => "Pass-and-play on one device.",
+                        LobbyMode.Host => "Ready when you are.",
+                        LobbyMode.Join => "Ready when you are.",
+                        _ => "",
+                    };
+                }
+            }
 
             // Shared code row visibility + content
             bool showShared = !string.IsNullOrEmpty(_sharedCode) && _uiState != UiState.Connected;
@@ -714,8 +982,19 @@ namespace Magi.LedgeBoardGame.Net
 
             // Main panel visibility: hidden once connected so the in-game
             // chrome can take the screen. Still hidden behind the quit
-            // overlay during pre-connect Escape presses (the scrim covers it).
-            if (_mainPanelGo != null) _mainPanelGo.SetActive(_uiState != UiState.Connected);
+            // overlay during pre-connect Escape presses (the scrim covers
+            // it). Also hidden while the title is still up — the title's
+            // Play/Practice buttons set _titleDismissed so the lobby
+            // appears underneath when those handlers fire.
+            if (_mainPanelGo != null)
+                _mainPanelGo.SetActive(_uiState != UiState.Connected && _titleDismissed);
+
+            // The dream backdrop is opaque fullscreen at lobby sortingOrder
+            // 100, so leaving it active once Connected would paint over the
+            // main Canvas (boards live there at sortingOrder 0). The in-game
+            // EnsureDreamCanvas spawns its own backdrop on the main Canvas,
+            // so dropping the lobby's here is the right hand-off.
+            if (_dreamBackdropGo != null) _dreamBackdropGo.SetActive(_uiState != UiState.Connected);
 
             // Connected banner (TL): host-only, only when we have a code.
             bool showBanner = _uiState == UiState.Connected
@@ -728,7 +1007,9 @@ namespace Magi.LedgeBoardGame.Net
             bool connected = _uiState == UiState.Connected;
             if (_quitOverlayGo != null) _quitOverlayGo.SetActive(_showQuitConfirm);
             if (_quitTitle != null) _quitTitle.text = connected ? "Leave session?" : "Quit Ledge?";
-            if (_quitBody != null) _quitBody.text = connected ? "Return to the lobby or quit to desktop?" : "Exit to desktop?";
+            if (_quitBody != null) _quitBody.text = connected
+                ? "Your seat stays open — you can rejoin with the session code while the game lasts."
+                : "You can pick up a practice game any time.";
             if (_quitBackToLobbyGo != null) _quitBackToLobbyGo.SetActive(connected);
         }
 

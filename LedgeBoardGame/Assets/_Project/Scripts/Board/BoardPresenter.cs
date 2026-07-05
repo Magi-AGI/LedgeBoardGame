@@ -2,6 +2,8 @@ using UnityEngine;
 using System.Collections.Generic;
 using Magi.LedgeBoardGame.Models;
 using Magi.LedgeBoardGame.Config;
+using Magi.LedgeBoardGame.UI;
+using TMPro;
 using UnityEngine.UI;
 
 namespace Magi.LedgeBoardGame.Board
@@ -26,7 +28,24 @@ namespace Magi.LedgeBoardGame.Board
         private string _ownerName;
         private Image _backgroundImage;
         private Image _eliminatedOverlay;
-        private Text _titleLabel;
+        // Bottom-center kit "nameplate" — replaces the legacy top-of-board
+        // white title text. Glass pill with placeholder skin chip + owner
+        // name + optional ACTIVE caption when this is the current-turn
+        // board. Matches kit/ledge-board-game/project/ui/frame-hud-np.jsx
+        // → NamedBoard.
+        private GameObject _nameplate;
+        private TMP_Text _nameplateName;
+        private TMP_Text _nameplateActiveCaption;
+
+        // Control-handoff visitor chrome (CONTROL-HANDOFF-SPEC.md 2026-06-15):
+        // small pill above the board reading "<Name> is acting here" + a
+        // cool dot in the visitor's skin accent. Visible only while a
+        // visiting move is in flight on this board.
+        private GameObject _visitorPill;
+        private Image _visitorPillDot;
+        private TMP_Text _visitorPillName;
+        private int _activeVisitorEntryTileId = -1;
+
         private bool _isEliminated;
         private readonly Dictionary<int, SpaceView> _spaceViews = new Dictionary<int, SpaceView>();
 
@@ -42,8 +61,8 @@ namespace Magi.LedgeBoardGame.Board
             BuildSpaceViews();
             PositionSpaceViews();
             UpdateView();
-            EnsureTitleLabel();
-            RefreshTitleLabel();
+            EnsureNameplate();
+            RefreshNameplate();
         }
 
         /// Propagates a renamed player (see LedgeAction.SetDisplayName / U14)
@@ -54,43 +73,217 @@ namespace Magi.LedgeBoardGame.Board
         {
             if (string.Equals(_ownerName, ownerName, System.StringComparison.Ordinal)) return;
             _ownerName = ownerName;
-            RefreshTitleLabel();
+            RefreshNameplate();
             RefreshCenterSpaceLabel();
         }
 
-        /// U-126 birds-eye board title banner. Spawned above the board at a
-        /// distance proportional to the outer radius so it scales sensibly
-        /// with the presenter's configured size. Text is plain UnityEngine.UI.Text
-        /// to stay inside the existing Canvas without a TMP dependency on
-        /// this prefab. Null-safe — if no Canvas ancestor is found the label
-        /// quietly stays unspawned (board still renders fine).
-        private void EnsureTitleLabel()
+        /// Toggle the kit nameplate's ACTIVE caption + accent halo. Called
+        /// from GameController whenever the current-turn board changes (see
+        /// UpdateDreamCanvasActiveBoard). Idempotent — safe to call every
+        /// turn even when state hasn't changed.
+        public void SetActiveDisplay(bool active)
         {
-            if (_titleLabel != null) return;
-            var go = new GameObject("BoardTitleLabel");
+            if (_nameplateActiveCaption != null) _nameplateActiveCaption.gameObject.SetActive(active);
+            if (_nameplate == null) return;
+            var outline = _nameplate.GetComponent<Outline>();
+            if (outline == null) return;
+            outline.effectColor = active
+                ? new Color(LedgeUITokens.Accent.r, LedgeUITokens.Accent.g, LedgeUITokens.Accent.b, 0.55f)
+                : LedgeUITokens.PanelEdge2;
+        }
+
+        /// Apply the control-handoff visitor visualization (path glow on
+        /// the entry tile + pill tag near the board). Per
+        /// CONTROL-HANDOFF-SPEC.md the visitor's COOL skin accent is the
+        /// identity — never the warm turn accent. Pass entryTileId < 0 to
+        /// show the pill only (no tile glow).
+        public void SetVisitor(string visitorName, Color visitorAccent, int entryTileId)
+        {
+            ClearVisitorOverlayInternal();
+            EnsureVisitorPill();
+            if (_visitorPillName != null) _visitorPillName.text =
+                string.IsNullOrEmpty(visitorName) ? "Visitor is acting here" : $"{visitorName} is acting here";
+            if (_visitorPillDot != null) _visitorPillDot.color = visitorAccent;
+            if (_visitorPill != null) _visitorPill.SetActive(true);
+
+            if (entryTileId >= 0 && _spaceViews.TryGetValue(entryTileId, out var entryView) && entryView != null)
+            {
+                entryView.SetVisitorOverlay(visitorAccent);
+            }
+            _activeVisitorEntryTileId = entryTileId;
+        }
+
+        public void ClearVisitor()
+        {
+            ClearVisitorOverlayInternal();
+            if (_visitorPill != null) _visitorPill.SetActive(false);
+        }
+
+        private void ClearVisitorOverlayInternal()
+        {
+            if (_activeVisitorEntryTileId >= 0
+                && _spaceViews.TryGetValue(_activeVisitorEntryTileId, out var view)
+                && view != null)
+            {
+                view.ClearVisitorOverlay();
+            }
+            _activeVisitorEntryTileId = -1;
+        }
+
+        /// Glass pill anchored above the top of the board, sized to fit
+        /// "Name is acting here" at UI 12pt. Built once, reused by SetVisitor.
+        private void EnsureVisitorPill()
+        {
+            if (_visitorPill != null) return;
+
+            var go = new GameObject("VisitorPill", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline), typeof(HorizontalLayoutGroup), typeof(ContentSizeFitter));
             go.transform.SetParent(transform, false);
-            var rect = go.AddComponent<RectTransform>();
+            var rt = (RectTransform)go.transform;
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            // Above the board — clear of the outermost ledge tiles (which sit
+            // near ledgeRadius) so the pill never occludes the entry tile it
+            // annotates. Sits higher than the nameplate's mirror distance below.
+            rt.anchoredPosition = new Vector2(0f, ledgeRadius + 90f);
+
+            var bg = go.GetComponent<Image>();
+            bg.color = LedgeUITokens.Panel;
+            bg.raycastTarget = false;
+            var outline = go.GetComponent<Outline>();
+            outline.effectColor = LedgeUITokens.PanelEdge2;
+            outline.effectDistance = new Vector2(LedgeUITokens.HairlineWidth, -LedgeUITokens.HairlineWidth);
+
+            var hl = go.GetComponent<HorizontalLayoutGroup>();
+            hl.padding = new RectOffset(20, 24, 12, 12);
+            hl.spacing = 12f;
+            hl.childAlignment = TextAnchor.MiddleLeft;
+            hl.childControlWidth = false;
+            hl.childControlHeight = false;
+            hl.childForceExpandWidth = false;
+            hl.childForceExpandHeight = false;
+
+            var fitter = go.GetComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            // Cool dot — visitor's skin accent.
+            var dotGo = new GameObject("Dot", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement));
+            dotGo.transform.SetParent(go.transform, false);
+            var dotRt = (RectTransform)dotGo.transform;
+            dotRt.sizeDelta = new Vector2(20f, 20f);
+            _visitorPillDot = dotGo.GetComponent<Image>();
+            _visitorPillDot.color = LedgeUITokens.AccentCool;
+            _visitorPillDot.raycastTarget = false;
+            var dotLe = dotGo.GetComponent<LayoutElement>();
+            dotLe.preferredWidth = 20f; dotLe.minWidth = 20f;
+            dotLe.preferredHeight = 20f; dotLe.minHeight = 20f;
+
+            // "<Name> is acting here" UI bold 18pt.
+            var nameGo = new GameObject("Label", typeof(RectTransform));
+            nameGo.transform.SetParent(go.transform, false);
+            _visitorPillName = nameGo.AddComponent<TextMeshProUGUI>();
+            _visitorPillName.font = LedgeUITokens.UIFont;
+            _visitorPillName.fontSize = 18f;
+            _visitorPillName.fontStyle = FontStyles.Bold;
+            _visitorPillName.color = LedgeUITokens.Ink;
+            _visitorPillName.alignment = TextAlignmentOptions.MidlineLeft;
+            _visitorPillName.text = "Visitor";
+            _visitorPillName.raycastTarget = false;
+
+            _visitorPill = go;
+            _visitorPill.SetActive(false);
+        }
+
+        /// Kit "nameplate" — glass pill at bottom-center of the board carrying
+        /// skin-chip + owner name. Replaces the legacy top-of-board white
+        /// Text banner. Mirrors frame-hud-np.jsx → NamedBoard. The skin chip
+        /// is a flat dark placeholder until the skin catalog lands. ACTIVE
+        /// caption (mono accent, hidden by default) toggles via
+        /// <see cref="SetActiveDisplay"/>.
+        private void EnsureNameplate()
+        {
+            if (_nameplate != null) return;
+
+            var go = new GameObject("BoardNameplate", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline));
+            go.transform.SetParent(transform, false);
+            var rect = (RectTransform)go.transform;
             rect.anchorMin = new Vector2(0.5f, 0.5f);
             rect.anchorMax = new Vector2(0.5f, 0.5f);
             rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = new Vector2(0f, outerRadius + 60f);
-            rect.sizeDelta = new Vector2(outerRadius * 2.2f, 60f);
-            _titleLabel = go.AddComponent<Text>();
-            _titleLabel.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            _titleLabel.alignment = TextAnchor.MiddleCenter;
-            _titleLabel.fontSize = 28;
-            _titleLabel.color = Color.white;
-            _titleLabel.raycastTarget = false;
-            _titleLabel.horizontalOverflow = HorizontalWrapMode.Overflow;
-            _titleLabel.verticalOverflow = VerticalWrapMode.Overflow;
+            // Below the board, mirroring where the legacy title sat above it.
+            rect.anchoredPosition = new Vector2(0f, -(outerRadius + 60f));
+            rect.sizeDelta = new Vector2(outerRadius * 1.4f, 56f);
+
+            var bg = go.GetComponent<Image>();
+            bg.color = LedgeUITokens.Panel;
+            bg.raycastTarget = false;
+            var outline = go.GetComponent<Outline>();
+            outline.effectColor = LedgeUITokens.PanelEdge2;
+            outline.effectDistance = new Vector2(LedgeUITokens.HairlineWidth, -LedgeUITokens.HairlineWidth);
+
+            _nameplate = go;
+
+            // Skin chip — placeholder flat-dark square. Sized to read at
+            // multi-board distance (boards live at outerRadius ~400-500px).
+            var chipGo = new GameObject("SkinChip", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline));
+            chipGo.transform.SetParent(rect, false);
+            var chipRt = (RectTransform)chipGo.transform;
+            chipRt.anchorMin = new Vector2(0f, 0.5f);
+            chipRt.anchorMax = new Vector2(0f, 0.5f);
+            chipRt.pivot = new Vector2(0f, 0.5f);
+            chipRt.anchoredPosition = new Vector2(16f, 0f);
+            chipRt.sizeDelta = new Vector2(36f, 36f);
+            var chipImg = chipGo.GetComponent<Image>();
+            chipImg.color = new Color(0.10f, 0.12f, 0.22f, 1f); // ~#1A1F38 — kit fallback
+            chipImg.raycastTarget = false;
+            var chipOutline = chipGo.GetComponent<Outline>();
+            chipOutline.effectColor = LedgeUITokens.PanelEdge2;
+            chipOutline.effectDistance = new Vector2(LedgeUITokens.HairlineWidth, -LedgeUITokens.HairlineWidth);
+
+            // Name + ACTIVE caption stacked vertically to the right of chip.
+            _nameplateName = MakeNameplateText(rect, "Name", LedgeUITokens.UIFont, 24f, LedgeUITokens.Ink);
+            _nameplateName.fontStyle = FontStyles.Bold;
+            _nameplateName.alignment = TextAlignmentOptions.MidlineLeft;
+            var nameRt = _nameplateName.rectTransform;
+            nameRt.anchorMin = new Vector2(0f, 0f);
+            nameRt.anchorMax = new Vector2(1f, 1f);
+            nameRt.pivot = new Vector2(0f, 0.5f);
+            nameRt.offsetMin = new Vector2(60f, 0f);
+            nameRt.offsetMax = new Vector2(-16f, 0f);
+
+            _nameplateActiveCaption = MakeNameplateText(rect, "ActiveCaption", LedgeUITokens.MonoFont, 14f, LedgeUITokens.Accent);
+            _nameplateActiveCaption.text = "ACTIVE";
+            _nameplateActiveCaption.fontStyle = FontStyles.UpperCase;
+            _nameplateActiveCaption.characterSpacing = 18f;
+            _nameplateActiveCaption.alignment = TextAlignmentOptions.MidlineRight;
+            var activeRt = _nameplateActiveCaption.rectTransform;
+            activeRt.anchorMin = new Vector2(1f, 0.5f);
+            activeRt.anchorMax = new Vector2(1f, 0.5f);
+            activeRt.pivot = new Vector2(1f, 0.5f);
+            activeRt.anchoredPosition = new Vector2(-16f, 0f);
+            activeRt.sizeDelta = new Vector2(80f, 16f);
+            _nameplateActiveCaption.gameObject.SetActive(false);
         }
 
-        private void RefreshTitleLabel()
+        private void RefreshNameplate()
         {
-            if (_titleLabel == null) return;
-            _titleLabel.text = string.IsNullOrWhiteSpace(_ownerName)
+            if (_nameplateName == null) return;
+            _nameplateName.text = string.IsNullOrWhiteSpace(_ownerName)
                 ? (_boardState != null ? $"Board {_boardState.BoardId}" : "Board")
                 : _ownerName;
+        }
+
+        private static TMP_Text MakeNameplateText(Transform parent, string name, TMP_FontAsset font, float size, Color color)
+        {
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            var t = go.AddComponent<TextMeshProUGUI>();
+            t.font = font;
+            t.fontSize = size;
+            t.color = color;
+            t.raycastTarget = false;
+            return t;
         }
 
         /// Only the Center space's label depends on ownerName
