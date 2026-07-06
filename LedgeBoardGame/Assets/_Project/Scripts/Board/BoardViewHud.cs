@@ -100,7 +100,12 @@ namespace Magi.LedgeBoardGame.Board
             var hl = _comparisonGroup.gameObject.AddComponent<HorizontalLayoutGroup>();
             hl.spacing = 8f;
             hl.childAlignment = TextAnchor.MiddleCenter;
-            hl.childControlWidth = false;
+            // Control width so the prev/next buttons honour their 44px
+            // LayoutElement and the label takes the flexible remainder. With it
+            // false the buttons rendered at their default width and the row
+            // (< Board N >) overflowed the 280px panel — clipping off the right
+            // screen edge, most visibly in narrow portrait.
+            hl.childControlWidth = true;
             hl.childControlHeight = true;
             hl.childForceExpandWidth = false;
             hl.childForceExpandHeight = true;
