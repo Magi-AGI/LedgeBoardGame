@@ -296,7 +296,7 @@ namespace Magi.LedgeBoardGame.Board
 
                 hoverLabelTMP = tmpGo.AddComponent<TextMeshProUGUI>();
                 hoverLabelTMP.alignment = TextAlignmentOptions.Center;
-                hoverLabelTMP.enableWordWrapping = true;
+                hoverLabelTMP.textWrappingMode = TextWrappingModes.Normal;
                 hoverLabelTMP.fontSize = hoverLabelFontSize;
                 hoverLabelTMP.color = hoverLabelColor;
                 hoverLabelTMP.raycastTarget = false;
@@ -411,6 +411,104 @@ namespace Magi.LedgeBoardGame.Board
         }
 
         public void SetHighlightColor(Color _) { }
+
+        // ── Visitor overlay (control-handoff spec, 2026-06-15) ─────────────
+        // A flat colored hex tint at the visitor's cool skin-accent at ~0.5
+        // alpha. Sits between fillImage and frameImage in the sibling order
+        // so it tints the wedge color without obscuring the frame or glow.
+        // Lazily built so untouched tiles stay zero-cost.
+        private Image _visitorOverlayImage;
+        private Image _visitorHaloImage;
+
+        // The flat tint alone can't be told apart from a tile whose fill is
+        // already near the visitor accent (many tiles are cyan/blue), so a
+        // brighter accent ring around the entry tile carries the recognition.
+        private const float VisitorHaloAlpha = 0.8f;
+
+        public void SetVisitorOverlay(Color accent, float alpha = 0.5f)
+        {
+            EnsureVisitorOverlayImage();
+            if (_visitorOverlayImage != null)
+            {
+                _visitorOverlayImage.color = new Color(accent.r, accent.g, accent.b, Mathf.Clamp01(alpha));
+                _visitorOverlayImage.gameObject.SetActive(true);
+            }
+
+            // Accent halo carries the "someone is acting here" recognition on
+            // top of the translucent fill tint.
+            EnsureVisitorHaloImage();
+            if (_visitorHaloImage != null)
+            {
+                _visitorHaloImage.color = new Color(accent.r, accent.g, accent.b, VisitorHaloAlpha);
+                _visitorHaloImage.gameObject.SetActive(true);
+            }
+        }
+
+        public void ClearVisitorOverlay()
+        {
+            if (_visitorOverlayImage != null) _visitorOverlayImage.gameObject.SetActive(false);
+            if (_visitorHaloImage != null) _visitorHaloImage.gameObject.SetActive(false);
+        }
+
+        private void EnsureVisitorOverlayImage()
+        {
+            if (_visitorOverlayImage != null) return;
+            // Mirror the fillImage hex sprite + rotation so the overlay
+            // shape matches the tile's actual outline. shapeRoot is the
+            // parent for the visual stack.
+            if (fillImage == null || shapeRoot == null) return;
+
+            var go = new GameObject("VisitorOverlay", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var rt = (RectTransform)go.transform;
+            rt.SetParent(shapeRoot, false);
+            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
+            rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
+            rt.localRotation = fillImage.transform.localRotation;
+
+            _visitorOverlayImage = go.GetComponent<Image>();
+            _visitorOverlayImage.sprite = fillImage.sprite;
+            _visitorOverlayImage.raycastTarget = false;
+            _visitorOverlayImage.color = new Color(0f, 0f, 0f, 0f);
+
+            // Sit immediately above fillImage. Insert at fillImage's index+1
+            // so frameImage (drawn on top of fill) still sits above us.
+            int fillIdx = fillImage.transform.GetSiblingIndex();
+            go.transform.SetSiblingIndex(fillIdx + 1);
+            go.SetActive(false);
+        }
+
+        // Accent ring hugging the tile's outer edge. Reuses the shape-specific
+        // frame-glow sprite + rotation (already assigned by ApplyShapeAndFill)
+        // so the halo matches the hex / bridge / wall outline, and draws above
+        // the frame so the accent reads over the tile edge. Tokens still sit on
+        // top because countersRoot is a sibling of shapeRoot, not a child.
+        private void EnsureVisitorHaloImage()
+        {
+            if (_visitorHaloImage != null) return;
+            if (shapeRoot == null || frameGlowImage == null) return;
+
+            var selfRect = (RectTransform)transform;
+            var go = new GameObject("VisitorHalo", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var rt = (RectTransform)go.transform;
+            rt.SetParent(shapeRoot, false);
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = Vector2.zero;
+            // Slightly larger than the frame glow (1.18f) so the accent reads as
+            // a ring around the tile rather than just a re-tint.
+            rt.sizeDelta = selfRect.sizeDelta * 1.22f;
+            rt.localRotation = frameGlowImage.transform.localRotation;
+
+            _visitorHaloImage = go.GetComponent<Image>();
+            _visitorHaloImage.sprite = frameGlowImage.sprite;
+            _visitorHaloImage.raycastTarget = false;
+            _visitorHaloImage.color = new Color(0f, 0f, 0f, 0f);
+
+            // Topmost shape element so the accent ring sits over the frame.
+            go.transform.SetAsLastSibling();
+            go.SetActive(false);
+        }
 
         public void OnPointerClick(PointerEventData eventData)
         {
