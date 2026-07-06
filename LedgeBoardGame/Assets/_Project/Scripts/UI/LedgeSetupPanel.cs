@@ -70,6 +70,28 @@ namespace Magi.LedgeBoardGame.UI
         };
 
         private GameObject _overlayGo;
+
+        // Responsive refs (see ApplyResponsiveLayout). Landscape uses the Grid's
+        // HorizontalLayoutGroup (two-column row); narrow/portrait disables it and
+        // manually centre-stacks the two panels (a second layout group can't
+        // coexist with the HorizontalLayoutGroup on one GameObject).
+        private RectTransform _canvasRt;
+        private RectTransform _gridRt;
+        private HorizontalLayoutGroup _gridHlg;
+        private RectTransform _identityRt;
+        private RectTransform _skinRt;
+        private float _lastCanvasWidth = -1f;
+
+        // Landscape row = 340 + 28 + 520 = 888 wide (kit). Narrow stack keeps
+        // each panel's designed width (widest = 520) and sums the heights.
+        private const float GridSpacing = 28f;
+        private const float IdentityW = 340f;
+        private const float IdentityH = 460f;
+        private const float SkinW = 520f;
+        private const float SkinH = 540f;
+        private const float LandscapeGridW = IdentityW + GridSpacing + SkinW; // 888
+        private const float LandscapeGridH = 600f;
+
         private TMP_InputField _nameField;
         private TMP_Text _previewLabel;
         private RectTransform _previewChipBg;
@@ -121,6 +143,16 @@ namespace Magi.LedgeBoardGame.UI
             RefreshSelection();
             _overlayGo.SetActive(true);
             _overlayGo.transform.SetAsLastSibling();
+            ApplyResponsiveLayout();
+        }
+
+        // Re-fit if the canvas width changes while Setup is open (orientation /
+        // window resize). Cheap early-out on unchanged width.
+        private void Update()
+        {
+            if (!IsShowing || _canvasRt == null) return;
+            if (!Mathf.Approximately(_canvasRt.rect.width, _lastCanvasWidth))
+                ApplyResponsiveLayout();
         }
 
         public void Hide() => HideInternal();
@@ -240,10 +272,10 @@ namespace Magi.LedgeBoardGame.UI
             gridRt.anchorMax = new Vector2(0.5f, 0.5f);
             gridRt.pivot = new Vector2(0.5f, 0.5f);
             gridRt.anchoredPosition = Vector2.zero;
-            gridRt.sizeDelta = new Vector2(888f, 600f);
+            gridRt.sizeDelta = new Vector2(LandscapeGridW, LandscapeGridH);
 
             var hl = gridGo.AddComponent<HorizontalLayoutGroup>();
-            hl.spacing = 28f;
+            hl.spacing = GridSpacing;
             hl.childAlignment = TextAnchor.UpperLeft;
             // Control both axes so the panels' LayoutElement sizes (340x460 /
             // 520x540) actually apply. With these false the group ignored the
@@ -255,17 +287,77 @@ namespace Magi.LedgeBoardGame.UI
             hl.childForceExpandWidth = false;
             hl.childForceExpandHeight = false;
 
+            _canvasRt = canvas.transform as RectTransform;
+            _gridRt = gridRt;
+            _gridHlg = hl;
+
             BuildIdentityPanel(gridRt);
             BuildSkinPanel(gridRt);
+
+            // Pick landscape (row) vs narrow (stack) based on canvas width.
+            ApplyResponsiveLayout();
+        }
+
+        // ── Responsive layout ─────────────────────────────────────────────
+        // Landscape/16:9 keeps the accepted two-column row (888×600, Identity |
+        // Board Skin) laid out by the Grid's HorizontalLayoutGroup. When the
+        // canvas is too narrow for that row to sit with comfortable side margins
+        // (true portrait ≈ 900 ref-units wide), disable the row group and
+        // manually centre-stack the two panels vertically: each keeps its
+        // designed width (340 / 520) so it gets generous side margins instead of
+        // the crowded ~6px edge, using portrait's ample vertical space. Called
+        // after build, on Show(), and on canvas-width change while visible.
+        private void ApplyResponsiveLayout()
+        {
+            if (_gridRt == null || _gridHlg == null) return;
+            if (_canvasRt == null)
+                _canvasRt = _overlayGo != null ? _overlayGo.transform.parent as RectTransform : null;
+            if (_canvasRt == null) return;
+
+            float canvasW = _canvasRt.rect.width;
+            _lastCanvasWidth = canvasW;
+
+            // 888 row + ~92 margin. Landscape 16:9 canvases resolve to ~1600
+            // ref-units and stay two-column; portrait ~900 goes to the stack.
+            bool narrow = canvasW < LandscapeGridW + 92f;
+
+            if (!narrow)
+            {
+                // Re-enable the row; the HorizontalLayoutGroup re-anchors/sizes
+                // the two panels from their LayoutElements on the next rebuild.
+                _gridHlg.enabled = true;
+                _gridRt.sizeDelta = new Vector2(LandscapeGridW, LandscapeGridH);
+                return;
+            }
+
+            // Narrow: disable the row group and place the two panels by hand,
+            // centred on the grid, stacked with GridSpacing between them.
+            _gridHlg.enabled = false;
+            float gridH = IdentityH + GridSpacing + SkinH; // 1028
+            _gridRt.sizeDelta = new Vector2(SkinW, gridH);
+
+            if (_identityRt != null) StackPanel(_identityRt, IdentityW, IdentityH, (gridH - IdentityH) * 0.5f);
+            if (_skinRt != null) StackPanel(_skinRt, SkinW, SkinH, -(gridH - SkinH) * 0.5f);
+        }
+
+        // Center-anchor a panel within the grid at an explicit vertical offset.
+        private static void StackPanel(RectTransform rt, float w, float h, float y)
+        {
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(w, h);
+            rt.anchoredPosition = new Vector2(0f, y);
         }
 
         private void BuildIdentityPanel(Transform parent)
         {
             var hostGo = new GameObject("IdentityPanel", typeof(RectTransform), typeof(LayoutElement));
             hostGo.transform.SetParent(parent, false);
+            _identityRt = (RectTransform)hostGo.transform;
             var le = hostGo.GetComponent<LayoutElement>();
-            le.preferredWidth = 340f; le.minWidth = 340f;
-            le.preferredHeight = 460f; le.minHeight = 460f;
+            le.preferredWidth = IdentityW; le.minWidth = IdentityW;
+            le.preferredHeight = IdentityH; le.minHeight = IdentityH;
 
             var glass = LedgeGlassPanel.Build(hostGo.transform, "Glass",
                 padding: new Vector2(30f, 32f));
@@ -413,6 +505,7 @@ namespace Magi.LedgeBoardGame.UI
         {
             var hostGo = new GameObject("SkinPanel", typeof(RectTransform), typeof(LayoutElement));
             hostGo.transform.SetParent(parent, false);
+            _skinRt = (RectTransform)hostGo.transform;
             var le = hostGo.GetComponent<LayoutElement>();
             le.preferredWidth = 520f; le.minWidth = 520f;
             // Taller than the identity panel so the kit's 14-skin grid has
