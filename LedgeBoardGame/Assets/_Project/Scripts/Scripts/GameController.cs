@@ -987,24 +987,50 @@ namespace Magi.LedgeBoardGame
         }
 
         private Board.BoardViewHud _boardViewHud;
+        private Board.BoardThumbStrip _boardThumbStrip;
         private void EnsureBoardViewHud()
         {
-            if (_boardViewHud != null) { _boardViewHud.Refresh(); return; }
-            if (multiBoardLayout == null) return;
-            var canvas = GetComponentInParent<Canvas>();
-            if (canvas == null)
+            var canvas = ResolveBoardChromeCanvas();
+            if (canvas == null || multiBoardLayout == null) return;
+
+            if (_boardViewHud != null)
             {
-                foreach (var presenter in _boardPresenters.Values)
-                {
-                    canvas = presenter.GetComponentInParent<Canvas>();
-                    if (canvas != null) break;
-                }
+                _boardViewHud.Refresh();
             }
-            if (canvas == null) return;
-            var go = new GameObject("BoardViewHudHost");
-            go.transform.SetParent(canvas.transform, false);
-            _boardViewHud = go.AddComponent<Board.BoardViewHud>();
-            _boardViewHud.Initialize(multiBoardLayout);
+            else
+            {
+                var go = new GameObject("BoardViewHudHost");
+                go.transform.SetParent(canvas.transform, false);
+                _boardViewHud = go.AddComponent<Board.BoardViewHud>();
+                _boardViewHud.Initialize(multiBoardLayout);
+            }
+
+            // 6-8 seat SEATS strip (bottom-center, above the StatusLog chrome).
+            // Gated internally by BoardThumbStrip.ShouldShow(); at <=5 seats it
+            // simply stays hidden and the BoardViewHud cycler covers navigation.
+            if (_boardThumbStrip != null)
+            {
+                _boardThumbStrip.UpdateGameState(_gameState);
+            }
+            else
+            {
+                var stripHost = new GameObject("BoardThumbStripHost");
+                stripHost.transform.SetParent(canvas.transform, false);
+                _boardThumbStrip = stripHost.AddComponent<Board.BoardThumbStrip>();
+                _boardThumbStrip.Initialize(multiBoardLayout, _gameState);
+            }
+        }
+
+        private Canvas ResolveBoardChromeCanvas()
+        {
+            var canvas = GetComponentInParent<Canvas>();
+            if (canvas != null) return canvas;
+            foreach (var presenter in _boardPresenters.Values)
+            {
+                canvas = presenter.GetComponentInParent<Canvas>();
+                if (canvas != null) return canvas;
+            }
+            return null;
         }
 
         private void OnSpaceClicked(SpaceView view)

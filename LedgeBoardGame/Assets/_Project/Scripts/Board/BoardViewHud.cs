@@ -21,7 +21,17 @@ namespace Magi.LedgeBoardGame.Board
         {
             _layout = layout;
             BuildUi();
+            // Keep the top-right "Board N" label in sync when the layout's
+            // opponent slot changes from outside the cycler (e.g. the SEATS
+            // thumb-strip calling SetOpponentBoardId). Without this the label
+            // goes stale after a thumb click.
+            if (_layout != null) _layout.LayoutChanged += Refresh;
             Refresh();
+        }
+
+        private void OnDestroy()
+        {
+            if (_layout != null) _layout.LayoutChanged -= Refresh;
         }
 
         public void Refresh()
