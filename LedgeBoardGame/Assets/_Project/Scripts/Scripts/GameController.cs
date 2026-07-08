@@ -1831,6 +1831,8 @@ namespace Magi.LedgeBoardGame
         private LedgeDreamCanvas _dreamCanvas;
         private LedgeYouPanel _youPanel;
         private LedgeActionBar _actionBar;
+        private LedgeEndOfGamePanel _endOfGamePanel;
+        private bool _endOfGameShown;
 
         private Canvas FindHudCanvas()
         {
@@ -2093,16 +2095,99 @@ namespace Magi.LedgeBoardGame
             }
             if (result.GameEnded)
             {
+                string winnerName = null;
                 if (result.WinnerId.HasValue)
                 {
                     var winner = _gameState.Players.FirstOrDefault(x => x.Id == result.WinnerId.Value);
-                    ShowBanner(winner != null ? $"{winner.Name} wins!" : $"Player {result.WinnerId.Value} wins!");
+                    winnerName = winner != null ? winner.Name : $"Player {result.WinnerId.Value}";
+                    ShowBanner($"{winnerName} wins!");
                 }
                 else
                 {
                     ShowBanner("Game Over.");
                 }
+                // Then raise the end-of-game takeover. Guarded so a repeat
+                // NarrateStateBasedEffects pass after GameOver doesn't re-open
+                // (or restart) the panel every tick — the banner/log line
+                // above stays as the persistent record.
+                if (!_endOfGameShown)
+                {
+                    _endOfGameShown = true;
+                    ShowEndOfGameTakeover(winnerName);
+                }
             }
+        }
+
+        private void EnsureEndOfGamePanel()
+        {
+            if (_endOfGamePanel != null) return;
+            var canvas = FindHudCanvas();
+            if (canvas == null) return;
+            var go = new GameObject("EndOfGameHost", typeof(RectTransform));
+            go.transform.SetParent(canvas.transform, false);
+            go.transform.SetAsLastSibling();
+            _endOfGamePanel = go.AddComponent<LedgeEndOfGamePanel>();
+        }
+
+        /// Fire the kit end-of-game takeover panel. Resolves the winner
+        /// stats from current state and wires Rematch / Back-to-lobby to
+        /// a clean scene reload (single-scene flow returns the player to
+        /// the lobby for either action). View-replay is omitted until a
+        /// replay subsystem exists.
+        private void ShowEndOfGameTakeover(string winnerName)
+        {
+            EnsureEndOfGamePanel();
+            if (_endOfGamePanel == null) return;
+            int turnCount = _gameState?.TurnNumber ?? 0;
+            // Summary line is intentionally simple for now — the kit's
+            // "Claimed 4 Cores · held the Ela channel" copy is a narrative
+            // synthesis we don't compute yet. Leave empty so the row hides
+            // rather than show placeholder text. Designer can revisit.
+            string summary = null;
+            // F3 recap: ship the degraded version (last 3 raw log lines)
+            // until a "decisive move" classifier exists server-side. Panel
+            // layout is identical to the narrative version, so swapping
+            // the data source later is a no-relayout upgrade.
+            var recap = BuildRecapFromStatusLog(3);
+            _endOfGamePanel.Show(
+                winnerName: winnerName,
+                turnCount: turnCount,
+                summaryLine: summary,
+                recap: recap,
+                onRematch: ReloadScene,
+                onBackToLobby: ReloadScene,
+                onViewReplay: null);
+        }
+
+        /// Pull the last N lines from StatusLog and adapt them into recap
+        /// entries. Each line is a complete sentence in the server's voice
+        /// (e.g. "P1 moved L from 3 to 5"); we drop them into the recap
+        /// row's text slot with a synthesised turn-number prefix counted
+        /// backward from the final turn.
+        private System.Collections.Generic.IReadOnlyList<LedgeEndOfGamePanel.RecapEntry> BuildRecapFromStatusLog(int count)
+        {
+            if (statusLog == null || count <= 0) return null;
+            var lines = statusLog.GetRecentLines(count);
+            if (lines == null || lines.Count == 0) return null;
+            int finalTurn = _gameState?.TurnNumber ?? lines.Count;
+            var entries = new System.Collections.Generic.List<LedgeEndOfGamePanel.RecapEntry>(lines.Count);
+            for (int i = 0; i < lines.Count; i++)
+            {
+                // Oldest-first in `lines`. Synthesise descending turn
+                // numbers so the bottom row reads as the most recent.
+                int turnN = Mathf.Max(1, finalTurn - (lines.Count - 1 - i));
+                // No per-row name segment available without parsing the
+                // log line, so leave name empty — the recap row renders
+                // just the text in InkFaint.
+                entries.Add(new LedgeEndOfGamePanel.RecapEntry(turnN, "", lines[i]));
+            }
+            return entries;
+        }
+
+        private void ReloadScene()
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            UnityEngine.SceneManagement.SceneManager.LoadScene(scene.buildIndex);
         }
 
         /// Narrates and ends the turn if the current player has no legal moves. Returns
