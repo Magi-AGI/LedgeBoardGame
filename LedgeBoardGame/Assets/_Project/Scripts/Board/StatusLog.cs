@@ -179,6 +179,28 @@ namespace Magi.LedgeBoardGame.Board
             gameObject.SetActive(visible);
         }
 
+        /// Returns the most recent N lines in chronological order (oldest
+        /// first within the returned slice; equivalent to slicing the
+        /// Queue's tail). Used by the end-of-game recap to surface the last
+        /// few decisive moves under "How it turned" without classifying
+        /// narrative intent — a drop-in upgrade path when a real classifier
+        /// ships.
+        public System.Collections.Generic.IReadOnlyList<string> GetRecentLines(int count)
+        {
+            if (count <= 0 || _lines.Count == 0)
+                return System.Array.Empty<string>();
+            int take = System.Math.Min(count, _lines.Count);
+            var result = new System.Collections.Generic.List<string>(take);
+            int skip = _lines.Count - take;
+            int i = 0;
+            foreach (var line in _lines)
+            {
+                if (i++ < skip) continue;
+                result.Add(line);
+            }
+            return result;
+        }
+
         public void Clear()
         {
             _lines.Clear();
