@@ -273,7 +273,10 @@ namespace Magi.LedgeBoardGame.Board
             le.preferredHeight = 38f;
 
             var hl = go.GetComponent<HorizontalLayoutGroup>();
-            hl.padding = new RectOffset(8, 12, 7, 7);
+            // Symmetric horizontal padding so the tray reads intentional at
+            // both 6 and 8 seats (was 8/12 asymmetric — the extra right pad
+            // looked reactive against the compact 8-seat thumb width).
+            hl.padding = new RectOffset(10, 10, 7, 7);
             hl.spacing = 8f;
             hl.childAlignment = TextAnchor.MiddleLeft;
             hl.childControlWidth = false;
@@ -291,7 +294,11 @@ namespace Magi.LedgeBoardGame.Board
             var chipRt = (RectTransform)chipGo.transform;
             chipRt.sizeDelta = new Vector2(22f, 22f);
             var chipImg = chipGo.GetComponent<Image>();
-            chipImg.color = new Color(0.10f, 0.12f, 0.22f, 1f);
+            // Placeholder swatch lifted well above the tray/thumb fill
+            // (LedgeUITokens.Panel is ~0.08 luma) so the unselected chip
+            // reads as a distinct element until the skin catalog supplies
+            // the player's real colour. Paired with a brighter edge below.
+            chipImg.color = new Color(0.22f, 0.26f, 0.42f, 1f);
             chipImg.raycastTarget = false;
             var chipOutline = chipGo.GetComponent<Outline>();
             chipOutline.effectColor = LedgeUITokens.PanelEdge2;
@@ -321,10 +328,13 @@ namespace Magi.LedgeBoardGame.Board
             TMP_Text caption = null;
             if (isLocal)
             {
+                // Quiet but legible at compact thumb widths: a touch larger,
+                // lighter tracking, and InkFaint (0.62) instead of InkDim
+                // (0.40) so "YOU" doesn't read as clipped/washed out.
                 caption = MakeText(textCol.transform, "Caption", LedgeUITokens.MonoFont,
-                    8f, LedgeUITokens.InkDim, "YOU");
+                    9f, LedgeUITokens.InkFaint, "YOU");
                 caption.fontStyle = FontStyles.UpperCase;
-                caption.characterSpacing = 16f;
+                caption.characterSpacing = 8f;
                 caption.alignment = TextAlignmentOptions.MidlineLeft;
             }
 
