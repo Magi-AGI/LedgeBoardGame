@@ -25,6 +25,13 @@ namespace Magi.LedgeBoardGame.UI
         private TMP_Text _winnerVerbLabel;
         private TMP_Text _summaryLabel;
         private GameObject _recapPanelGo;
+        private GameObject _identityRowGo;
+
+        // Takeover strength: the overlay must read as a modal end state, not a
+        // dimmed-but-live board. Deep navy at high alpha keeps the final board
+        // faintly legible while knocking back the turn/action chrome.
+        private const int OverlaySortingOrder = 500;
+        private static readonly Color VeilColor = new Color(0.02f, 0.03f, 0.07f, 0.78f);
 
         // Recap layout metrics. Kept explicit (not ContentSizeFitter-derived)
         // so 0/1/2/3+ row counts all resolve to a predictable panel height and
@@ -82,15 +89,13 @@ namespace Magi.LedgeBoardGame.UI
             _winnerNameLabel.text = hasWinner ? winnerName.Trim() : "Stalemate";
             _winnerVerbLabel.text = hasWinner ? "prevails." : "—";
 
-            if (string.IsNullOrEmpty(summaryLine))
-            {
-                _summaryLabel.gameObject.SetActive(false);
-            }
-            else
-            {
-                _summaryLabel.gameObject.SetActive(true);
-                _summaryLabel.text = summaryLine;
-            }
+            // Hide the whole identity row — not just the label — when there's
+            // no summary. Leaving the row up rendered the outlined skin chip
+            // alone under the winner name, which read as a broken/missing image.
+            bool hasSummary = !string.IsNullOrWhiteSpace(summaryLine);
+            if (_identityRowGo != null) _identityRowGo.SetActive(hasSummary);
+            _summaryLabel.gameObject.SetActive(hasSummary);
+            if (hasSummary) _summaryLabel.text = summaryLine;
 
             PopulateRecap(recap);
 
@@ -232,6 +237,31 @@ namespace Magi.LedgeBoardGame.UI
             overlayRt.offsetMin = Vector2.zero; overlayRt.offsetMax = Vector2.zero;
             overlayRt.SetAsLastSibling();
 
+            // The takeover must sit above every other chrome surface. Sibling
+            // order alone isn't enough: board chrome (BoardViewHud "COMPARE",
+            // thumb strip) can live on a different canvas, which would draw
+            // over a plain sibling overlay. An override-sorting child canvas
+            // guarantees the veil covers them; the GraphicRaycaster keeps the
+            // takeover's own buttons clickable.
+            var overlayCanvas = _overlayGo.AddComponent<Canvas>();
+            overlayCanvas.overrideSorting = true;
+            overlayCanvas.sortingOrder = OverlaySortingOrder;
+            _overlayGo.AddComponent<GraphicRaycaster>();
+
+            // Full-screen veil UNDER the gradient. The gradient alone is
+            // transparent on the right — exactly where the live UNDO / END
+            // TURN / COMPARE chrome sits — so it read at near-full brightness
+            // and still looked actionable. The veil knocks the whole frame
+            // back; the final board stays dimly legible through it.
+            var veilGo = new GameObject("Veil", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var veilRt = (RectTransform)veilGo.transform;
+            veilRt.SetParent(overlayRt, false);
+            veilRt.anchorMin = Vector2.zero; veilRt.anchorMax = Vector2.one;
+            veilRt.offsetMin = Vector2.zero; veilRt.offsetMax = Vector2.zero;
+            var veilImg = veilGo.GetComponent<Image>();
+            veilImg.color = VeilColor;
+            veilImg.raycastTarget = true;
+
             // Horizontal gradient scrim: opaque on the left for legibility,
             // transparent on the right so the final board reads through.
             var scrimGo = new GameObject("Scrim", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
@@ -314,6 +344,7 @@ namespace Magi.LedgeBoardGame.UI
         private void BuildIdentityRow(Transform parent)
         {
             var rowGo = new GameObject("Identity", typeof(RectTransform));
+            _identityRowGo = rowGo;
             var rowRt = (RectTransform)rowGo.transform;
             rowRt.SetParent(parent, false);
             var hl = rowGo.AddComponent<HorizontalLayoutGroup>();
@@ -412,8 +443,14 @@ namespace Magi.LedgeBoardGame.UI
             hl.spacing = 10f;
             hl.padding = new RectOffset(0, 0, 6, 6);
             hl.childAlignment = TextAnchor.MiddleLeft;
-            hl.childControlWidth = false;
-            hl.childControlHeight = false;
+            // Control both axes so the children honour their LayoutElements:
+            // the number gets a fixed 28px gutter and the text takes the
+            // flexible remainder, and both occupy the row's full content
+            // height so their vertical centres coincide. With these false the
+            // number rode at the top of its own rect (bunching up toward
+            // "HOW IT TURNED") while the text sat centred lower down.
+            hl.childControlWidth = true;
+            hl.childControlHeight = true;
             hl.childForceExpandWidth = false;
             hl.childForceExpandHeight = false;
 
@@ -423,8 +460,12 @@ namespace Magi.LedgeBoardGame.UI
                 MultAlpha(LedgeUITokens.InkDim, opacity),
                 entry.TurnNumber.ToString("00"));
             nLabel.characterSpacing = 5f;
+            // Match the text label's vertical centring so the gutter number and
+            // its row read on one baseline rhythm (TMP defaults to TopLeft).
+            nLabel.alignment = TextAlignmentOptions.MidlineLeft;
             var nLe = nLabel.gameObject.AddComponent<LayoutElement>();
             nLe.minWidth = 28f; nLe.preferredWidth = 28f;
+            nLe.flexibleWidth = 0f;
 
             var textLabel = MakeText(rowRt, "Text", LedgeUITokens.UIFont, 12.5f,
                 MultAlpha(LedgeUITokens.InkFaint, opacity), "");
