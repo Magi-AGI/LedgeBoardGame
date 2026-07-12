@@ -25,7 +25,34 @@ namespace Magi.LedgeBoardGame.UI
         private TMP_Text _turnLabel;
         private TMP_Text _statusLabel;
 
+        private bool _compact;
+
+        // Full chrome vs the slim Comparison-view variant. Compact drops the
+        // turn/status rows (their content folds into the section caption), so
+        // the panel stops crowding the SEATS strip at 3+ seats.
+        private const float PanelWidth = 360f;
+        private const float FullHeight = 130f;
+        private const float CompactHeight = 70f;
+
         private void Awake() => EnsureBuilt();
+
+        /// Slim the top-left panel for Comparison view at 3+ seats. Keeps the
+        /// section caption + identity row and folds the turn line into the
+        /// caption (see UpdateFromState). Full mode is unchanged.
+        public void SetCompactMode(bool compact)
+        {
+            EnsureBuilt();
+            // Apply size + visibility unconditionally rather than early-returning
+            // when the flag is unchanged: the assignments are idempotent, and
+            // re-asserting them means compact state can't silently desync if
+            // anything else touches the rect or those labels.
+            _compact = compact;
+
+            var rt = (RectTransform)transform;
+            rt.sizeDelta = new Vector2(PanelWidth, _compact ? CompactHeight : FullHeight);
+            if (_turnLabel != null) _turnLabel.gameObject.SetActive(!_compact);
+            if (_statusLabel != null) _statusLabel.gameObject.SetActive(!_compact);
+        }
 
         public void EnsureBuilt()
         {
@@ -163,6 +190,16 @@ namespace Magi.LedgeBoardGame.UI
             string activeName = state.GetCurrentPlayer()?.Name ?? $"Player {currentId}";
             _turnLabel.text = itsYourTurn ? "Your turn." : $"{activeName}'s turn.";
             _turnLabel.color = itsYourTurn ? LedgeUITokens.Accent : LedgeUITokens.Ink;
+
+            // Compact mode hides the turn row, so fold the turn line into the
+            // section caption instead. The full-mode caption set above is left
+            // exactly as-is; this only overrides it when compact.
+            if (_compact)
+            {
+                _sectionLabel.text = itsYourTurn
+                    ? $"TURN {state.TurnNumber} · YOUR MOVE"
+                    : $"TURN {state.TurnNumber} · {activeName.ToUpperInvariant()}'S MOVE";
+            }
 
             // Status / phase guidance
             string statusStr;
