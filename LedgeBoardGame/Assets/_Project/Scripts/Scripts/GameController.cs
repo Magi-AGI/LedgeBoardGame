@@ -863,6 +863,11 @@ namespace Magi.LedgeBoardGame
         private void OnDestroy()
         {
             SpaceClickedEvent.Unregister(OnSpaceClicked);
+            if (_youPanelLayoutSub != null)
+            {
+                _youPanelLayoutSub.LayoutChanged -= RefreshYouPanelCompactMode;
+                _youPanelLayoutSub = null;
+            }
             if (_shadowSink != null)
             {
                 UnsubscribeObserver(_shadowSink);
@@ -922,6 +927,17 @@ namespace Magi.LedgeBoardGame
                 int localBoardId = ResolveLocalBoardId();
                 multiBoardLayout.SetLocalBoardId(localBoardId);
                 multiBoardLayout.Refresh();
+
+                // Re-fit the You panel whenever the view mode / comparison slots
+                // change. CreateBoardPresenters runs from more than one path, so
+                // detach first: -= then += is idempotent and can't double-subscribe.
+                // Keep the exact instance we subscribed to so OnDestroy detaches
+                // from it even if `multiBoardLayout` is later reassigned.
+                if (_youPanelLayoutSub != null && _youPanelLayoutSub != multiBoardLayout)
+                    _youPanelLayoutSub.LayoutChanged -= RefreshYouPanelCompactMode;
+                multiBoardLayout.LayoutChanged -= RefreshYouPanelCompactMode;
+                multiBoardLayout.LayoutChanged += RefreshYouPanelCompactMode;
+                _youPanelLayoutSub = multiBoardLayout;
             }
 
             EnsureBoardViewHud();
@@ -929,6 +945,7 @@ namespace Magi.LedgeBoardGame
 
             gameHud?.UpdateHud(_gameState);
             _youPanel?.UpdateFromState(_gameState, _localSeatId, networkMode == NetworkMode.Network);
+            RefreshYouPanelCompactMode();
         }
 
         /// Register each board with the dream canvas so a corona ring + core
@@ -1830,6 +1847,9 @@ namespace Magi.LedgeBoardGame
 
         private LedgeDreamCanvas _dreamCanvas;
         private LedgeYouPanel _youPanel;
+        // The exact MultiBoardLayout instance we attached RefreshYouPanelCompactMode
+        // to, so OnDestroy detaches from that one even if the field is reassigned.
+        private Board.MultiBoardLayout _youPanelLayoutSub;
         private LedgeActionBar _actionBar;
         private LedgeEndOfGamePanel _endOfGamePanel;
         private bool _endOfGameShown;
@@ -1856,6 +1876,29 @@ namespace Magi.LedgeBoardGame
             go.transform.SetParent(canvas.transform, false);
             go.transform.SetAsLastSibling();
             _youPanel = go.AddComponent<LedgeYouPanel>();
+        }
+
+        /// Slim the You panel in Comparison view at 3+ seats so the full 2P
+        /// chrome stops competing with the SEATS strip. Driven both by
+        /// MultiBoardLayout.LayoutChanged (view-mode / slot changes) and by the
+        /// You-panel state-refresh path, since the seat count can change without
+        /// a layout event (join/leave in progress).
+        private void RefreshYouPanelCompactMode()
+        {
+            if (_youPanel == null) return;
+            bool compact = multiBoardLayout != null
+                && multiBoardLayout.Mode == Board.MultiBoardLayout.ViewMode.Comparison
+                && (_gameState?.Boards?.Count ?? 0) >= 3;
+            _youPanel.SetCompactMode(compact);
+
+            // Re-push state AFTER the flag flips. The section caption is built in
+            // UpdateFromState behind an `if (_compact)` branch, so without this the
+            // caption lags a mode change: entering Comparison would hide the turn
+            // row while the caption still read "CURRENT PLAYER" (leaving no turn
+            // info at all), and leaving it would strand a stale "TURN N · …".
+            // UpdateFromState never raises LayoutChanged, so this cannot recurse.
+            if (_gameState != null)
+                _youPanel.UpdateFromState(_gameState, _localSeatId, networkMode == NetworkMode.Network);
         }
 
         /// Build the bottom-left action belt and fold the existing scene-
