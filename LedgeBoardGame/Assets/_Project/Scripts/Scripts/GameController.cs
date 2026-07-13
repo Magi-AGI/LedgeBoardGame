@@ -1124,6 +1124,54 @@ namespace Magi.LedgeBoardGame
             return transform;
         }
 
+        /// Cross-board visitor overlay is active in Local/hot-seat mode only.
+        /// At most one visitor overlay is visible at a time: every successful
+        /// Local move — cross-board or same-board — first clears whatever a
+        /// prior move this turn left showing (via ClearAllVisitorStates),
+        /// then cross-board moves mark the final landing tile on the host
+        /// board. The overlay persists (it is NOT tied to the move's tween
+        /// being "in flight") until the next clear point: another successful
+        /// Local move, undo, turn rotation, or game over. Network mode is
+        /// intentionally not wired: remote moves apply via
+        /// ApplyServerStateAndRefresh, which carries no from/to action data.
+        ///
+        /// MVP simplification: for a multi-hop move this marks only the final
+        /// landing tile, not every intermediate hop.
+        private void TryShowCrossBoardVisitor(SpaceId from, SpaceId to)
+        {
+            if (networkMode != NetworkMode.Local) return;
+
+            // One-active-overlay semantics: clear before optionally setting
+            // so a second cross-board move (to a different host board) or a
+            // same-board move never leaves a prior board's pill/glow stuck.
+            ClearAllVisitorStates();
+
+            if (from.BoardId == to.BoardId) return;
+            if (!_boardPresenters.TryGetValue(to.BoardId, out var hostPresenter) || hostPresenter == null) return;
+
+            var visitor = _gameState?.GetCurrentPlayer();
+            if (visitor == null) return;
+
+            // Seat-indexed, not the PlayerPrefs skin — every hot-seat visitor must
+            // render a distinct accent so the host can tell who is acting on their
+            // board (isLocal: false here on purpose, even though this player is
+            // the one physically at the keyboard in hot-seat).
+            var accent = LedgeSkinCatalog.GetAccentForPlayer(visitor.Id, isLocal: false);
+            hostPresenter.SetVisitor(visitor.Name, accent, to.Id);
+        }
+
+        /// Null-safe, idempotent: safe to call from every rewind/terminal point
+        /// (turn rotation, undo, game over) or from TryShowCrossBoardVisitor
+        /// itself without checking whether a visitor overlay is currently
+        /// showing.
+        private void ClearAllVisitorStates()
+        {
+            foreach (var presenter in _boardPresenters.Values)
+            {
+                presenter?.ClearVisitor();
+            }
+        }
+
         private void OnMoveTweenComplete()
         {
             _moveInProgress = false;
@@ -1526,6 +1574,8 @@ namespace Magi.LedgeBoardGame
             {
                 LogEvent($"{mover.Name} moved {FormatStackCounts(lightMoved, darkMoved)}: {FormatSpace(from)} → {FormatSpace(animationEnd)}");
             }
+            // Local/hot-seat only — see TryShowCrossBoardVisitor's contract.
+            TryShowCrossBoardVisitor(from, animationEnd);
             ClearMovementSelection();
             UpdateStatusUI();
             if (fromView != null)
@@ -2156,6 +2206,10 @@ namespace Magi.LedgeBoardGame
                 if (!_endOfGameShown)
                 {
                     _endOfGameShown = true;
+                    // Game over skips MaybeSignalPhaseBanner's early-return path
+                    // entirely, so the visitor pill/glow would otherwise strand
+                    // under the endgame takeover veil.
+                    ClearAllVisitorStates();
                     ShowEndOfGameTakeover(winnerName);
                 }
             }
@@ -2549,6 +2603,14 @@ namespace Magi.LedgeBoardGame
 
             var endOfTurn = _gameState.EndTurn();
             NarrateOverflowCap(endOfTurn, endingPlayer);
+            if (endOfTurn.GameEnded)
+            {
+                // MaybeSignalPhaseBanner (invoked below via UpdateStatusUI) early-
+                // returns once _gameState.GameOver is true, so an end-turn
+                // overflow/elimination that ends the game on this local path
+                // would otherwise never clear the visitor overlay.
+                ClearAllVisitorStates();
+            }
             var nextPlayer = _gameState.GetCurrentPlayer();
             _shadowSink?.ShadowEndTurn(endingSeatIndex, BuildCurrentSpecState());
 
@@ -2748,6 +2810,10 @@ namespace Magi.LedgeBoardGame
 
         private void ApplyUndoState(GameState snapshot)
         {
+            // Undo can rewind a cross-board visitor without rotating the turn,
+            // so MaybeSignalPhaseBanner's phase/player dedup would never fire —
+            // clear explicitly rather than relying on that path.
+            ClearAllVisitorStates();
             _gameState.CopyFrom(snapshot);
             RefreshBoards();
             UpdateStatusUI();
@@ -2829,6 +2895,13 @@ namespace Magi.LedgeBoardGame
 
             _lastSignaledPhase = currentPhase;
             _lastSignaledPlayerId = currentPlayerId;
+
+            // Turn/phase actually rotated — clear any cross-board visitor
+            // overlay from the move that just happened. This early-return
+            // above (unchanged phase+player, or GameOver) means this is NOT
+            // a robust catch-all by itself; ApplyUndoState and the game-over
+            // takeover path each clear explicitly too.
+            ClearAllVisitorStates();
 
             // Active-board glow follows the current player's turn.
             UpdateDreamCanvasActiveBoard();
