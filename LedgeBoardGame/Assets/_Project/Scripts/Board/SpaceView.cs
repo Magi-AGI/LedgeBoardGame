@@ -419,11 +419,18 @@ namespace Magi.LedgeBoardGame.Board
         // Lazily built so untouched tiles stay zero-cost.
         private Image _visitorOverlayImage;
         private Image _visitorHaloImage;
+        private Color _visitorHaloBaseColor;
+        private bool _visitorHaloActive;
 
         // The flat tint alone can't be told apart from a tile whose fill is
         // already near the visitor accent (many tiles are cyan/blue), so a
         // brighter accent ring around the entry tile carries the recognition.
-        private const float VisitorHaloAlpha = 0.8f;
+        // CP054: the ring also breathes slowly (see Update()) so the cue
+        // isn't color-alone — a shape/motion signal survives for
+        // color-limited players even if the accent hue is hard to place.
+        private const float VisitorHaloAlphaMin = 0.55f;
+        private const float VisitorHaloAlphaMax = 0.9f;
+        private const float VisitorHaloPulseHz = 0.45f;
 
         public void SetVisitorOverlay(Color accent, float alpha = 0.5f)
         {
@@ -435,17 +442,21 @@ namespace Magi.LedgeBoardGame.Board
             }
 
             // Accent halo carries the "someone is acting here" recognition on
-            // top of the translucent fill tint.
+            // top of the translucent fill tint. RGB is latched here; Update()
+            // drives the alpha breathe every frame while active.
             EnsureVisitorHaloImage();
             if (_visitorHaloImage != null)
             {
-                _visitorHaloImage.color = new Color(accent.r, accent.g, accent.b, VisitorHaloAlpha);
+                _visitorHaloBaseColor = accent;
+                _visitorHaloActive = true;
+                _visitorHaloImage.color = new Color(accent.r, accent.g, accent.b, VisitorHaloAlphaMax);
                 _visitorHaloImage.gameObject.SetActive(true);
             }
         }
 
         public void ClearVisitorOverlay()
         {
+            _visitorHaloActive = false;
             if (_visitorOverlayImage != null) _visitorOverlayImage.gameObject.SetActive(false);
             if (_visitorHaloImage != null) _visitorHaloImage.gameObject.SetActive(false);
         }
@@ -510,6 +521,19 @@ namespace Magi.LedgeBoardGame.Board
             go.SetActive(false);
         }
 
+        /// Slow alpha breathe on the visitor halo — quiet and distinct from
+        /// the faster valid-target pulse/movable-source breathe so at most
+        /// one visitor ring never competes with move-highlight chrome. Gives
+        /// the ring a motion cue independent of hue for color-limited players
+        /// (CP054 design follow-up), on top of the accent color itself.
+        private void TickVisitorHalo()
+        {
+            if (!_visitorHaloActive || _visitorHaloImage == null) return;
+            float t = Mathf.Sin(Time.unscaledTime * VisitorHaloPulseHz * 2f * Mathf.PI) * 0.5f + 0.5f;
+            float a = Mathf.Lerp(VisitorHaloAlphaMin, VisitorHaloAlphaMax, t);
+            _visitorHaloImage.color = new Color(_visitorHaloBaseColor.r, _visitorHaloBaseColor.g, _visitorHaloBaseColor.b, a);
+        }
+
         public void OnPointerClick(PointerEventData eventData)
         {
             onClicked?.Invoke(this);
@@ -541,6 +565,7 @@ namespace Magi.LedgeBoardGame.Board
         private void Update()
         {
             TickHoverLabelFade();
+            TickVisitorHalo();
 
             if (frameGlowImage == null) return;
 

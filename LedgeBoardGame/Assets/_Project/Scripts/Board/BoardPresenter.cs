@@ -38,9 +38,12 @@ namespace Magi.LedgeBoardGame.Board
         private TMP_Text _nameplateActiveCaption;
 
         // Control-handoff visitor chrome (CONTROL-HANDOFF-SPEC.md 2026-06-15):
-        // small pill above the board reading "<Name> is acting here" + a
-        // cool dot in the visitor's skin accent. Visible only while a
-        // visiting move is in flight on this board.
+        // small pill above the board reading "<Name> is acting" + a cool dot
+        // in the visitor's skin accent. Per CP053's Local/hot-seat contract,
+        // this stays visible until the next clear point (another Local move,
+        // undo, turn rotation, or game over) — it is NOT tied to a move
+        // being in flight; GameController owns exactly when Set/ClearVisitor
+        // are called.
         private GameObject _visitorPill;
         private Image _visitorPillDot;
         private TMP_Text _visitorPillName;
@@ -102,7 +105,7 @@ namespace Magi.LedgeBoardGame.Board
             ClearVisitorOverlayInternal();
             EnsureVisitorPill();
             if (_visitorPillName != null) _visitorPillName.text =
-                string.IsNullOrEmpty(visitorName) ? "Visitor is acting here" : $"{visitorName} is acting here";
+                string.IsNullOrEmpty(visitorName) ? "Visitor is acting" : $"{visitorName} is acting";
             if (_visitorPillDot != null) _visitorPillDot.color = visitorAccent;
             if (_visitorPill != null) _visitorPill.SetActive(true);
 
@@ -131,7 +134,8 @@ namespace Magi.LedgeBoardGame.Board
         }
 
         /// Glass pill anchored above the top of the board, sized to fit
-        /// "Name is acting here" at UI 12pt. Built once, reused by SetVisitor.
+        /// "Name is acting" on one line at UI 21pt. Built once, reused by
+        /// SetVisitor.
         private void EnsureVisitorPill()
         {
             if (_visitorPill != null) return;
@@ -145,7 +149,14 @@ namespace Magi.LedgeBoardGame.Board
             // Above the board — clear of the outermost ledge tiles (which sit
             // near ledgeRadius) so the pill never occludes the entry tile it
             // annotates. Sits higher than the nameplate's mirror distance below.
-            rt.anchoredPosition = new Vector2(0f, ledgeRadius + 90f);
+            // CP054: pushed further up (was ledgeRadius + 90f) for more
+            // clearance from screen-anchored chrome (e.g. the Current Player
+            // panel) that can sit near the top of the viewport — this is a
+            // board-space offset only, so it narrows but cannot fully
+            // guarantee clearance in every pan/zoom/layout combination; true
+            // collision-avoidance would need MultiBoardLayout awareness,
+            // which is out of this file's scope.
+            rt.anchoredPosition = new Vector2(0f, ledgeRadius + 130f);
 
             var bg = go.GetComponent<Image>();
             bg.color = LedgeUITokens.Panel;
@@ -167,27 +178,39 @@ namespace Magi.LedgeBoardGame.Board
             fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            // Cool dot — visitor's skin accent.
-            var dotGo = new GameObject("Dot", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement));
+            // Cool dot — visitor's skin accent. Outlined to match the
+            // nameplate's skin-chip treatment (fill + thin edge) below the
+            // board, so the pill's identity swatch reads as part of the same
+            // chip family rather than a bare, borderless square (CP054).
+            var dotGo = new GameObject("Dot", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline), typeof(LayoutElement));
             dotGo.transform.SetParent(go.transform, false);
             var dotRt = (RectTransform)dotGo.transform;
             dotRt.sizeDelta = new Vector2(20f, 20f);
             _visitorPillDot = dotGo.GetComponent<Image>();
             _visitorPillDot.color = LedgeUITokens.AccentCool;
             _visitorPillDot.raycastTarget = false;
+            var dotOutline = dotGo.GetComponent<Outline>();
+            dotOutline.effectColor = LedgeUITokens.PanelEdge2;
+            dotOutline.effectDistance = new Vector2(LedgeUITokens.HairlineWidth, -LedgeUITokens.HairlineWidth);
             var dotLe = dotGo.GetComponent<LayoutElement>();
             dotLe.preferredWidth = 20f; dotLe.minWidth = 20f;
             dotLe.preferredHeight = 20f; dotLe.minHeight = 20f;
 
-            // "<Name> is acting here" UI bold 18pt.
+            // "<Name> is acting" UI bold 21pt, one line — no-wrap because the
+            // outer HorizontalLayoutGroup has childControlWidth=false and
+            // this Label's own RectTransform otherwise defaults to a fixed
+            // width, which combined with TMP's default word-wrap is exactly
+            // what produced CP053's "...acting / here" wrap. Disabling wrap
+            // here is the source-level fix rather than trimming copy alone.
             var nameGo = new GameObject("Label", typeof(RectTransform));
             nameGo.transform.SetParent(go.transform, false);
             _visitorPillName = nameGo.AddComponent<TextMeshProUGUI>();
             _visitorPillName.font = LedgeUITokens.UIFont;
-            _visitorPillName.fontSize = 18f;
+            _visitorPillName.fontSize = 21f;
             _visitorPillName.fontStyle = FontStyles.Bold;
             _visitorPillName.color = LedgeUITokens.Ink;
             _visitorPillName.alignment = TextAlignmentOptions.MidlineLeft;
+            _visitorPillName.textWrappingMode = TextWrappingModes.NoWrap;
             _visitorPillName.text = "Visitor";
             _visitorPillName.raycastTarget = false;
 
