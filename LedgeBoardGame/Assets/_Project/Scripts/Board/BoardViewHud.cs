@@ -72,7 +72,7 @@ namespace Magi.LedgeBoardGame.Board
             rootRect.anchorMax = new Vector2(1f, 1f);
             rootRect.pivot = new Vector2(1f, 1f);
             rootRect.anchoredPosition = new Vector2(-LedgeUITokens.PanelEdgeInset, -LedgeUITokens.PanelEdgeInset);
-            rootRect.sizeDelta = new Vector2(280f, 120f);
+            rootRect.sizeDelta = new Vector2(280f, 144f);
             rootRect.SetAsLastSibling();
 
             // Glass panel backdrop so this matches the TL/BL chrome.
@@ -83,15 +83,35 @@ namespace Magi.LedgeBoardGame.Board
             gRt.offsetMin = Vector2.zero;
             gRt.offsetMax = Vector2.zero;
 
-            // Toggle button — Primary variant (state-changing action), pinned to
-            // the top of the glass panel's content slot.
+            // Section label "BOARD VIEW" at the top — matches the mono
+            // section-caption convention used by the other chrome panels
+            // so this reads as part of the same panel family.
+            var labelHostGo = new GameObject("SectionLabel", typeof(RectTransform));
+            var sectionRt = (RectTransform)labelHostGo.transform;
+            sectionRt.SetParent(glass.Content, false);
+            sectionRt.anchorMin = new Vector2(0f, 1f);
+            sectionRt.anchorMax = new Vector2(1f, 1f);
+            sectionRt.pivot = new Vector2(0f, 1f);
+            sectionRt.anchoredPosition = Vector2.zero;
+            sectionRt.sizeDelta = new Vector2(0f, 14f);
+            var sectionLabel = labelHostGo.AddComponent<TextMeshProUGUI>();
+            sectionLabel.text = "BOARD VIEW";
+            sectionLabel.font = LedgeUITokens.MonoFont;
+            sectionLabel.fontSize = LedgeUITokens.SectionLabelSize;
+            sectionLabel.color = LedgeUITokens.InkDim;
+            sectionLabel.fontStyle = FontStyles.UpperCase;
+            sectionLabel.characterSpacing = 22f;
+            sectionLabel.alignment = TextAlignmentOptions.TopLeft;
+            sectionLabel.raycastTarget = false;
+
+            // Toggle button — Ghost variant, pinned beneath the section label.
             var toggleHost = new GameObject("Toggle", typeof(RectTransform));
             var toggleRt = (RectTransform)toggleHost.transform;
             toggleRt.SetParent(glass.Content, false);
             toggleRt.anchorMin = new Vector2(0f, 1f);
             toggleRt.anchorMax = new Vector2(1f, 1f);
             toggleRt.pivot = new Vector2(0.5f, 1f);
-            toggleRt.anchoredPosition = Vector2.zero;
+            toggleRt.anchoredPosition = new Vector2(0f, -20f);
             toggleRt.sizeDelta = new Vector2(0f, 36f);
             _toggleButton = toggleHost.AddComponent<LedgeButton>();
             _toggleButton.CurrentVariant = LedgeButton.Variant.Ghost;
@@ -105,7 +125,7 @@ namespace Magi.LedgeBoardGame.Board
             _comparisonGroup.anchorMin = new Vector2(0f, 1f);
             _comparisonGroup.anchorMax = new Vector2(1f, 1f);
             _comparisonGroup.pivot = new Vector2(0.5f, 1f);
-            _comparisonGroup.anchoredPosition = new Vector2(0f, -44f);
+            _comparisonGroup.anchoredPosition = new Vector2(0f, -64f);
             _comparisonGroup.sizeDelta = new Vector2(0f, 36f);
             var hl = _comparisonGroup.gameObject.AddComponent<HorizontalLayoutGroup>();
             hl.spacing = 8f;

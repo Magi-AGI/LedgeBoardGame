@@ -96,7 +96,7 @@ namespace Magi.LedgeBoardGame.Board
             label.alignment = TextAlignmentOptions.TopLeft;
             label.fontSize = LedgeUITokens.BodySize;
             label.font = LedgeUITokens.UIFont;
-            label.enableWordWrapping = true;
+            label.textWrappingMode = TextWrappingModes.Normal;
             label.color = LedgeUITokens.InkFaint;
             label.raycastTarget = false;
             label.enableAutoSizing = false;
