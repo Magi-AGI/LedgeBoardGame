@@ -28,13 +28,10 @@ namespace Magi.LedgeBoardGame.Board
         private bool _dragging;
         private Vector2 _lastPointer;
         private int _lastBoardCount = -1;
-        // Per-board hover-scoped zoom/pan. When the pointer is over a
-        // specific board's rect, mouse-wheel zoom and middle/right drag
-        // operate on that board alone instead of the whole container —
-        // lets players inspect one opponent without shifting everybody
-        // else. Drops back to container-scope when no board is hovered
-        // (e.g. margin drag for a quick recenter).
-        private readonly Dictionary<BoardPresenter, float> _boardScale = new Dictionary<BoardPresenter, float>();
+        // Per-board hover-scoped pan. Middle/right drag operates on the
+        // hovered board alone instead of the whole container — lets players
+        // inspect one opponent without shifting everybody else. Drops back
+        // to container-scope when no board is hovered.
         private readonly Dictionary<BoardPresenter, Vector2> _boardPanOffset = new Dictionary<BoardPresenter, Vector2>();
         private BoardPresenter _activeDragBoard;
 
@@ -72,7 +69,7 @@ namespace Magi.LedgeBoardGame.Board
             HandlePan(presenters);
             if (locked) return;
 
-            HandleZoom(presenters);
+            HandleZoom();
             HandleHotkeys(presenters);
         }
 
@@ -86,18 +83,16 @@ namespace Magi.LedgeBoardGame.Board
             ResetPerBoardState();
         }
 
-        private void HandleZoom(BoardPresenter[] presenters)
+        private void HandleZoom()
         {
             if (!TryReadScroll(out float scrollY) || Mathf.Approximately(scrollY, 0f)) return;
             if (!TryReadPointer(out var pointer)) return;
 
-            var hovered = FindHoveredBoard(presenters, pointer);
-            if (hovered != null)
-            {
-                ZoomBoard(hovered, scrollY);
-                return;
-            }
-
+            // Wheel always zooms the whole container. Per-board wheel scaling
+            // proved more annoying than useful — players reaching for an
+            // overall zoom kept inflating a single opponent's board instead.
+            // Per-board pan (middle/right drag) remains scoped because that
+            // gesture's intent is unambiguous.
             float current = _rect.localScale.x;
             float next = Mathf.Clamp(current + Mathf.Sign(scrollY) * zoomStep, minScale, maxScale);
             if (Mathf.Approximately(next, current)) return;
@@ -110,18 +105,6 @@ namespace Magi.LedgeBoardGame.Board
             float ratio = next / current;
             _rect.anchoredPosition = viewportLocal + offset * ratio;
             _rect.localScale = new Vector3(next, next, 1f);
-        }
-
-        private void ZoomBoard(BoardPresenter board, float scrollY)
-        {
-            var rt = board.GetComponent<RectTransform>();
-            if (rt == null) return;
-            float current = rt.localScale.x;
-            if (current <= 0f) current = 1f;
-            float next = Mathf.Clamp(current + Mathf.Sign(scrollY) * zoomStep, minScale, maxScale);
-            if (Mathf.Approximately(next, current)) return;
-            rt.localScale = new Vector3(next, next, 1f);
-            _boardScale[board] = next;
         }
 
         private void HandlePan(BoardPresenter[] presenters)
@@ -183,7 +166,6 @@ namespace Magi.LedgeBoardGame.Board
 
         private void ResetPerBoardState()
         {
-            _boardScale.Clear();
             _boardPanOffset.Clear();
             _activeDragBoard = null;
         }
@@ -229,7 +211,7 @@ namespace Magi.LedgeBoardGame.Board
 
             _rect.localScale = new Vector3(scale, scale, 1f);
             _rect.anchoredPosition = Vector2.zero;
-            // Any per-board zoom/pan residue is now inconsistent with the
+            // Any per-board pan residue is now inconsistent with the
             // fresh container fit — reset so boards start uniform.
             foreach (var p in presenters)
             {
