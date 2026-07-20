@@ -47,7 +47,18 @@ namespace Magi.LedgeBoardGame.Board
         private GameObject _visitorPill;
         private Image _visitorPillDot;
         private TMP_Text _visitorPillName;
+        // Recomputed on every SetVisitor call so a long name doesn't leave
+        // the pill stuck wide after a later, shorter name — see SetVisitor.
+        private LayoutElement _visitorPillNameLayout;
         private int _activeVisitorEntryTileId = -1;
+
+        // Deterministic cap on the pill's label so a pathological visitor
+        // name can't grow the pill unboundedly. Total capped pill width ~=
+        // 20 (dot) + 12 (spacing) + 44 (horizontal padding) + 240 (label)
+        // = 316px. Short names measure under this and render at their own
+        // natural width; longer names clamp here and TMP renders a native
+        // ellipsis rather than spilling text or wrapping.
+        private const float MaxVisitorPillLabelWidth = 240f;
 
         private bool _isEliminated;
         private readonly Dictionary<int, SpaceView> _spaceViews = new Dictionary<int, SpaceView>();
@@ -104,8 +115,20 @@ namespace Magi.LedgeBoardGame.Board
         {
             ClearVisitorOverlayInternal();
             EnsureVisitorPill();
-            if (_visitorPillName != null) _visitorPillName.text =
-                string.IsNullOrEmpty(visitorName) ? "Visitor is acting" : $"{visitorName} is acting";
+
+            string label = string.IsNullOrEmpty(visitorName) ? "Visitor is acting" : $"{visitorName} is acting";
+            if (_visitorPillName != null)
+            {
+                // Recompute every call — a long name must clamp, and a
+                // later short name must shrink back down rather than
+                // staying stuck at the previous name's width.
+                if (_visitorPillNameLayout != null)
+                {
+                    float naturalWidth = _visitorPillName.GetPreferredValues(label).x;
+                    _visitorPillNameLayout.preferredWidth = Mathf.Min(naturalWidth, MaxVisitorPillLabelWidth);
+                }
+                _visitorPillName.text = label;
+            }
             if (_visitorPillDot != null) _visitorPillDot.color = visitorAccent;
             if (_visitorPill != null) _visitorPill.SetActive(true);
 
@@ -169,7 +192,14 @@ namespace Magi.LedgeBoardGame.Board
             hl.padding = new RectOffset(20, 24, 12, 12);
             hl.spacing = 12f;
             hl.childAlignment = TextAnchor.MiddleLeft;
-            hl.childControlWidth = false;
+            // childControlWidth=true so the label's LayoutElement.preferredWidth
+            // (recomputed every SetVisitor call, capped at
+            // MaxVisitorPillLabelWidth) is actually applied to its
+            // RectTransform each layout pass — with it false, Unity never
+            // writes the computed width back to the child, so
+            // TextOverflowModes.Ellipsis has no reliable bounds to truncate
+            // against.
+            hl.childControlWidth = true;
             hl.childControlHeight = false;
             hl.childForceExpandWidth = false;
             hl.childForceExpandHeight = false;
@@ -196,12 +226,15 @@ namespace Magi.LedgeBoardGame.Board
             dotLe.preferredWidth = 20f; dotLe.minWidth = 20f;
             dotLe.preferredHeight = 20f; dotLe.minHeight = 20f;
 
-            // "<Name> is acting" UI bold 21pt, one line — no-wrap because the
-            // outer HorizontalLayoutGroup has childControlWidth=false and
-            // this Label's own RectTransform otherwise defaults to a fixed
-            // width, which combined with TMP's default word-wrap is exactly
-            // what produced CP053's "...acting / here" wrap. Disabling wrap
-            // here is the source-level fix rather than trimming copy alone.
+            // "<Name> is acting" UI bold 21pt, one line — no-wrap because
+            // TMP's default word-wrap is what produced CP053's
+            // "...acting / here" wrap. Width is capped at
+            // MaxVisitorPillLabelWidth (see SetVisitor, which recomputes
+            // the LayoutElement's preferredWidth every call): short names
+            // measure under the cap and size naturally via
+            // childControlWidth=true on the parent row; longer names clamp
+            // at the cap and render a native TMP ellipsis instead of
+            // spilling text outside the pill.
             var nameGo = new GameObject("Label", typeof(RectTransform));
             nameGo.transform.SetParent(go.transform, false);
             _visitorPillName = nameGo.AddComponent<TextMeshProUGUI>();
@@ -211,8 +244,11 @@ namespace Magi.LedgeBoardGame.Board
             _visitorPillName.color = LedgeUITokens.Ink;
             _visitorPillName.alignment = TextAlignmentOptions.MidlineLeft;
             _visitorPillName.textWrappingMode = TextWrappingModes.NoWrap;
+            _visitorPillName.overflowMode = TextOverflowModes.Ellipsis;
             _visitorPillName.text = "Visitor";
             _visitorPillName.raycastTarget = false;
+            _visitorPillNameLayout = nameGo.AddComponent<LayoutElement>();
+            _visitorPillNameLayout.flexibleWidth = 0f;
 
             _visitorPill = go;
             _visitorPill.SetActive(false);
