@@ -22,6 +22,28 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private float fitScaleMultiplier = 0.9f;
         [SerializeField] private KeyCode recenterKey = KeyCode.F;
 
+        // BoardPresenter.EnsureVisitorPill anchors the visitor pill at
+        // (0, ledgeRadius + 130f) — 130f beyond the board's own radius —
+        // plus roughly half the pill's own rendered height. Measured live
+        // (CP062, 2-seat session): board half-extent 450, pill top edge
+        // 617 => 167 units of overhang beyond the board's own rect;
+        // rounded up here for a small safety margin.
+        //
+        // This is an absolute reservation (board half-height + this
+        // constant), not an additive margin — AccumulateBoardBounds floors
+        // localMaxY at halfY + PredictedVisitorPillHeadroom via Mathf.Max,
+        // so it never stacks on top of an already-active pill's own
+        // measured extent from the active-children walk. It is applied
+        // unconditionally, whether or not a visitor pill is currently
+        // active, because FitToViewport is NOT re-triggered by a call to
+        // BoardPresenter's SetVisitor — only by a board-count change,
+        // view-mode toggle, or the recenter hotkey (see Update/RequestFit
+        // below). A "cold" fit computed before any visitor ever appears
+        // must already reserve room for one, or the very first cross-board
+        // visitor after a fresh session load would clip off-screen with
+        // nothing left to trigger a corrective refit.
+        private const float PredictedVisitorPillHeadroom = 170f;
+
         private RectTransform _rect;
         private RectTransform _viewportRect;
         private MultiBoardLayout _layout;
@@ -187,17 +209,14 @@ namespace Magi.LedgeBoardGame.Board
             int sampled = 0;
             foreach (var p in presenters)
             {
-                if (p == null) continue;
+                // Callers today (Update's GetComponentsInChildren<BoardPresenter>
+                // (false)) already exclude inactive presenters, but this is a
+                // public method — guard explicitly so a hidden Comparison-mode
+                // opponent (or any future caller) can never inflate the fit.
+                if (p == null || !p.gameObject.activeInHierarchy) continue;
                 var rt = p.GetComponent<RectTransform>();
                 if (rt == null) continue;
-                var pos = rt.anchoredPosition;
-                var size = rt.rect.size;
-                float half = Mathf.Max(size.x, size.y) * 0.5f;
-                if (half <= 0f) half = 400f;
-                minX = Mathf.Min(minX, pos.x - half);
-                maxX = Mathf.Max(maxX, pos.x + half);
-                minY = Mathf.Min(minY, pos.y - half);
-                maxY = Mathf.Max(maxY, pos.y + half);
+                AccumulateBoardBounds(p, rt, ref minX, ref maxX, ref minY, ref maxY);
                 sampled++;
             }
             if (sampled == 0) return;
@@ -212,14 +231,78 @@ namespace Magi.LedgeBoardGame.Board
             _rect.localScale = new Vector3(scale, scale, 1f);
             _rect.anchoredPosition = Vector2.zero;
             // Any per-board pan residue is now inconsistent with the
-            // fresh container fit — reset so boards start uniform.
+            // fresh container fit — reset so boards start uniform. Same
+            // inactive guard as the sampling loop above, for consistency —
+            // today's only callers already pass pre-filtered active
+            // presenters, so this is defensive rather than load-bearing.
             foreach (var p in presenters)
             {
-                if (p == null) continue;
+                if (p == null || !p.gameObject.activeInHierarchy) continue;
                 var rt = p.GetComponent<RectTransform>();
                 if (rt != null) rt.localScale = Vector3.one;
             }
             ResetPerBoardState();
+        }
+
+        /// Expands the running (minX,maxX,minY,maxY) accumulation in
+        /// container-local space to cover a board's true rendered content —
+        /// its own base rect plus every currently-active direct child
+        /// (BoardNameplate, VisitorPill, etc. — BoardNameplate's own
+        /// SkinChip grandchild is covered implicitly, since it always sits
+        /// well within the nameplate's own bounds) that extends beyond the
+        /// board's base rect — instead of only the board's own base
+        /// RectTransform.rect.size. Active-only: a cleared visitor pill
+        /// (SetActive(false) via BoardPresenter.ClearVisitor) is correctly
+        /// excluded rather than permanently shrinking the fit after it's
+        /// dismissed.
+        ///
+        /// All positions here are read directly as anchoredPosition, the
+        /// same container-local unit space FitToViewport already assumed
+        /// for the board root — a child's anchoredPosition is relative to
+        /// its board parent, so it is added to the board's own
+        /// anchoredPosition once, not re-derived via world/canvas space.
+        private static void AccumulateBoardBounds(BoardPresenter presenter, RectTransform rt,
+            ref float minX, ref float maxX, ref float minY, ref float maxY)
+        {
+            var boardPos = rt.anchoredPosition;
+            var size = rt.rect.size;
+            float halfX = size.x * 0.5f;
+            float halfY = size.y * 0.5f;
+            if (halfX <= 0f) halfX = 400f;
+            if (halfY <= 0f) halfY = 400f;
+
+            float localMinX = -halfX, localMaxX = halfX;
+            float localMinY = -halfY, localMaxY = halfY;
+
+            foreach (Transform child in presenter.transform)
+            {
+                if (!child.gameObject.activeInHierarchy) continue;
+                var childRt = child as RectTransform;
+                if (childRt == null) continue;
+
+                var childPos = childRt.anchoredPosition;
+                var childSize = childRt.rect.size;
+                float childHalfX = childSize.x * 0.5f;
+                float childHalfY = childSize.y * 0.5f;
+
+                localMinX = Mathf.Min(localMinX, childPos.x - childHalfX);
+                localMaxX = Mathf.Max(localMaxX, childPos.x + childHalfX);
+                localMinY = Mathf.Min(localMinY, childPos.y - childHalfY);
+                localMaxY = Mathf.Max(localMaxY, childPos.y + childHalfY);
+            }
+
+            // Absolute reservation, not an additive margin — see
+            // PredictedVisitorPillHeadroom's own comment. Using Max (not +=)
+            // means this only raises localMaxY up to the board's own radius
+            // plus the pill's known reach; it never stacks on top of an
+            // already-active pill's real (and possibly larger or smaller)
+            // measured extent from the child walk above.
+            localMaxY = Mathf.Max(localMaxY, halfY + PredictedVisitorPillHeadroom);
+
+            minX = Mathf.Min(minX, boardPos.x + localMinX);
+            maxX = Mathf.Max(maxX, boardPos.x + localMaxX);
+            minY = Mathf.Min(minY, boardPos.y + localMinY);
+            maxY = Mathf.Max(maxY, boardPos.y + localMaxY);
         }
 
 #if ENABLE_INPUT_SYSTEM
