@@ -75,6 +75,22 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private float sourceMinAlpha = 0.15f;
         [SerializeField] private float sourceMaxAlpha = 0.55f;
 
+        // CP064 replacement (Claude Design "silhouette-matched keyline rim +
+        // one-shot silhouette shockwave"): all three visitor layers reuse the
+        // tile's own fillImage sprite/rotation, so they are automatically
+        // correct on every silhouette including the bespoke bridge/wall polys
+        // — never a generic hex ring. See SetVisitorOverlay/TickVisitorRim.
+        [Header("Visitor Rim (CP064 replacement)")]
+        [SerializeField] private float visitorKeylineScale = 1.045f;
+        [SerializeField] private float visitorRimScale = 1.115f;
+        [SerializeField] private float visitorWaveEndScale = 1.55f;
+        [SerializeField] private float visitorWaveDuration = 0.30f;
+        [SerializeField] private float visitorRimAlphaMin = 0.55f;
+        [SerializeField] private float visitorRimAlphaMax = 0.85f;
+        [SerializeField] private float visitorRimPulsePeriodSeconds = 2.4f;
+        [SerializeField] private float visitorKeylineAlpha = 0.95f;
+        [SerializeField] private float visitorWaveStartAlpha = 0.95f;
+
         [Header("Events")]
         [SerializeField] private UnityEngine.Events.UnityEvent<SpaceView> onClicked;
 
@@ -412,126 +428,272 @@ namespace Magi.LedgeBoardGame.Board
 
         public void SetHighlightColor(Color _) { }
 
-        // ── Visitor overlay (control-handoff spec, 2026-06-15) ─────────────
-        // A flat colored hex tint at the visitor's cool skin-accent at ~0.5
-        // alpha. Sits between fillImage and frameImage in the sibling order
-        // so it tints the wedge color without obscuring the frame or glow.
-        // Lazily built so untouched tiles stay zero-cost.
-        private Image _visitorOverlayImage;
-        private Image _visitorHaloImage;
-        private Color _visitorHaloBaseColor;
-        private bool _visitorHaloActive;
+        // ── Visitor overlay (CP064 replacement — Claude Design "silhouette-
+        // matched keyline rim + one-shot silhouette shockwave", verdict
+        // approve_with_replacement) ─────────────────────────────────────
+        // Superseded: the previous flat-tint + diffuse frame-glow-based halo
+        // (CP054/CP064 Option A) read as a soft blob that washed out against
+        // the board's already-saturated wedge fills, and a generic hex ring
+        // would mis-fit the bespoke 12-vertex bridge / 6-vertex wall polygons.
+        // The replacement stacks three copies of the tile's own fillImage
+        // sprite (so it is automatically correct for every silhouette),
+        // entirely behind the opaque tile face, so only a crisp outboard band
+        // of each copy is ever visible:
+        //   VisitorWave (farthest)  — one-shot entry shockwave, then hidden.
+        //   VisitorRim              — accent-colored steady band, alpha-breathes.
+        //   VisitorKeyline          — thin near-black band that separates the
+        //                             accent rim from the wedge fill color so
+        //                             it never reads as a wash/tint.
+        // Sibling order behind Fill/Frame/FrameGlow is set once at creation
+        // (see EnsureVisitorRimLayers) and is the whole trick: if these ever
+        // land in front of the tile face, the implementation is wrong.
+        private Image _visitorWaveImage;
+        private Image _visitorRimImage;
+        private Image _visitorKeylineImage;
+        private Color _visitorAccentColor;
+        private bool _visitorActive;
+        private bool _visitorWaveActive;
+        private float _visitorWaveElapsed;
 
-        // The flat tint alone can't be told apart from a tile whose fill is
-        // already near the visitor accent (many tiles are cyan/blue), so a
-        // brighter accent ring around the entry tile carries the recognition.
-        // CP054: the ring also breathes slowly (see Update()) so the cue
-        // isn't color-alone — a shape/motion signal survives for
-        // color-limited players even if the accent hue is hard to place.
-        private const float VisitorHaloAlphaMin = 0.55f;
-        private const float VisitorHaloAlphaMax = 0.9f;
-        private const float VisitorHaloPulseHz = 0.45f;
+        // Board background near-black family (#0F0D0A) — the keyline's only
+        // job is to separate the accent rim from the wedge fill, never to add
+        // its own hue.
+        private static readonly Color VisitorKeylineColor = new Color(0.0588f, 0.0510f, 0.0392f, 1f);
 
         public void SetVisitorOverlay(Color accent, float alpha = 0.5f)
         {
-            EnsureVisitorOverlayImage();
-            if (_visitorOverlayImage != null)
-            {
-                _visitorOverlayImage.color = new Color(accent.r, accent.g, accent.b, Mathf.Clamp01(alpha));
-                _visitorOverlayImage.gameObject.SetActive(true);
-            }
+            // `alpha` is retained only so BoardPresenter/GameController callers
+            // don't need to change; the replacement primitive has no flat fill
+            // tint to apply it to (Design: "do not fill/tint the tile face").
+            EnsureVisitorRimLayers();
+            _visitorAccentColor = accent;
+            _visitorActive = true;
 
-            // Accent halo carries the "someone is acting here" recognition on
-            // top of the translucent fill tint. RGB is latched here; Update()
-            // drives the alpha breathe every frame while active.
-            EnsureVisitorHaloImage();
-            if (_visitorHaloImage != null)
+            if (_visitorRimImage != null)
             {
-                _visitorHaloBaseColor = accent;
-                _visitorHaloActive = true;
-                _visitorHaloImage.color = new Color(accent.r, accent.g, accent.b, VisitorHaloAlphaMax);
-                _visitorHaloImage.gameObject.SetActive(true);
+                // Assign the rim's accent color immediately rather than
+                // waiting for the next Update()/TickVisitorRim() tick — the
+                // reviewer fix packet flagged that the first rendered frame
+                // could otherwise show a stale/transparent rim for one frame.
+                _visitorRimImage.color = new Color(accent.r, accent.g, accent.b, ComputeSteadyRimAlpha());
+                _visitorRimImage.rectTransform.localScale = Vector3.one * visitorRimScale;
+                _visitorRimImage.gameObject.SetActive(true);
+            }
+            if (_visitorKeylineImage != null)
+            {
+                _visitorKeylineImage.color = new Color(VisitorKeylineColor.r, VisitorKeylineColor.g, VisitorKeylineColor.b, visitorKeylineAlpha);
+                _visitorKeylineImage.rectTransform.localScale = Vector3.one * visitorKeylineScale;
+                _visitorKeylineImage.gameObject.SetActive(true);
+            }
+            if (_visitorWaveImage != null)
+            {
+                // Restart from t=0 rather than stacking if a repeated call
+                // lands on the same tile without an intervening clear.
+                _visitorWaveActive = true;
+                _visitorWaveElapsed = 0f;
+                _visitorWaveImage.rectTransform.localScale = Vector3.one;
+                _visitorWaveImage.color = new Color(accent.r, accent.g, accent.b, visitorWaveStartAlpha);
+                _visitorWaveImage.gameObject.SetActive(true);
             }
         }
 
         public void ClearVisitorOverlay()
         {
-            _visitorHaloActive = false;
-            if (_visitorOverlayImage != null) _visitorOverlayImage.gameObject.SetActive(false);
-            if (_visitorHaloImage != null) _visitorHaloImage.gameObject.SetActive(false);
+            _visitorActive = false;
+            _visitorWaveActive = false;
+            _visitorWaveElapsed = 0f;
+            // Reset every layer to a fully idle state — disabled, scale 1,
+            // alpha 0 — not just disabled-with-stale-color. Reviewer fix
+            // packet flagged that a disabled-but-still-colored rim/keyline
+            // is visually harmless while inactive but violates the design
+            // reset criterion and risks a stale first frame on reactivation.
+            if (_visitorRimImage != null)
+            {
+                _visitorRimImage.gameObject.SetActive(false);
+                _visitorRimImage.rectTransform.localScale = Vector3.one;
+                var c = _visitorRimImage.color;
+                c.a = 0f;
+                _visitorRimImage.color = c;
+            }
+            if (_visitorKeylineImage != null)
+            {
+                _visitorKeylineImage.gameObject.SetActive(false);
+                _visitorKeylineImage.rectTransform.localScale = Vector3.one;
+                var c = _visitorKeylineImage.color;
+                c.a = 0f;
+                _visitorKeylineImage.color = c;
+            }
+            if (_visitorWaveImage != null)
+            {
+                _visitorWaveImage.gameObject.SetActive(false);
+                _visitorWaveImage.rectTransform.localScale = Vector3.one;
+                var c = _visitorWaveImage.color;
+                c.a = 0f;
+                _visitorWaveImage.color = c;
+            }
         }
 
-        private void EnsureVisitorOverlayImage()
+        // Creation order matters: SetSiblingIndex(0) then (1) then (2), in
+        // Wave/Rim/Keyline order, pushes each new layer in front of the last
+        // while shifting Fill/Frame/FrameGlow later — the net result is
+        // Wave(0), Rim(1), Keyline(2), Fill(3+), regardless of how many
+        // siblings shapeRoot already had. This runs once, lazily, on first
+        // visitor use per tile.
+        private void EnsureVisitorRimLayers()
         {
-            if (_visitorOverlayImage != null) return;
-            // Mirror the fillImage hex sprite + rotation so the overlay
-            // shape matches the tile's actual outline. shapeRoot is the
-            // parent for the visual stack.
+            if (_visitorWaveImage != null && _visitorRimImage != null && _visitorKeylineImage != null) return;
             if (fillImage == null || shapeRoot == null) return;
 
-            var go = new GameObject("VisitorOverlay", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-            var rt = (RectTransform)go.transform;
-            rt.SetParent(shapeRoot, false);
-            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
-            rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
-            rt.localRotation = fillImage.transform.localRotation;
-
-            _visitorOverlayImage = go.GetComponent<Image>();
-            _visitorOverlayImage.sprite = fillImage.sprite;
-            _visitorOverlayImage.raycastTarget = false;
-            _visitorOverlayImage.color = new Color(0f, 0f, 0f, 0f);
-
-            // Sit immediately above fillImage. Insert at fillImage's index+1
-            // so frameImage (drawn on top of fill) still sits above us.
-            int fillIdx = fillImage.transform.GetSiblingIndex();
-            go.transform.SetSiblingIndex(fillIdx + 1);
-            go.SetActive(false);
+            if (_visitorWaveImage == null)
+            {
+                _visitorWaveImage = CreateVisitorSilhouetteChild("VisitorWave");
+                _visitorWaveImage.transform.SetSiblingIndex(0);
+            }
+            if (_visitorRimImage == null)
+            {
+                _visitorRimImage = CreateVisitorSilhouetteChild("VisitorRim");
+                _visitorRimImage.transform.SetSiblingIndex(1);
+            }
+            if (_visitorKeylineImage == null)
+            {
+                _visitorKeylineImage = CreateVisitorSilhouetteChild("VisitorKeyline");
+                _visitorKeylineImage.transform.SetSiblingIndex(2);
+            }
         }
 
-        // Accent ring hugging the tile's outer edge. Reuses the shape-specific
-        // frame-glow sprite + rotation (already assigned by ApplyShapeAndFill)
-        // so the halo matches the hex / bridge / wall outline, and draws above
-        // the frame so the accent reads over the tile edge. Tokens still sit on
-        // top because countersRoot is a sibling of shapeRoot, not a child.
-        private void EnsureVisitorHaloImage()
+        // Reuses fillImage's own sprite so the overlay always matches the
+        // tile's real silhouette — hex, bespoke bridge 12-gon, or bespoke wall
+        // hexagon — with no per-shape special-casing. Uniform scale only (no
+        // independent x/y, no position offset): any asymmetry breaks the
+        // constant-band illusion on the bespoke polys.
+        private Image CreateVisitorSilhouetteChild(string name)
         {
-            if (_visitorHaloImage != null) return;
-            if (shapeRoot == null || frameGlowImage == null) return;
-
-            var selfRect = (RectTransform)transform;
-            var go = new GameObject("VisitorHalo", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             var rt = (RectTransform)go.transform;
             rt.SetParent(shapeRoot, false);
             rt.anchorMin = new Vector2(0.5f, 0.5f);
             rt.anchorMax = new Vector2(0.5f, 0.5f);
             rt.pivot = new Vector2(0.5f, 0.5f);
             rt.anchoredPosition = Vector2.zero;
-            // Slightly larger than the frame glow (1.18f) so the accent reads as
-            // a ring around the tile rather than just a re-tint.
-            rt.sizeDelta = selfRect.sizeDelta * 1.22f;
-            rt.localRotation = frameGlowImage.transform.localRotation;
 
-            _visitorHaloImage = go.GetComponent<Image>();
-            _visitorHaloImage.sprite = frameGlowImage.sprite;
-            _visitorHaloImage.raycastTarget = false;
-            _visitorHaloImage.color = new Color(0f, 0f, 0f, 0f);
-
-            // Topmost shape element so the accent ring sits over the frame.
-            go.transform.SetAsLastSibling();
+            var img = go.GetComponent<Image>();
+            img.sprite = fillImage.sprite;
+            img.raycastTarget = false;
+            img.color = new Color(0f, 0f, 0f, 0f);
             go.SetActive(false);
+
+            ApplyVisitorSilhouetteTransform(rt);
+            return img;
         }
 
-        /// Slow alpha breathe on the visitor halo — quiet and distinct from
-        /// the faster valid-target pulse/movable-source breathe so at most
-        /// one visitor ring never competes with move-highlight chrome. Gives
-        /// the ring a motion cue independent of hue for color-limited players
-        /// (CP054 design follow-up), on top of the accent color itself.
-        private void TickVisitorHalo()
+        private void ApplyVisitorSilhouetteTransform(RectTransform rt)
         {
-            if (!_visitorHaloActive || _visitorHaloImage == null) return;
-            float t = Mathf.Sin(Time.unscaledTime * VisitorHaloPulseHz * 2f * Mathf.PI) * 0.5f + 0.5f;
-            float a = Mathf.Lerp(VisitorHaloAlphaMin, VisitorHaloAlphaMax, t);
-            _visitorHaloImage.color = new Color(_visitorHaloBaseColor.r, _visitorHaloBaseColor.g, _visitorHaloBaseColor.b, a);
+            if (fillImage == null) return;
+            rt.sizeDelta = ((RectTransform)transform).sizeDelta;
+            rt.localRotation = fillImage.transform.localRotation;
+        }
+
+        /// Called after ApplyShapeAndFill assigns a (possibly new) fillImage
+        /// sprite/rotation so the visitor layers stay in sync with the tile's
+        /// current shape instead of freezing on whatever shape was active when
+        /// the visitor layers were first created (pooled/reused SpaceViews).
+        private void RefreshVisitorSilhouetteLayers()
+        {
+            if (fillImage == null) return;
+            if (_visitorWaveImage != null)
+            {
+                _visitorWaveImage.sprite = fillImage.sprite;
+                ApplyVisitorSilhouetteTransform(_visitorWaveImage.rectTransform);
+            }
+            if (_visitorRimImage != null)
+            {
+                _visitorRimImage.sprite = fillImage.sprite;
+                ApplyVisitorSilhouetteTransform(_visitorRimImage.rectTransform);
+            }
+            if (_visitorKeylineImage != null)
+            {
+                _visitorKeylineImage.sprite = fillImage.sprite;
+                ApplyVisitorSilhouetteTransform(_visitorKeylineImage.rectTransform);
+            }
+
+            // Reassert draw order (Wave, Rim, Keyline, then Fill/Frame/
+            // FrameGlow) in case a future pooling/prefab path reordered
+            // shapeRoot's children — cheap no-op in the common case where
+            // order was never disturbed.
+            if (_visitorWaveImage != null) _visitorWaveImage.transform.SetSiblingIndex(0);
+            if (_visitorRimImage != null) _visitorRimImage.transform.SetSiblingIndex(1);
+            if (_visitorKeylineImage != null) _visitorKeylineImage.transform.SetSiblingIndex(2);
+        }
+
+        /// Drives the steady accent-rim alpha breathe (pulses alpha only,
+        /// never scale — a size-pulsing tile reads as a hover/selection
+        /// affordance) and, while active, the one-shot entry wave: a hard-
+        /// edged copy of the tile's own silhouette that flings outward
+        /// (easeOutCubic scale) and dissolves (held solid for the first 15%,
+        /// then easeOutQuad alpha to 0) over visitorWaveDuration seconds.
+        // Shared by SetVisitorOverlay (immediate first-frame color) and
+        // TickVisitorRim (every subsequent frame) so the rim never shows a
+        // stale/default alpha before its first Update() tick.
+        private float ComputeSteadyRimAlpha()
+        {
+            float period = Mathf.Max(0.01f, visitorRimPulsePeriodSeconds);
+            float hz = 1f / period;
+            float t = Mathf.Sin(Time.unscaledTime * hz * 2f * Mathf.PI) * 0.5f + 0.5f;
+            return Mathf.Lerp(visitorRimAlphaMin, visitorRimAlphaMax, t);
+        }
+
+        // Single frames can spike well past a normal frame time — an editor
+        // hitch, a test-harness delay between activating the overlay and its
+        // first tick, or a paused-then-resumed window. Uncapped, that single
+        // spike could advance _visitorWaveElapsed past visitorWaveDuration in
+        // one step and the one-shot wave would never be observed active.
+        // Capping the per-frame step preserves the intended ~300ms duration
+        // under normal frame rates while guaranteeing the wave is visible
+        // (active, partway through its scale/alpha animation) for at least
+        // one real frame even after an anomalously long frame.
+        private const float VisitorWaveMaxFrameStep = 0.05f;
+
+        private void TickVisitorRim()
+        {
+            if (!_visitorActive) return;
+
+            if (_visitorRimImage != null)
+            {
+                float alpha = ComputeSteadyRimAlpha();
+                _visitorRimImage.color = new Color(_visitorAccentColor.r, _visitorAccentColor.g, _visitorAccentColor.b, alpha);
+            }
+
+            if (_visitorWaveActive && _visitorWaveImage != null)
+            {
+                _visitorWaveElapsed += Mathf.Min(Time.unscaledDeltaTime, VisitorWaveMaxFrameStep);
+                float waveT = Mathf.Clamp01(_visitorWaveElapsed / Mathf.Max(0.01f, visitorWaveDuration));
+
+                float scaleEase = 1f - Mathf.Pow(1f - waveT, 3f);
+                float scale = Mathf.Lerp(1f, visitorWaveEndScale, scaleEase);
+
+                const float holdFraction = 0.15f;
+                float alpha;
+                if (waveT <= holdFraction)
+                {
+                    alpha = visitorWaveStartAlpha;
+                }
+                else
+                {
+                    float fadeT = (waveT - holdFraction) / (1f - holdFraction);
+                    float fadeEase = 1f - (1f - fadeT) * (1f - fadeT);
+                    alpha = Mathf.Lerp(visitorWaveStartAlpha, 0f, fadeEase);
+                }
+
+                _visitorWaveImage.rectTransform.localScale = Vector3.one * scale;
+                _visitorWaveImage.color = new Color(_visitorAccentColor.r, _visitorAccentColor.g, _visitorAccentColor.b, alpha);
+
+                if (waveT >= 1f)
+                {
+                    _visitorWaveActive = false;
+                    _visitorWaveImage.gameObject.SetActive(false);
+                    _visitorWaveImage.rectTransform.localScale = Vector3.one;
+                }
+            }
         }
 
         public void OnPointerClick(PointerEventData eventData)
@@ -565,7 +727,7 @@ namespace Magi.LedgeBoardGame.Board
         private void Update()
         {
             TickHoverLabelFade();
-            TickVisitorHalo();
+            TickVisitorRim();
 
             if (frameGlowImage == null) return;
 
@@ -958,6 +1120,8 @@ namespace Magi.LedgeBoardGame.Board
                 frameGlowImage.sprite = glowSprite;
                 frameGlowImage.transform.localRotation = Quaternion.Euler(0f, 0f, rotZ);
             }
+
+            RefreshVisitorSilhouetteLayers();
         }
 
         // Per-space rotZ for Ring3-off hexes (ids 25..36). Drives the on-screen
