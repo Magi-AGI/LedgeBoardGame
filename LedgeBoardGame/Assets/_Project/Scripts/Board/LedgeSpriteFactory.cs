@@ -4,10 +4,25 @@ using UnityEngine;
 namespace Magi.LedgeBoardGame.Board
 {
     /// Runtime-generated UI sprites so Phase 1 visual polish ships without art-pipeline dependencies.
-    /// Shapes are baked into 128x128 RGBA textures with 2x supersample AA. Caller-tintable sprites
-    /// (Disc, Counter, HexFrame, BridgeFrame, WallFrame) are pure white on transparent; colored
-    /// sprites (HexFill/HexSplit/BridgeFill/WallFill) bake pigment in so they can represent
-    /// multi-color gradients and splits that a UI.Image tint can't reproduce.
+    /// Shapes are baked into 128x128 RGBA textures with 2x supersample AA.
+    ///
+    /// Three distinct kinds of sprite live here, and confusing them is the classic bug:
+    ///   - Colored fills (HexFill/HexSplit/BridgeFill/WallFill) BAKE PIGMENT in so they can
+    ///     represent the multi-color gradients and splits a UI.Image tint can't reproduce. A
+    ///     UI.Image tint over these multiplies against the baked color, so they are unusable
+    ///     wherever a caller needs one uniform hue.
+    ///   - Frame outlines (Disc, Counter, HexFrame, BridgeFrame, WallFrame) are pure white on
+    ///     transparent and fully caller-tintable, but they are hollow bands, not solid shapes.
+    ///   - Silhouettes (HexSilhouette/BridgeSilhouette/WallSilhouette) are SOLID untinted white
+    ///     masks of the full shape — the tintable counterpart of each colored fill, with
+    ///     texel-identical coverage. Visitor overlay layers route through these so the seat
+    ///     accent reads as one uniform hue regardless of the tile's baked fill.
+    ///
+    /// CAUTION: HexFrameGlow is NOT a silhouette. Unlike BridgeFrameGlow/WallFrameGlow (which
+    /// really are full uniform-alpha silhouettes despite the legacy "Glow" name), HexFrameGlow
+    /// is a soft bloom whose alpha peaks AT the hex boundary and falls off both inward and
+    /// outward. Use HexSilhouette for any hard-edged mask; reaching for HexFrameGlow by symmetry
+    /// with the bridge/wall cases silently ships a blurred halo.
     public static class LedgeSpriteFactory
     {
         private const int Size = 128;
@@ -47,6 +62,22 @@ namespace Magi.LedgeBoardGame.Board
         public static Sprite BridgeFrameGlow => GetOrBuild("bridgeframeglow", BuildBridgeFrameGlow);
         public static Sprite WallFrame => GetOrBuild("wallframe", BuildWallFrame);
         public static Sprite WallFrameGlow => GetOrBuild("wallframeglow", BuildWallFrameGlow);
+
+        // Solid untinted white masks of each space shape, for callers that need to tint a full
+        // silhouette to one uniform color (visitor overlay wave/rim/keyline). Each has coverage
+        // texel-identical to its colored fill counterpart — same geometry constants, same
+        // Finalize() rect/pivot/PPU — so swapping a fill sprite for its silhouette cannot shift,
+        // rescale, or reshape a layer.
+        //   Hex:    BuildHexFill and BuildHexSplitFill share R/apothem, so one white hex covers
+        //           every hex-family space (Center, Ring2 split, Ring3 vertex, Ring3-off split,
+        //           OuterAdded). This is a normal cached GetHexFill entry, not a special bake.
+        //   Bridge/Wall: BuildBridgeFrameGlow/BuildWallFrameGlow already bake the full silhouette
+        //           at uniform alpha, so these alias them rather than baking a second copy. The
+        //           aliases exist because the legacy "FrameGlow" names hide that fact.
+        // See the class doc for why there is deliberately no HexFrameGlow-based alias.
+        public static Sprite HexSilhouette => GetHexFill(Color.white);
+        public static Sprite BridgeSilhouette => BridgeFrameGlow;
+        public static Sprite WallSilhouette => WallFrameGlow;
 
         public static Sprite GetHexFill(Color color)
         {

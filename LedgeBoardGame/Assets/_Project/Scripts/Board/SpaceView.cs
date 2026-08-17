@@ -435,10 +435,11 @@ namespace Magi.LedgeBoardGame.Board
         // (CP054/CP064 Option A) read as a soft blob that washed out against
         // the board's already-saturated wedge fills, and a generic hex ring
         // would mis-fit the bespoke 12-vertex bridge / 6-vertex wall polygons.
-        // The replacement stacks three copies of the tile's own fillImage
-        // sprite (so it is automatically correct for every silhouette),
-        // entirely behind the opaque tile face, so only a crisp outboard band
-        // of each copy is ever visible:
+        // The replacement stacks three copies of an untinted white mask of the
+        // tile's own shape (CP065 — a mask per shape family, so it is
+        // automatically correct for every silhouette and tints to one uniform
+        // seat accent), entirely behind the opaque tile face, so only a crisp
+        // outboard band of each copy is ever visible:
         //   VisitorWave (farthest)  — one-shot entry shockwave, then hidden.
         //   VisitorRim              — accent-colored steady band, alpha-breathes.
         //   VisitorKeyline          — thin near-black band that separates the
@@ -450,6 +451,12 @@ namespace Magi.LedgeBoardGame.Board
         private Image _visitorWaveImage;
         private Image _visitorRimImage;
         private Image _visitorKeylineImage;
+        // Untinted white mask matching this tile's current shape, chosen by
+        // ApplyShapeAndFill. The overlay layers tint this rather than the tile's
+        // own fill sprite: colored fills bake pigment, so tinting one multiplies
+        // the seat accent by the tile's baked hues and the rim stops reading as
+        // a single seat color (e.g. Ring2 read indigo on top, red below).
+        private Sprite _visitorSilhouetteSprite;
         private Color _visitorAccentColor;
         private bool _visitorActive;
         private bool _visitorWaveActive;
@@ -561,11 +568,22 @@ namespace Magi.LedgeBoardGame.Board
             }
         }
 
-        // Reuses fillImage's own sprite so the overlay always matches the
-        // tile's real silhouette — hex, bespoke bridge 12-gon, or bespoke wall
-        // hexagon — with no per-shape special-casing. Uniform scale only (no
-        // independent x/y, no position offset): any asymmetry breaks the
-        // constant-band illusion on the bespoke polys.
+        // The untinted mask for this tile's shape, falling back to fillImage's
+        // own sprite if ApplyShapeAndFill hasn't run yet (a visitor layer built
+        // before SetData) or if some future shape forgets to pick one. The
+        // fallback restores exact CP064 behavior — silhouette still correct,
+        // hue still multiplied — rather than rendering nothing.
+        private Sprite VisitorSilhouette =>
+            _visitorSilhouetteSprite != null ? _visitorSilhouetteSprite
+            : fillImage != null ? fillImage.sprite
+            : null;
+
+        // The overlay always matches the tile's real silhouette — hex, bespoke
+        // bridge 12-gon, or bespoke wall hexagon — because every mask is baked
+        // from the same geometry constants as the fill it shadows, so there is
+        // no per-shape special-casing beyond picking the mask. Uniform scale
+        // only (no independent x/y, no position offset): any asymmetry breaks
+        // the constant-band illusion on the bespoke polys.
         private Image CreateVisitorSilhouetteChild(string name)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
@@ -577,7 +595,11 @@ namespace Magi.LedgeBoardGame.Board
             rt.anchoredPosition = Vector2.zero;
 
             var img = go.GetComponent<Image>();
-            img.sprite = fillImage.sprite;
+            // May legitimately be null before the first ApplyShapeAndFill; an
+            // Image with no sprite simply draws nothing, and the layer is
+            // created inactive at alpha 0 anyway. RefreshVisitorSilhouetteLayers
+            // fills it in as soon as the tile knows its shape.
+            img.sprite = VisitorSilhouette;
             img.raycastTarget = false;
             img.color = new Color(0f, 0f, 0f, 0f);
             go.SetActive(false);
@@ -593,26 +615,30 @@ namespace Magi.LedgeBoardGame.Board
             rt.localRotation = fillImage.transform.localRotation;
         }
 
-        /// Called after ApplyShapeAndFill assigns a (possibly new) fillImage
-        /// sprite/rotation so the visitor layers stay in sync with the tile's
-        /// current shape instead of freezing on whatever shape was active when
-        /// the visitor layers were first created (pooled/reused SpaceViews).
+        /// Called after ApplyShapeAndFill picks this tile's neutral mask and
+        /// assigns a (possibly new) fillImage sprite/rotation, so the visitor
+        /// layers stay in sync with the tile's current shape instead of freezing
+        /// on whatever shape was active when the visitor layers were first
+        /// created (pooled/reused SpaceViews). Must run *after*
+        /// _visitorSilhouetteSprite is set, or a reused tile keeps the previous
+        /// shape's mask.
         private void RefreshVisitorSilhouetteLayers()
         {
             if (fillImage == null) return;
+            var silhouette = VisitorSilhouette;
             if (_visitorWaveImage != null)
             {
-                _visitorWaveImage.sprite = fillImage.sprite;
+                if (silhouette != null) _visitorWaveImage.sprite = silhouette;
                 ApplyVisitorSilhouetteTransform(_visitorWaveImage.rectTransform);
             }
             if (_visitorRimImage != null)
             {
-                _visitorRimImage.sprite = fillImage.sprite;
+                if (silhouette != null) _visitorRimImage.sprite = silhouette;
                 ApplyVisitorSilhouetteTransform(_visitorRimImage.rectTransform);
             }
             if (_visitorKeylineImage != null)
             {
-                _visitorKeylineImage.sprite = fillImage.sprite;
+                if (silhouette != null) _visitorKeylineImage.sprite = silhouette;
                 ApplyVisitorSilhouetteTransform(_visitorKeylineImage.rectTransform);
             }
 
@@ -1002,13 +1028,16 @@ namespace Magi.LedgeBoardGame.Board
 
         /// Shape + color dispatch. Called once per SetData. Assigns sprites for fill/frame/glow,
         /// picks the right color rule per space type, and rotates non-hex shapes to align with
-        /// their wedge axis.
+        /// their wedge axis. Also picks the untinted mask the visitor overlay layers tint —
+        /// every branch must set it, since a stale mask on a pooled/reused SpaceView would draw
+        /// the previous tile's outline.
         private void ApplyShapeAndFill(int id, SpaceMeta meta)
         {
             float rotZ = 0f;
             Sprite fillSprite;
             Sprite frameSprite;
             Sprite glowSprite;
+            Sprite silhouetteSprite;
 
             switch (meta.Type)
             {
@@ -1026,6 +1055,7 @@ namespace Magi.LedgeBoardGame.Board
                     fillSprite = LedgeSpriteFactory.GetBridgeFill(outerColor: complementColor, innerColor: ownColor);
                     frameSprite = LedgeSpriteFactory.BridgeFrame;
                     glowSprite = LedgeSpriteFactory.BridgeFrameGlow;
+                    silhouetteSprite = LedgeSpriteFactory.BridgeSilhouette;
                     break;
                 }
 
@@ -1036,14 +1066,20 @@ namespace Magi.LedgeBoardGame.Board
                     fillSprite = LedgeSpriteFactory.GetWallFill();
                     frameSprite = LedgeSpriteFactory.WallFrame;
                     glowSprite = LedgeSpriteFactory.WallFrameGlow;
+                    silhouetteSprite = LedgeSpriteFactory.WallSilhouette;
                     break;
                 }
 
                 case SpaceType.Center:
                 {
+                    // Every hex-family branch below shares HexSilhouette: plain and split hex
+                    // fills are baked from the same R/apothem, so one mask fits them all. Note
+                    // the visitor mask is NOT HexFrameGlow — that one is a soft boundary bloom,
+                    // not a solid shape (see LedgeSpriteFactory's class doc).
                     fillSprite = LedgeSpriteFactory.GetHexFill(LedgePalette.CenterSpaceFill);
                     frameSprite = LedgeSpriteFactory.HexFrame;
                     glowSprite = LedgeSpriteFactory.HexFrameGlow;
+                    silhouetteSprite = LedgeSpriteFactory.HexSilhouette;
                     break;
                 }
 
@@ -1061,6 +1097,7 @@ namespace Magi.LedgeBoardGame.Board
                     rotZ = 180f - 60f * meta.WedgeIndex;
                     frameSprite = LedgeSpriteFactory.HexFrame;
                     glowSprite = LedgeSpriteFactory.HexFrameGlow;
+                    silhouetteSprite = LedgeSpriteFactory.HexSilhouette;
                     break;
                 }
 
@@ -1079,6 +1116,7 @@ namespace Magi.LedgeBoardGame.Board
                     }
                     frameSprite = LedgeSpriteFactory.HexFrame;
                     glowSprite = LedgeSpriteFactory.HexFrameGlow;
+                    silhouetteSprite = LedgeSpriteFactory.HexSilhouette;
                     break;
                 }
 
@@ -1088,6 +1126,7 @@ namespace Magi.LedgeBoardGame.Board
                     fillSprite = LedgeSpriteFactory.GetHexFill(LedgePalette.GetOwnColor(meta.WedgeIndex));
                     frameSprite = LedgeSpriteFactory.HexFrame;
                     glowSprite = LedgeSpriteFactory.HexFrameGlow;
+                    silhouetteSprite = LedgeSpriteFactory.HexSilhouette;
                     break;
                 }
 
@@ -1096,6 +1135,7 @@ namespace Magi.LedgeBoardGame.Board
                     fillSprite = LedgeSpriteFactory.GetHexFill(LedgePalette.NeutralSpaceFill);
                     frameSprite = LedgeSpriteFactory.HexFrame;
                     glowSprite = LedgeSpriteFactory.HexFrameGlow;
+                    silhouetteSprite = LedgeSpriteFactory.HexSilhouette;
                     break;
                 }
             }
@@ -1121,6 +1161,9 @@ namespace Magi.LedgeBoardGame.Board
                 frameGlowImage.transform.localRotation = Quaternion.Euler(0f, 0f, rotZ);
             }
 
+            // Order matters: the mask must be current before the refresh reads it, or a pooled
+            // SpaceView reassigned to a different shape keeps its previous outline.
+            _visitorSilhouetteSprite = silhouetteSprite;
             RefreshVisitorSilhouetteLayers();
         }
 
