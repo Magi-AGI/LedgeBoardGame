@@ -944,7 +944,7 @@ namespace Magi.LedgeBoardGame
             EnsureBoardHaloes();
 
             gameHud?.UpdateHud(_gameState);
-            _youPanel?.UpdateFromState(_gameState, _localSeatId, networkMode == NetworkMode.Network);
+            PushYouPanelState();
             RefreshYouPanelCompactMode();
         }
 
@@ -1409,6 +1409,11 @@ namespace Magi.LedgeBoardGame
             HighlightReachableSpaces(_selectedReach, maxSteps, _selectedTone);
             HighlightSelectedSource();
             NotifyInHandGhost();
+            // Picking a stack up is a turn-flow state change ("Select a stack" →
+            // "Choose destination") but reaches neither UpdateStatusUI nor
+            // RefreshUndoButton, so the headline would otherwise stay on the
+            // pre-selection prompt for the whole time the stack is in hand.
+            RefreshTurnFlowUI();
         }
 
         private void ClearMovementSelection()
@@ -1420,6 +1425,9 @@ namespace Magi.LedgeBoardGame
             _selectedReachMax = 0;
             ClearHighlights();
             NotifyInHandGhost();
+            // Symmetric with SelectMovementSource: putting the stack back down
+            // has to walk the headline back to "Select a stack".
+            RefreshTurnFlowUI();
             ClearSourcePhantom();
         }
 
@@ -1948,7 +1956,7 @@ namespace Magi.LedgeBoardGame
             // info at all), and leaving it would strand a stale "TURN N · …".
             // UpdateFromState never raises LayoutChanged, so this cannot recurse.
             if (_gameState != null)
-                _youPanel.UpdateFromState(_gameState, _localSeatId, networkMode == NetworkMode.Network);
+                PushYouPanelState();
         }
 
         /// Build the bottom-left action belt and fold the existing scene-
@@ -1974,13 +1982,29 @@ namespace Magi.LedgeBoardGame
             go.transform.SetAsLastSibling();
             _actionBar = go.AddComponent<LedgeActionBar>();
 
-            // Adopt scene-assigned buttons. Both Ghost: the gold-halo Primary
-            // variant clashed against the cool-blue dream chrome, and the
-            // YouPanel + active-board halo already telegraph whose turn it is.
-            // Undo first so it sits to the LEFT of End Turn — End Turn is the
-            // commit affordance and conventionally hugs the BR corner.
+            // Adopt scene-assigned buttons, both Ghost to start. Undo first so
+            // it sits to the LEFT of End Turn — End Turn is the commit
+            // affordance and conventionally hugs the BR corner.
+            //
+            // An earlier pass adopted End Turn as Ghost permanently, on the
+            // grounds that the gold-halo Primary clashed with the cool-blue
+            // dream chrome and that the YouPanel + active-board halo already
+            // telegraph whose turn it is. CP066 revisits that, narrowly: the
+            // objection holds against Primary as a *standing* "it's your turn"
+            // treatment (always on, so always clashing, and redundant with the
+            // halo). It does not hold for Primary as a *transient* "this turn's
+            // work is done, commit it" state, which is information nothing else
+            // on screen carries — End Turn looked identical before and after a
+            // turn became committable. Gold is now rare and means one thing.
+            // See RefreshEndTurnAffordance / IsEndTurnCommittable.
             if (undoButton    != null) _actionBar.Adopt(undoButton,    LedgeButton.Variant.Ghost);
             if (endTurnButton != null) _actionBar.Adopt(endTurnButton, LedgeButton.Variant.Ghost);
+
+            // Adoption is what creates the LedgeButton helper, so the first
+            // affordance pass has to run after it — otherwise a turn that is
+            // already committable when the bar is built would sit Ghost until
+            // the next state change.
+            RefreshEndTurnAffordance();
 
             // Hide the legacy panel (background image + redundant phase/player/
             // status texts). GameHud's references stay valid — writes just go
@@ -2868,12 +2892,101 @@ namespace Magi.LedgeBoardGame
                 endTurnButton.interactable =
                     !(networkMode == NetworkMode.Network && _pendingSubmissions > 0);
             }
+
+            // Refresh the panel too, not just the button. Every site that flips
+            // _moveInProgress calls RefreshUndoButton — that is precisely the
+            // set of moments the "Resolving..." headline exists to describe, and
+            // routing them through the paired refresh is what makes that state
+            // actually reachable rather than only defined.
+            RefreshTurnFlowUI();
+        }
+
+        /// Push turn state into the You panel together with the two facts it
+        /// can't read off GameState: whether a source stack is currently picked
+        /// up, and whether the board is mid-resolve. Centralised so every
+        /// refresh path sends the same picture — the panel is a pure renderer
+        /// and must never reach back in for these.
+        private void PushYouPanelState()
+        {
+            if (_youPanel == null || _gameState == null) return;
+            _youPanel.UpdateFromState(
+                _gameState,
+                _localSeatId,
+                networkMode == NetworkMode.Network,
+                new LedgeYouPanel.TurnFlowHint(
+                    hasSelection: _selectedSpace.HasValue,
+                    isResolving: _moveInProgress));
+        }
+
+        /// The whole turn-flow read in one call: the You panel headline and the
+        /// End Turn variant. They describe the same situation from two corners
+        /// of the screen, so refreshing one without the other is always a bug —
+        /// call this rather than either half.
+        ///
+        /// Cheap and idempotent: the panel writes a handful of TMP strings and
+        /// SetVariant early-outs when the variant is unchanged, so the
+        /// overlapping call sites cost nothing.
+        private void RefreshTurnFlowUI()
+        {
+            PushYouPanelState();
+            RefreshEndTurnAffordance();
+        }
+
+        /// Presentation-only: is ending the turn the sensible next act right now?
+        ///
+        /// Deliberately NOT the same question as `endTurnButton.interactable`.
+        /// End Turn is *legal* for the whole movement phase, so driving the
+        /// accent off legality alone would leave the button gold almost always
+        /// and the signal would mean nothing. This asks the stronger question —
+        /// "has this turn's work actually been done" — so gold reads as
+        /// "you're finished, commit" rather than "this button exists".
+        ///
+        /// Nothing here writes `interactable`. Gating stays exactly where it
+        /// was (RefreshUndoButton's network-pending lock, GameHud.UpdateHud's
+        /// placement-complete lock, and OnEndTurnClicked's own guards), so this
+        /// cannot change what is clickable — only how it looks.
+        private bool IsEndTurnCommittable()
+        {
+            if (_gameState == null) return false;
+            if (_gameState.GameOver) return false;
+            // Mid-tween or mid-echo: the turn isn't settled yet.
+            if (_moveInProgress) return false;
+            // Network: a submission in flight, or simply not this seat's turn.
+            if (networkMode == NetworkMode.Network)
+            {
+                if (_pendingSubmissions > 0) return false;
+                if (!IsLocalSeatsTurn()) return false;
+            }
+
+            return _gameState.CurrentPhase == GamePhase.Placement
+                // Placement: both tones down. Mirrors GameHud's own gate, which
+                // is the real "you may end turn" rule for this phase.
+                ? _gameState.IsPlacementComplete()
+                // Movement: at least one move actually made this turn.
+                // CurrentTurnMoves is cleared by GameState.EndTurn, so this is
+                // per-turn and resets on rotation.
+                : _gameState.CurrentTurnMoves != null && _gameState.CurrentTurnMoves.Count > 0;
+        }
+
+        /// Swing End Turn between the quiet Ghost variant and the accent Primary
+        /// variant as the turn becomes committable. This is the non-text half of
+        /// CP066: a colour change in the corner the player's hand already sits
+        /// in, rather than another line of copy to read in the opposite corner.
+        private void RefreshEndTurnAffordance()
+        {
+            if (endTurnButton == null) return;
+            LedgeActionBar.SetVariant(
+                endTurnButton,
+                IsEndTurnCommittable() ? LedgeButton.Variant.Primary : LedgeButton.Variant.Ghost);
         }
 
         private void UpdateStatusUI()
         {
             gameHud?.UpdateHud(_gameState);
-            _youPanel?.UpdateFromState(_gameState, _localSeatId, networkMode == NetworkMode.Network);
+            // Presentation only — nothing on this path touches interactable, so
+            // click legality stays owned by GameHud.UpdateHud and
+            // RefreshUndoButton exactly as before.
+            RefreshTurnFlowUI();
             placementGhost?.Refresh(_gameState, _localSeatId);
             UpdateIdentityBadge();
             MaybeSignalPhaseBanner();
