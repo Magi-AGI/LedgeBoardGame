@@ -83,5 +83,25 @@ namespace Magi.LedgeBoardGame.UI
 
             LedgeButton.ApplyTo(button, variant, size);
         }
+
+        /// Restyle a button that <see cref="Adopt"/> already took, without
+        /// re-running adoption (which would re-parent and re-capture the label).
+        /// Used to swing End Turn between Ghost and Primary as the turn becomes
+        /// committable — the variant is the affordance, so it has to be able to
+        /// change after setup.
+        ///
+        /// Silently no-ops on a button that was never adopted: callers refresh
+        /// on every state change, including before the action bar exists.
+        public static void SetVariant(Button button, LedgeButton.Variant variant)
+        {
+            if (button == null) return;
+            var helper = button.GetComponent<LedgeButton>();
+            if (helper == null) return;
+            // Guard the assignment: the setter re-runs ApplyVariantStyle, and
+            // this is called from every board refresh. Idempotent either way,
+            // but there is no reason to rebuild the style each time.
+            if (helper.CurrentVariant == variant) return;
+            helper.CurrentVariant = variant;
+        }
     }
 }

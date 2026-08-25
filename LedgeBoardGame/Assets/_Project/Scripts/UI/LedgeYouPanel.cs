@@ -6,39 +6,92 @@ using UnityEngine.UI;
 
 namespace Magi.LedgeBoardGame.UI
 {
-    /// Top-left "You" panel — identity + current turn state. Folds the kit's
-    /// PlayerIdent + TurnBanner + phase/status text into a single chrome
-    /// surface that lives directly above the local player's board.
+    /// Top-left "You" panel — the turn-flow read. Answers one question loudly:
+    /// <em>what do I do now?</em>
     ///
-    /// Three rows:
-    ///   1. Section label "YOU" (or "PLAYER N" in hot-seat)
-    ///   2. Identity row — wedge swatch + display name
-    ///   3. Turn state row — Fraunces italic "Your turn" / "Player N's turn"
-    ///                       + body line ("place a counter", "make a move", …)
+    /// CP066 inverted this panel's hierarchy. It used to lead with identity —
+    /// caption "CURRENT PLAYER", the name, then "Player1's turn." at 22f in
+    /// full-strength Ink — and finish with the only line carrying new
+    /// information ("Pick a stack, then a valid destination.") at BodySize
+    /// 12.5f in InkFaint. Three rows restated who was playing; the actionable
+    /// row was the smallest and faintest thing in the panel.
+    ///
+    /// Rows now, top to bottom:
+    ///   1. Identity strip — wedge dot + name, with "TURN n · YOUR MOVE" right-
+    ///      aligned. One quiet row instead of three loud ones. Identity and
+    ///      wedge colour are still first-class, just no longer dominant.
+    ///   2. Action line — the state-specific instruction, at display weight
+    ///      (TurnBannerSize, Fraunces italic). This is the panel now.
+    ///   3. Tone tracker — placement only: which of Light/Dark is still owed.
+    ///   4. Sub line — short supporting detail, the row that is dropped first.
+    ///
+    /// Compact mode (Comparison view, 3+ seats) keeps rows 1-2 and drops 3-4.
+    /// It used to drop the instruction itself, which meant the configuration
+    /// with the most turn-order confusion got no next-action guidance at all.
+    /// The instruction is the one row that is NOT inferable from the board —
+    /// identity and turn number are both readable from nameplates and the
+    /// active-board glow — so it is the last thing sacrificed, not the first.
     [RequireComponent(typeof(RectTransform))]
     public class LedgeYouPanel : MonoBehaviour
     {
+        /// Turn-flow facts the panel cannot derive from GameState alone: they
+        /// live in GameController (selection buffer, tween/echo in flight).
+        /// Passed by value so the panel stays a pure renderer of pushed state
+        /// and never reaches back into the controller.
+        ///
+        /// default(TurnFlowHint) is all-false, which degrades to phase-generic
+        /// guidance rather than a wrong claim — safe for any caller that hasn't
+        /// been updated.
+        public readonly struct TurnFlowHint
+        {
+            /// Movement phase: a source stack is picked up and awaiting a destination.
+            public readonly bool HasSelection;
+            /// A move tween or network echo is in flight; the board is mid-resolve.
+            public readonly bool IsResolving;
+
+            public TurnFlowHint(bool hasSelection, bool isResolving)
+            {
+                HasSelection = hasSelection;
+                IsResolving = isResolving;
+            }
+        }
+
         private LedgeGlassPanel _panel;
         private TMP_Text _sectionLabel;
         private Image _wedgeDot;
         private TMP_Text _name;
-        private TMP_Text _turnLabel;
-        private TMP_Text _statusLabel;
+        private TMP_Text _actionLabel;
+        private TMP_Text _toneLabel;
+        private TMP_Text _subLabel;
 
         private bool _compact;
 
-        // Full chrome vs the slim Comparison-view variant. Compact drops the
-        // turn/status rows (their content folds into the section caption), so
-        // the panel stops crowding the SEATS strip at 3+ seats.
+        // Full chrome vs the slim Comparison-view variant. Compact keeps the
+        // identity strip + action line and drops the tone tracker / sub line,
+        // so the panel stops crowding the SEATS strip at 3+ seats.
         private const float PanelWidth = 360f;
         private const float FullHeight = 130f;
-        private const float CompactHeight = 70f;
+        private const float CompactHeight = 80f;
+
+        // Row geometry, in content-local space (the glass panel insets its
+        // content by PanelPadX/PanelPadY, so y=0 is already inside the padding).
+        private const float ActionY_Full = -26f;
+        private const float ActionY_Compact = -22f;
+        private const float ActionH_Full = 40f;
+        private const float ActionH_Compact = 28f;
+        private const float ActionSizeMax_Full = LedgeUITokens.TurnBannerSize; // 32f
+        private const float ActionSizeMax_Compact = 22f;
+        private const float ActionSizeMin = 16f;
+        // The sub line sits under the tone tracker during placement and slides
+        // up into its slot when the tracker is hidden, so movement states don't
+        // show a gap where the tracker would have been.
+        private const float ToneY = -70f;
+        private const float SubY_WithTone = -88f;
+        private const float SubY_NoTone = -70f;
 
         private void Awake() => EnsureBuilt();
 
-        /// Slim the top-left panel for Comparison view at 3+ seats. Keeps the
-        /// section caption + identity row and folds the turn line into the
-        /// caption (see UpdateFromState). Full mode is unchanged.
+        /// Slim the top-left panel for Comparison view at 3+ seats.
         public void SetCompactMode(bool compact)
         {
             EnsureBuilt();
@@ -50,8 +103,26 @@ namespace Magi.LedgeBoardGame.UI
 
             var rt = (RectTransform)transform;
             rt.sizeDelta = new Vector2(PanelWidth, _compact ? CompactHeight : FullHeight);
-            if (_turnLabel != null) _turnLabel.gameObject.SetActive(!_compact);
-            if (_statusLabel != null) _statusLabel.gameObject.SetActive(!_compact);
+
+            // Rows 3 and 4 are the expendable ones. Row 2 (the instruction)
+            // stays visible in both modes — that is the whole point of CP066.
+            // Only the compact direction is forced here; in full mode their
+            // visibility is UpdateFromState's call (the tracker is placement-
+            // only, the sub line is empty in some states), so forcing them on
+            // would flash a stale row between a mode flip and the next push.
+            if (_compact)
+            {
+                if (_toneLabel != null) _toneLabel.gameObject.SetActive(false);
+                if (_subLabel != null) _subLabel.gameObject.SetActive(false);
+            }
+
+            if (_actionLabel != null)
+            {
+                var aRt = _actionLabel.rectTransform;
+                aRt.anchoredPosition = new Vector2(0f, _compact ? ActionY_Compact : ActionY_Full);
+                aRt.sizeDelta = new Vector2(0f, _compact ? ActionH_Compact : ActionH_Full);
+                _actionLabel.fontSizeMax = _compact ? ActionSizeMax_Compact : ActionSizeMax_Full;
+            }
         }
 
         public void EnsureBuilt()
@@ -64,7 +135,7 @@ namespace Magi.LedgeBoardGame.UI
             rt.anchorMax = new Vector2(0f, 1f);
             rt.pivot     = new Vector2(0f, 1f);
             rt.anchoredPosition = new Vector2(LedgeUITokens.PanelEdgeInset, -LedgeUITokens.PanelEdgeInset);
-            rt.sizeDelta = new Vector2(360f, 130f);
+            rt.sizeDelta = new Vector2(PanelWidth, FullHeight);
 
             _panel = LedgeGlassPanel.Build(transform, "Glass");
             // Stretch the panel to fill this RectTransform.
@@ -76,70 +147,106 @@ namespace Magi.LedgeBoardGame.UI
 
             var content = _panel.Content;
 
-            // Section label (small, mono, dim, uppercase)
-            _sectionLabel = MakeText(content, "SectionLabel", LedgeUITokens.MonoFont,
-                LedgeUITokens.SectionLabelSize, LedgeUITokens.InkDim, "YOU");
-            _sectionLabel.fontStyle = FontStyles.UpperCase;
-            _sectionLabel.characterSpacing = 22; // ~0.22em
-            var sRt = _sectionLabel.rectTransform;
-            sRt.anchorMin = new Vector2(0f, 1f);
-            sRt.anchorMax = new Vector2(1f, 1f);
-            sRt.pivot     = new Vector2(0f, 1f);
-            sRt.anchoredPosition = new Vector2(0f, 0f);
-            sRt.sizeDelta = new Vector2(0f, 14f);
-
-            // Identity row: wedge dot + name
+            // ── Row 1: identity strip (dot + name … turn meta) ──────────
             var identGo = new GameObject("Ident", typeof(RectTransform));
             var identRt = (RectTransform)identGo.transform;
             identRt.SetParent(content, false);
             identRt.anchorMin = new Vector2(0f, 1f);
             identRt.anchorMax = new Vector2(1f, 1f);
             identRt.pivot     = new Vector2(0f, 1f);
-            identRt.anchoredPosition = new Vector2(0f, -18f);
-            identRt.sizeDelta = new Vector2(0f, 24f);
+            identRt.anchoredPosition = new Vector2(0f, 0f);
+            identRt.sizeDelta = new Vector2(0f, 18f);
 
-            _wedgeDot = MakeWedgeDot(identRt, 18f);
+            _wedgeDot = MakeWedgeDot(identRt, 11f);
             var dRt = _wedgeDot.rectTransform;
             dRt.anchorMin = new Vector2(0f, 0.5f);
             dRt.anchorMax = new Vector2(0f, 0.5f);
             dRt.pivot     = new Vector2(0f, 0.5f);
             dRt.anchoredPosition = new Vector2(0f, 0f);
 
+            // Name is demoted from IdentNameSize/Ink to body weight — still
+            // bold and full-strength enough to read as identity, no longer
+            // competing with the instruction below it.
             _name = MakeText(identRt, "Name", LedgeUITokens.UIFont,
-                LedgeUITokens.IdentNameSize, LedgeUITokens.Ink, "—");
+                LedgeUITokens.BodySize, LedgeUITokens.Ink, "—");
             _name.fontStyle = FontStyles.Bold;
+            _name.overflowMode = TextOverflowModes.Ellipsis;
             var nRt = _name.rectTransform;
             nRt.anchorMin = new Vector2(0f, 0f);
             nRt.anchorMax = new Vector2(1f, 1f);
             nRt.pivot     = new Vector2(0f, 0.5f);
-            nRt.offsetMin = new Vector2(28f, 0f); // dot width + gap
-            nRt.offsetMax = new Vector2(0f, 0f);
+            // Right inset reserves the turn-meta column so long names ellipsize
+            // instead of colliding with "TURN n · YOUR MOVE".
+            nRt.offsetMin = new Vector2(18f, 0f);
+            nRt.offsetMax = new Vector2(-132f, 0f);
 
-            // Turn line: Fraunces italic
-            _turnLabel = MakeText(content, "TurnLabel", LedgeUITokens.DisplayFont,
-                22f, LedgeUITokens.Ink, "");
-            _turnLabel.fontStyle = FontStyles.Italic;
-            var tRt = _turnLabel.rectTransform;
+            // Turn meta, right-aligned on the same row. Carries the active-seat
+            // accent (see UpdateFromState).
+            _sectionLabel = MakeText(identRt, "TurnMeta", LedgeUITokens.MonoFont,
+                LedgeUITokens.SectionLabelSize, LedgeUITokens.InkDim, "");
+            _sectionLabel.fontStyle = FontStyles.UpperCase;
+            _sectionLabel.characterSpacing = 14;
+            _sectionLabel.alignment = TextAlignmentOptions.MidlineRight;
+            var sRt = _sectionLabel.rectTransform;
+            sRt.anchorMin = new Vector2(0f, 0f);
+            sRt.anchorMax = new Vector2(1f, 1f);
+            sRt.pivot     = new Vector2(0f, 0.5f);
+            sRt.offsetMin = new Vector2(0f, 0f);
+            sRt.offsetMax = new Vector2(0f, 0f);
+
+            // ── Row 2: the action line — the panel's dominant read ──────
+            _actionLabel = MakeText(content, "ActionLabel", LedgeUITokens.DisplayFont,
+                ActionSizeMax_Full, LedgeUITokens.Ink, "");
+            _actionLabel.fontStyle = FontStyles.Italic;
+            // Autosizing rather than a fixed size: "Waiting for <long name>" and
+            // "Choose destination" have very different widths, and a 360px panel
+            // has to hold both without clipping. Shrink first, ellipsize only if
+            // the floor is reached.
+            _actionLabel.enableAutoSizing = true;
+            _actionLabel.fontSizeMin = ActionSizeMin;
+            _actionLabel.fontSizeMax = ActionSizeMax_Full;
+            _actionLabel.overflowMode = TextOverflowModes.Ellipsis;
+            var tRt = _actionLabel.rectTransform;
             tRt.anchorMin = new Vector2(0f, 1f);
             tRt.anchorMax = new Vector2(1f, 1f);
             tRt.pivot     = new Vector2(0f, 1f);
-            tRt.anchoredPosition = new Vector2(0f, -50f);
-            tRt.sizeDelta = new Vector2(0f, 28f);
+            tRt.anchoredPosition = new Vector2(0f, ActionY_Full);
+            tRt.sizeDelta = new Vector2(0f, ActionH_Full);
 
-            // Status line (smaller, faint)
-            _statusLabel = MakeText(content, "StatusLabel", LedgeUITokens.UIFont,
+            // ── Row 3: placement tone tracker ───────────────────────────
+            // Deliberately text + colour rather than drawn pips: the mono font
+            // asset's glyph table is not guaranteed to carry ✓/●/○, and a
+            // missing glyph renders as a fallback box. Rich-text colour and
+            // <s> are engine features, not font features, so they can't fail
+            // that way.
+            _toneLabel = MakeText(content, "ToneTracker", LedgeUITokens.MonoFont,
+                LedgeUITokens.SectionLabelSize, LedgeUITokens.InkDim, "");
+            _toneLabel.fontStyle = FontStyles.UpperCase;
+            _toneLabel.characterSpacing = 18;
+            _toneLabel.richText = true;
+            var toRt = _toneLabel.rectTransform;
+            toRt.anchorMin = new Vector2(0f, 1f);
+            toRt.anchorMax = new Vector2(1f, 1f);
+            toRt.pivot     = new Vector2(0f, 1f);
+            toRt.anchoredPosition = new Vector2(0f, ToneY);
+            toRt.sizeDelta = new Vector2(0f, 16f);
+
+            // ── Row 4: sub line ─────────────────────────────────────────
+            _subLabel = MakeText(content, "SubLabel", LedgeUITokens.UIFont,
                 LedgeUITokens.BodySize, LedgeUITokens.InkFaint, "");
-            var stRt = _statusLabel.rectTransform;
+            _subLabel.overflowMode = TextOverflowModes.Ellipsis;
+            var stRt = _subLabel.rectTransform;
             stRt.anchorMin = new Vector2(0f, 1f);
             stRt.anchorMax = new Vector2(1f, 1f);
             stRt.pivot     = new Vector2(0f, 1f);
-            stRt.anchoredPosition = new Vector2(0f, -82f);
-            stRt.sizeDelta = new Vector2(0f, 18f);
+            stRt.anchoredPosition = new Vector2(0f, SubY_NoTone);
+            stRt.sizeDelta = new Vector2(0f, 16f);
         }
 
         /// Push the latest game state into the panel. Call from GameController
         /// alongside existing GameHud.UpdateHud calls.
-        public void UpdateFromState(GameState state, int localSeatId, bool isNetworkMode)
+        public void UpdateFromState(GameState state, int localSeatId, bool isNetworkMode,
+                                    TurnFlowHint hint = default)
         {
             EnsureBuilt();
             if (state == null) return;
@@ -160,7 +267,6 @@ namespace Magi.LedgeBoardGame.UI
                 you = state.GetCurrentPlayer();
             }
 
-            _sectionLabel.text = isNetworkMode ? "YOU" : "CURRENT PLAYER";
             _name.text = you != null ? you.Name : "—";
 
             // Wedge color — derived from the player's board if we can find it.
@@ -184,41 +290,130 @@ namespace Magi.LedgeBoardGame.UI
             }
             _wedgeDot.color = LedgePalette.GetOwnColor(wedge);
 
-            // Turn state
             int currentId = state.CurrentPlayerId;
-            bool itsYourTurn = isNetworkMode && currentId == localSeatId;
             string activeName = state.GetCurrentPlayer()?.Name ?? $"Player {currentId}";
-            _turnLabel.text = itsYourTurn ? "Your turn." : $"{activeName}'s turn.";
-            _turnLabel.color = itsYourTurn ? LedgeUITokens.Accent : LedgeUITokens.Ink;
 
-            // Compact mode hides the turn row, so fold the turn line into the
-            // section caption instead. The full-mode caption set above is left
-            // exactly as-is; this only overrides it when compact.
-            if (_compact)
-            {
-                _sectionLabel.text = itsYourTurn
-                    ? $"TURN {state.TurnNumber} · YOUR MOVE"
-                    : $"TURN {state.TurnNumber} · {activeName.ToUpperInvariant()}'S MOVE";
-            }
+            // The seat this panel represents is the acting seat. In hot-seat the
+            // panel already shows the current player, so it is always active —
+            // previously this was `isNetworkMode && …`, which made the accent
+            // treatment unreachable in local play, the mode most sessions run in.
+            bool seatIsActive = !isNetworkMode || currentId == localSeatId;
+            bool waiting = isNetworkMode && !seatIsActive;
 
-            // Status / phase guidance
-            string statusStr;
+            _sectionLabel.text = waiting
+                ? $"Turn {state.TurnNumber}"
+                : $"Turn {state.TurnNumber} · Your move";
+            _sectionLabel.color = (seatIsActive && !state.GameOver)
+                ? LedgeUITokens.Accent
+                : LedgeUITokens.InkDim;
+
+            // ── The action line ─────────────────────────────────────────
+            // Ordering is precedence, not phase: game-over and not-your-turn
+            // outrank everything, and a resolving board outranks any prompt to
+            // act (telling someone to "Place Dark" mid-tween invites a click
+            // the controller will reject).
+            string action;
+            string sub;
+            Color actionColor = LedgeUITokens.Ink;
+            bool showTones = false;
+
             if (state.GameOver)
             {
-                statusStr = state.WinnerId.HasValue
-                    ? $"Game over — winner: Player {state.WinnerId.Value}"
-                    : "Game over.";
+                action = "Game over";
+                sub = state.WinnerId.HasValue
+                    ? $"Winner: Player {state.WinnerId.Value}"
+                    : "No winner.";
+            }
+            else if (waiting)
+            {
+                action = $"Waiting for {activeName}";
+                sub = "";
+                actionColor = LedgeUITokens.AccentCool;
+            }
+            else if (hint.IsResolving)
+            {
+                // Plain ASCII: the display font asset is not guaranteed to carry
+                // U+2026, and a missing glyph reads as a box.
+                action = "Resolving...";
+                sub = "";
+                actionColor = LedgeUITokens.InkFaint;
             }
             else if (state.CurrentPhase == GamePhase.Placement)
             {
-                statusStr = "Place one Light and one Dark. Same space stacks.";
+                showTones = true;
+                bool light = state.HasPlacedLight;
+                bool dark = state.HasPlacedDark;
+                if (!light)
+                {
+                    // Checked first so a Dark-first placement still reads correctly.
+                    action = "Place Light";
+                    sub = "Same space stacks.";
+                }
+                else if (!dark)
+                {
+                    action = "Place Dark";
+                    sub = "Same space stacks.";
+                }
+                else
+                {
+                    action = "Ready to end turn";
+                    sub = "Both tones placed.";
+                    actionColor = LedgeUITokens.Accent;
+                }
             }
             else
             {
-                statusStr = "Pick a stack, then a valid destination.";
+                if (hint.HasSelection)
+                {
+                    action = "Choose destination";
+                    sub = "Highlighted spaces are in reach.";
+                }
+                else
+                {
+                    action = "Select a stack";
+                    sub = "Highlighted stacks can move.";
+                }
             }
-            _statusLabel.text = statusStr;
+
+            _actionLabel.text = action;
+            _actionLabel.color = actionColor;
+
+            if (showTones) _toneLabel.text = BuildToneTracker(state);
+
+            // Compact drops rows 3-4 wholesale; SetCompactMode owns that and must
+            // not be undone here.
+            if (!_compact)
+            {
+                _toneLabel.gameObject.SetActive(showTones);
+                _subLabel.gameObject.SetActive(!string.IsNullOrEmpty(sub));
+                _subLabel.rectTransform.anchoredPosition =
+                    new Vector2(0f, showTones ? SubY_WithTone : SubY_NoTone);
+            }
+            _subLabel.text = sub;
         }
+
+        /// "LIGHT   DARK" with the owed tone in accent and any placed tone
+        /// struck through and dimmed. Answers "which token am I placing next"
+        /// from the guidance surface instead of only from the cursor ghost.
+        private static string BuildToneTracker(GameState state)
+        {
+            string light = state.HasPlacedLight
+                ? Done("Light")
+                : Next("Light");
+            string dark = state.HasPlacedDark
+                ? Done("Dark")
+                : (state.HasPlacedLight ? Next("Dark") : Pending("Dark"));
+            return light + "   " + dark;
+        }
+
+        private static string Done(string s) =>
+            $"<s><color=#{ColorUtility.ToHtmlStringRGBA(LedgeUITokens.InkDim)}>{s}</color></s>";
+
+        private static string Next(string s) =>
+            $"<color=#{ColorUtility.ToHtmlStringRGBA(LedgeUITokens.Accent)}>{s}</color>";
+
+        private static string Pending(string s) =>
+            $"<color=#{ColorUtility.ToHtmlStringRGBA(LedgeUITokens.InkMute)}>{s}</color>";
 
         // ── Helpers ──────────────────────────────────────────────────────
         private static TMP_Text MakeText(Transform parent, string name, TMP_FontAsset font,
