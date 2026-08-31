@@ -184,8 +184,8 @@ MonoBehaviour:
   pulseMinAlpha: 0.25
   pulseMaxAlpha: 0.85
   sourceBreatheHz: 0.7
-  sourceMinAlpha: 0.15
-  sourceMaxAlpha: 0.55
+  sourceMinAlpha: 0
+  sourceMaxAlpha: 0.08
   onClicked:
     m_PersistentCalls:
       m_Calls: []
