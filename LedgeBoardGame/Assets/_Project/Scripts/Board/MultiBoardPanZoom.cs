@@ -21,6 +21,8 @@ namespace Magi.LedgeBoardGame.Board
         [Tooltip("Multiplier applied to the auto-fit scale so boards don't bleed into the HUD chrome. ~0.9 = roughly one zoomStep less than a tight fit.")]
         [SerializeField] private float fitScaleMultiplier = 0.9f;
         [SerializeField] private KeyCode recenterKey = KeyCode.F;
+        [Tooltip("Gap kept between fitted board content and the bottom-left StatusLog panel.")]
+        [SerializeField] private float bottomLeftChromeClearance = 24f;
 
         // BoardPresenter.EnsureVisitorPill anchors the visitor pill at
         // (0, ledgeRadius + 130f) — 130f beyond the board's own radius —
@@ -45,6 +47,12 @@ namespace Magi.LedgeBoardGame.Board
         private const float PredictedVisitorPillHeadroom = 170f;
 
         private RectTransform _rect;
+        // Bottom-left screen chrome the fit has to stay clear of. Resolved
+        // lazily (the log is created by GameController.EnsureStatusLog after
+        // the presenters exist) and re-resolved if it is ever destroyed —
+        // Unity's overloaded null covers both cases.
+        private StatusLog _statusLogChrome;
+        private static readonly Vector3[] _chromeWorldCorners = new Vector3[4];
         private RectTransform _viewportRect;
         private MultiBoardLayout _layout;
         private bool _dragging;
@@ -230,6 +238,7 @@ namespace Magi.LedgeBoardGame.Board
 
             _rect.localScale = new Vector3(scale, scale, 1f);
             _rect.anchoredPosition = Vector2.zero;
+            AvoidBottomLeftChrome(minX, maxX, minY, maxY, scale);
             // Any per-board pan residue is now inconsistent with the
             // fresh container fit — reset so boards start uniform. Same
             // inactive guard as the sampling loop above, for consistency —
@@ -303,6 +312,120 @@ namespace Magi.LedgeBoardGame.Board
             maxX = Mathf.Max(maxX, boardPos.x + localMaxX);
             minY = Mathf.Min(minY, boardPos.y + localMinY);
             maxY = Mathf.Max(maxY, boardPos.y + localMaxY);
+        }
+
+        /// The visitor pill is board-anchored, so reserving room for it inside
+        /// AccumulateBoardBounds is enough. The StatusLog is *screen*-anchored
+        /// bottom-left and painted last (GameController.EnsureStatusLog calls
+        /// SetAsLastSibling), so a centered fit happily parks the leftmost
+        /// board's nameplate underneath it — the lower-left overlap on Design's
+        /// CP068 ledger. Its background is also a raycast target, so anything it
+        /// covers is unclickable, not merely hidden.
+        ///
+        /// Nudge, don't rescale: the three escapes are tried cheapest-first so
+        /// the common case costs nothing but a small offset.
+        ///   1. Lift. Preferred even when a sideways nudge would be shorter —
+        ///      the fit already reserves visitor-pill headroom at the top, and
+        ///      sliding right walks the far board toward the bottom-right
+        ///      action bar (the other screen-anchored corner panel).
+        ///   2. Nudge right, if the lift would push content off the top.
+        ///   3. Shrink just enough that the lift fits, then lift. Measured at
+        ///      1920x1080 this never triggers for 1-4 seats or Comparison view;
+        ///      it exists so an unusually tall content box degrades to smaller
+        ///      boards rather than to a re-covered nameplate.
+        /// Clamped at minScale, so a viewport too short for both the content and
+        /// the log keeps the log's footprint and accepts residual overlap.
+        private void AvoidBottomLeftChrome(float minX, float maxX, float minY, float maxY, float scale)
+        {
+            if (!TryGetBottomLeftChromeRect(out var chrome)) return;
+
+            var view = _viewportRect.rect;
+            var content = ContentRectInViewport(minX, maxX, minY, maxY);
+            if (!content.Overlaps(chrome)) return;
+
+            float needUp = chrome.yMax - content.yMin;
+            float slackUp = view.yMax - content.yMax;
+            if (needUp <= slackUp)
+            {
+                _rect.anchoredPosition += new Vector2(0f, needUp);
+                return;
+            }
+
+            float needRight = chrome.xMax - content.xMin;
+            float slackRight = view.xMax - content.xMax;
+            if (needRight <= slackRight)
+            {
+                _rect.anchoredPosition += new Vector2(needRight, 0f);
+                return;
+            }
+
+            // Content that spans more than the chrome-free height can't clear
+            // the log by translation alone. Solve for the scale that makes it
+            // exactly fit the band above the log, then re-measure and lift.
+            float spanY = Mathf.Max(1f, maxY - minY);
+            float shrunk = Mathf.Clamp((view.yMax - chrome.yMax) / spanY, minScale, scale);
+            if (shrunk < scale)
+            {
+                _rect.localScale = new Vector3(shrunk, shrunk, 1f);
+                content = ContentRectInViewport(minX, maxX, minY, maxY);
+            }
+            float lift = Mathf.Min(chrome.yMax - content.yMin, Mathf.Max(0f, view.yMax - content.yMax));
+            if (lift > 0f) _rect.anchoredPosition += new Vector2(0f, lift);
+        }
+
+        /// The accumulated board bounds, expressed in the viewport's local
+        /// space so they can be compared against screen-anchored chrome.
+        /// Adding _rect.rect.center converts from the anchoredPosition space
+        /// AccumulateBoardBounds works in (children anchored at the container's
+        /// center) to the container's own local space, which is the same thing
+        /// only when the container's pivot is centered.
+        private Rect ContentRectInViewport(float minX, float maxX, float minY, float maxY)
+        {
+            var a = ContainerToViewport(new Vector2(minX, minY));
+            var b = ContainerToViewport(new Vector2(maxX, maxY));
+            return Rect.MinMaxRect(
+                Mathf.Min(a.x, b.x), Mathf.Min(a.y, b.y),
+                Mathf.Max(a.x, b.x), Mathf.Max(a.y, b.y));
+        }
+
+        private Vector2 ContainerToViewport(Vector2 containerPoint)
+        {
+            var world = _rect.TransformPoint(containerPoint + _rect.rect.center);
+            return _viewportRect.InverseTransformPoint(world);
+        }
+
+        /// The StatusLog's live rect in viewport-local space, padded by
+        /// bottomLeftChromeClearance. Read off the real RectTransform rather
+        /// than re-deriving it from LedgeUITokens so the two can't drift apart
+        /// if the panel is ever resized or re-anchored. False when the log is
+        /// absent or hidden (showEventLog = false), which correctly gives the
+        /// boards the whole viewport back.
+        private bool TryGetBottomLeftChromeRect(out Rect chrome)
+        {
+            chrome = default;
+            if (_viewportRect == null) return false;
+            if (_statusLogChrome == null)
+                _statusLogChrome = FindFirstObjectByType<StatusLog>(FindObjectsInactive.Exclude);
+            if (_statusLogChrome == null || !_statusLogChrome.gameObject.activeInHierarchy) return false;
+
+            var logRect = _statusLogChrome.transform as RectTransform;
+            if (logRect == null) return false;
+
+            logRect.GetWorldCorners(_chromeWorldCorners);
+            float minX = float.PositiveInfinity, minY = float.PositiveInfinity;
+            float maxX = float.NegativeInfinity, maxY = float.NegativeInfinity;
+            for (int i = 0; i < 4; i++)
+            {
+                var local = _viewportRect.InverseTransformPoint(_chromeWorldCorners[i]);
+                minX = Mathf.Min(minX, local.x);
+                maxX = Mathf.Max(maxX, local.x);
+                minY = Mathf.Min(minY, local.y);
+                maxY = Mathf.Max(maxY, local.y);
+            }
+            chrome = Rect.MinMaxRect(
+                minX - bottomLeftChromeClearance, minY - bottomLeftChromeClearance,
+                maxX + bottomLeftChromeClearance, maxY + bottomLeftChromeClearance);
+            return true;
         }
 
 #if ENABLE_INPUT_SYSTEM
