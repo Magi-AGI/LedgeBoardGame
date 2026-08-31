@@ -70,10 +70,29 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private float validTargetFadeInDelay = 0.6f;
         [SerializeField] private float validTargetFadeDuration = 0.35f;
 
-        [Header("Movable-source breathe")]
+        // CP067 designfix: the diffuse frameGlowImage breathe below is disabled down
+        // to a near-inert residual haze — Claude Design found gold-on-warm-haze had
+        // almost no hue contrast on the white center tile, camouflaging the rim it
+        // was meant to support. The crisp rim/keyline below now carries the cue alone.
+        [Header("Movable-source breathe (secondary glow, near-disabled)")]
         [SerializeField] private float sourceBreatheHz = 0.7f;
-        [SerializeField] private float sourceMinAlpha = 0.15f;
-        [SerializeField] private float sourceMaxAlpha = 0.55f;
+        [SerializeField] private float sourceMinAlpha = 0.0f;
+        [SerializeField] private float sourceMaxAlpha = 0.08f;
+
+        // CP067 designfix: primary movable-source cue. Same CP064 primitive as the
+        // visitor rim — copies of the tile's own fillImage sprite/rotation stacked
+        // behind the opaque tile face — so only a crisp outboard band shows and it is
+        // automatically correct on hex / bridge 12-gon / wall silhouettes. Widened
+        // and raised to a near-full alpha floor (Claude Design pass 2: the first
+        // tuning's 0.60 alpha floor and 1.125 scale were crop-legible but did not
+        // read as a locator at normal gameplay framing on the small center hex).
+        [Header("Movable-source Rim (CP067)")]
+        [SerializeField] private float sourceKeylineScale = 1.06f;
+        [SerializeField] private float sourceRimScale = 1.16f;
+        [SerializeField] private float sourceRimAlphaMin = 0.85f;
+        [SerializeField] private float sourceRimAlphaMax = 1.0f;
+        [SerializeField] private float sourceRimPulsePeriodSeconds = 1.6f;
+        [SerializeField] private float sourceKeylineAlpha = 0.95f;
 
         // CP064 replacement (Claude Design "silhouette-matched keyline rim +
         // one-shot silhouette shockwave"): all three visitor layers reuse the
@@ -137,6 +156,10 @@ namespace Magi.LedgeBoardGame.Board
             _selected = false;
             _validTargetIntensity = 0f;
             _movableSource = false;
+            // Field assignment above bypasses SetMovableSource, so reset the rim
+            // explicitly — a pooled/reused SpaceView must not inherit the previous
+            // occupant's source band.
+            DeactivateSourceRim();
             ApplyFrameVisual();
             UpdateFrameGlow(instant: true);
 
@@ -410,6 +433,10 @@ namespace Magi.LedgeBoardGame.Board
         {
             if (_movableSource == active) return;
             _movableSource = active;
+            if (active)
+                ActivateSourceRim();
+            else
+                DeactivateSourceRim();
             UpdateFrameGlow(instant: !active);
         }
 
@@ -457,8 +484,9 @@ namespace Magi.LedgeBoardGame.Board
 
         // Board background near-black family (#0F0D0A) — the keyline's only
         // job is to separate the accent rim from the wedge fill, never to add
-        // its own hue.
-        private static readonly Color VisitorKeylineColor = new Color(0.0588f, 0.0510f, 0.0392f, 1f);
+        // its own hue. Shared by the visitor rim (CP064) and the movable-source
+        // rim (CP067), which use the same silhouette-band primitive.
+        private static readonly Color SilhouetteKeylineColor = new Color(0.0588f, 0.0510f, 0.0392f, 1f);
 
         public void SetVisitorOverlay(Color accent, float alpha = 0.5f)
         {
@@ -481,7 +509,7 @@ namespace Magi.LedgeBoardGame.Board
             }
             if (_visitorKeylineImage != null)
             {
-                _visitorKeylineImage.color = new Color(VisitorKeylineColor.r, VisitorKeylineColor.g, VisitorKeylineColor.b, visitorKeylineAlpha);
+                _visitorKeylineImage.color = new Color(SilhouetteKeylineColor.r, SilhouetteKeylineColor.g, SilhouetteKeylineColor.b, visitorKeylineAlpha);
                 _visitorKeylineImage.rectTransform.localScale = Vector3.one * visitorKeylineScale;
                 _visitorKeylineImage.gameObject.SetActive(true);
             }
@@ -533,40 +561,52 @@ namespace Magi.LedgeBoardGame.Board
             }
         }
 
-        // Creation order matters: SetSiblingIndex(0) then (1) then (2), in
-        // Wave/Rim/Keyline order, pushes each new layer in front of the last
-        // while shifting Fill/Frame/FrameGlow later — the net result is
-        // Wave(0), Rim(1), Keyline(2), Fill(3+), regardless of how many
-        // siblings shapeRoot already had. This runs once, lazily, on first
-        // visitor use per tile.
+        // Runs once, lazily, on first visitor use per tile. Draw order is not set
+        // here — ApplyUnderlayOrder() owns it, because the movable-source rim
+        // (CP067) shares the same underlay stack and the two can be created in
+        // either order.
         private void EnsureVisitorRimLayers()
         {
             if (_visitorWaveImage != null && _visitorRimImage != null && _visitorKeylineImage != null) return;
             if (fillImage == null || shapeRoot == null) return;
 
-            if (_visitorWaveImage == null)
-            {
-                _visitorWaveImage = CreateVisitorSilhouetteChild("VisitorWave");
-                _visitorWaveImage.transform.SetSiblingIndex(0);
-            }
-            if (_visitorRimImage == null)
-            {
-                _visitorRimImage = CreateVisitorSilhouetteChild("VisitorRim");
-                _visitorRimImage.transform.SetSiblingIndex(1);
-            }
-            if (_visitorKeylineImage == null)
-            {
-                _visitorKeylineImage = CreateVisitorSilhouetteChild("VisitorKeyline");
-                _visitorKeylineImage.transform.SetSiblingIndex(2);
-            }
+            // Explicit `== null` (not `??=`): Image is a UnityEngine.Object, whose
+            // overloaded equality also reports a destroyed-but-not-collected layer
+            // as null so it gets recreated.
+            if (_visitorWaveImage == null) _visitorWaveImage = CreateSilhouetteChild("VisitorWave");
+            if (_visitorRimImage == null) _visitorRimImage = CreateSilhouetteChild("VisitorRim");
+            if (_visitorKeylineImage == null) _visitorKeylineImage = CreateSilhouetteChild("VisitorKeyline");
+            ApplyUnderlayOrder();
+        }
+
+        // Underlay draw order, back → front, all of it behind the opaque tile
+        // face (Fill/Frame/FrameGlow follow). Assigning ascending sibling
+        // indices in this order pushes each layer in front of the previous one
+        // while shifting Fill/Frame/FrameGlow later, regardless of how many
+        // siblings shapeRoot already had or which layers exist yet.
+        //
+        // Movable-source layers sit in *front* of the visitor layers: on a tile
+        // that is both a visitor entry and a movable source, sourceRimScale
+        // (1.16) fully covers the visitor rim (1.115), so the actionable source
+        // locator wins the band outright instead of the two cues interleaving
+        // into an unreadable stripe sandwich.
+        private void ApplyUnderlayOrder()
+        {
+            int idx = 0;
+            if (_visitorWaveImage != null) _visitorWaveImage.transform.SetSiblingIndex(idx++);
+            if (_visitorRimImage != null) _visitorRimImage.transform.SetSiblingIndex(idx++);
+            if (_visitorKeylineImage != null) _visitorKeylineImage.transform.SetSiblingIndex(idx++);
+            if (_sourceRimImage != null) _sourceRimImage.transform.SetSiblingIndex(idx++);
+            if (_sourceKeylineImage != null) _sourceKeylineImage.transform.SetSiblingIndex(idx++);
         }
 
         // Reuses fillImage's own sprite so the overlay always matches the
         // tile's real silhouette — hex, bespoke bridge 12-gon, or bespoke wall
         // hexagon — with no per-shape special-casing. Uniform scale only (no
         // independent x/y, no position offset): any asymmetry breaks the
-        // constant-band illusion on the bespoke polys.
-        private Image CreateVisitorSilhouetteChild(string name)
+        // constant-band illusion on the bespoke polys. Shared by the visitor
+        // rim (CP064) and the movable-source rim (CP067).
+        private Image CreateSilhouetteChild(string name)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             var rt = (RectTransform)go.transform;
@@ -582,11 +622,11 @@ namespace Magi.LedgeBoardGame.Board
             img.color = new Color(0f, 0f, 0f, 0f);
             go.SetActive(false);
 
-            ApplyVisitorSilhouetteTransform(rt);
+            ApplySilhouetteTransform(rt);
             return img;
         }
 
-        private void ApplyVisitorSilhouetteTransform(RectTransform rt)
+        private void ApplySilhouetteTransform(RectTransform rt)
         {
             if (fillImage == null) return;
             rt.sizeDelta = ((RectTransform)transform).sizeDelta;
@@ -594,35 +634,29 @@ namespace Magi.LedgeBoardGame.Board
         }
 
         /// Called after ApplyShapeAndFill assigns a (possibly new) fillImage
-        /// sprite/rotation so the visitor layers stay in sync with the tile's
+        /// sprite/rotation so the underlay layers stay in sync with the tile's
         /// current shape instead of freezing on whatever shape was active when
-        /// the visitor layers were first created (pooled/reused SpaceViews).
-        private void RefreshVisitorSilhouetteLayers()
+        /// they were first created (pooled/reused SpaceViews).
+        private void RefreshSilhouetteLayers()
         {
             if (fillImage == null) return;
-            if (_visitorWaveImage != null)
-            {
-                _visitorWaveImage.sprite = fillImage.sprite;
-                ApplyVisitorSilhouetteTransform(_visitorWaveImage.rectTransform);
-            }
-            if (_visitorRimImage != null)
-            {
-                _visitorRimImage.sprite = fillImage.sprite;
-                ApplyVisitorSilhouetteTransform(_visitorRimImage.rectTransform);
-            }
-            if (_visitorKeylineImage != null)
-            {
-                _visitorKeylineImage.sprite = fillImage.sprite;
-                ApplyVisitorSilhouetteTransform(_visitorKeylineImage.rectTransform);
-            }
+            RefreshSilhouetteLayer(_visitorWaveImage);
+            RefreshSilhouetteLayer(_visitorRimImage);
+            RefreshSilhouetteLayer(_visitorKeylineImage);
+            RefreshSilhouetteLayer(_sourceRimImage);
+            RefreshSilhouetteLayer(_sourceKeylineImage);
 
-            // Reassert draw order (Wave, Rim, Keyline, then Fill/Frame/
-            // FrameGlow) in case a future pooling/prefab path reordered
-            // shapeRoot's children — cheap no-op in the common case where
-            // order was never disturbed.
-            if (_visitorWaveImage != null) _visitorWaveImage.transform.SetSiblingIndex(0);
-            if (_visitorRimImage != null) _visitorRimImage.transform.SetSiblingIndex(1);
-            if (_visitorKeylineImage != null) _visitorKeylineImage.transform.SetSiblingIndex(2);
+            // Reassert draw order in case a future pooling/prefab path
+            // reordered shapeRoot's children — cheap no-op in the common case
+            // where order was never disturbed.
+            ApplyUnderlayOrder();
+        }
+
+        private void RefreshSilhouetteLayer(Image layer)
+        {
+            if (layer == null) return;
+            layer.sprite = fillImage.sprite;
+            ApplySilhouetteTransform(layer.rectTransform);
         }
 
         /// Drives the steady accent-rim alpha breathe (pulses alpha only,
@@ -696,6 +730,99 @@ namespace Magi.LedgeBoardGame.Board
             }
         }
 
+        // ── Movable-source rim (CP067) ──────────────────────────────────
+        // Superseded: the diffuse gold frameGlowImage breathe alone. Runtime
+        // capture at real gameplay framing showed the source stack was not
+        // findable — the immediate/mid/late pulse frames were indistinguishable
+        // and the glow blended into the white center/core and the counters,
+        // even though the You panel explicitly says "Highlighted stacks can
+        // move." This reuses the CP064 primitive (copies of the tile's own
+        // fillImage sprite, parked behind the opaque tile face so only a crisp
+        // outboard band shows) so the cue is an outboard *locator* keyline
+        // rather than a face tint, and is automatically correct on the bespoke
+        // bridge/wall polygons:
+        //   SourceRim     — gold band (LedgePalette.FrameMovableSourceAdd),
+        //                   alpha-breathes so it reads as "act on me now".
+        //   SourceKeyline — thin near-black band inboard of the gold, so the
+        //                   rim separates from a white core or a saturated
+        //                   wedge fill instead of washing into it.
+        // The frameGlowImage breathe is kept as a quiet secondary wash.
+        private Image _sourceRimImage;
+        private Image _sourceKeylineImage;
+
+        private void EnsureSourceRimLayers()
+        {
+            if (_sourceRimImage != null && _sourceKeylineImage != null) return;
+            if (fillImage == null || shapeRoot == null) return;
+
+            if (_sourceRimImage == null) _sourceRimImage = CreateSilhouetteChild("SourceRim");
+            if (_sourceKeylineImage == null) _sourceKeylineImage = CreateSilhouetteChild("SourceKeyline");
+            ApplyUnderlayOrder();
+        }
+
+        // Assign color/scale immediately rather than waiting for the next
+        // Update() tick, so the first rendered frame after selection already
+        // shows the rim (same first-frame rule as SetVisitorOverlay).
+        private void ActivateSourceRim()
+        {
+            EnsureSourceRimLayers();
+
+            if (_sourceRimImage != null)
+            {
+                var accent = LedgePalette.FrameMovableSourceAdd;
+                _sourceRimImage.color = new Color(accent.r, accent.g, accent.b, ComputeSourceRimAlpha());
+                _sourceRimImage.rectTransform.localScale = Vector3.one * sourceRimScale;
+                _sourceRimImage.gameObject.SetActive(true);
+            }
+            if (_sourceKeylineImage != null)
+            {
+                _sourceKeylineImage.color = new Color(
+                    SilhouetteKeylineColor.r, SilhouetteKeylineColor.g, SilhouetteKeylineColor.b, sourceKeylineAlpha);
+                _sourceKeylineImage.rectTransform.localScale = Vector3.one * sourceKeylineScale;
+                _sourceKeylineImage.gameObject.SetActive(true);
+            }
+        }
+
+        // Full idle reset — disabled, scale 1, alpha 0 — not just disabled with
+        // a stale color/scale, so a reactivation (or a pooled SpaceView picked
+        // up by SetData) can never show a stale first frame.
+        private void DeactivateSourceRim()
+        {
+            if (_sourceRimImage != null)
+            {
+                _sourceRimImage.gameObject.SetActive(false);
+                _sourceRimImage.rectTransform.localScale = Vector3.one;
+                var c = _sourceRimImage.color;
+                c.a = 0f;
+                _sourceRimImage.color = c;
+            }
+            if (_sourceKeylineImage != null)
+            {
+                _sourceKeylineImage.gameObject.SetActive(false);
+                _sourceKeylineImage.rectTransform.localScale = Vector3.one;
+                var c = _sourceKeylineImage.color;
+                c.a = 0f;
+                _sourceKeylineImage.color = c;
+            }
+        }
+
+        private float ComputeSourceRimAlpha()
+        {
+            float period = Mathf.Max(0.01f, sourceRimPulsePeriodSeconds);
+            float hz = 1f / period;
+            float t = Mathf.Sin(Time.unscaledTime * hz * 2f * Mathf.PI) * 0.5f + 0.5f;
+            return Mathf.Lerp(sourceRimAlphaMin, sourceRimAlphaMax, t);
+        }
+
+        /// Alpha-only breathe (never scale — a size-pulsing tile reads as a
+        /// hover/selection affordance, not a "this one can move" locator).
+        private void TickSourceRim()
+        {
+            if (!_movableSource || _sourceRimImage == null) return;
+            var accent = LedgePalette.FrameMovableSourceAdd;
+            _sourceRimImage.color = new Color(accent.r, accent.g, accent.b, ComputeSourceRimAlpha());
+        }
+
         public void OnPointerClick(PointerEventData eventData)
         {
             onClicked?.Invoke(this);
@@ -728,6 +855,7 @@ namespace Magi.LedgeBoardGame.Board
         {
             TickHoverLabelFade();
             TickVisitorRim();
+            TickSourceRim();
 
             if (frameGlowImage == null) return;
 
@@ -1121,7 +1249,7 @@ namespace Magi.LedgeBoardGame.Board
                 frameGlowImage.transform.localRotation = Quaternion.Euler(0f, 0f, rotZ);
             }
 
-            RefreshVisitorSilhouetteLayers();
+            RefreshSilhouetteLayers();
         }
 
         // Per-space rotZ for Ring3-off hexes (ids 25..36). Drives the on-screen
