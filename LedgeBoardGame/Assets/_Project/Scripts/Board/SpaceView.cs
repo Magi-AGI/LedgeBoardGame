@@ -600,12 +600,15 @@ namespace Magi.LedgeBoardGame.Board
             if (_sourceKeylineImage != null) _sourceKeylineImage.transform.SetSiblingIndex(idx++);
         }
 
-        // Reuses fillImage's own sprite so the overlay always matches the
-        // tile's real silhouette — hex, bespoke bridge 12-gon, or bespoke wall
-        // hexagon — with no per-shape special-casing. Uniform scale only (no
-        // independent x/y, no position offset): any asymmetry breaks the
-        // constant-band illusion on the bespoke polys. Shared by the visitor
-        // rim (CP064) and the movable-source rim (CP067).
+        // Uses the untinted white silhouette mask for the tile's shape (CP068)
+        // so the overlay matches the tile's real outline — hex, bespoke bridge
+        // 12-gon, or bespoke wall hexagon — while letting the Image tint set
+        // the band's color exactly. The mask is picked in ApplyShapeAndFill;
+        // see _silhouetteSprite for why the tile's own fill sprite is no longer
+        // reused here. Uniform scale only (no independent x/y, no position
+        // offset): any asymmetry breaks the constant-band illusion on the
+        // bespoke polys. Shared by the visitor rim (CP064) and the movable-
+        // source rim (CP067).
         private Image CreateSilhouetteChild(string name)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
@@ -617,7 +620,7 @@ namespace Magi.LedgeBoardGame.Board
             rt.anchoredPosition = Vector2.zero;
 
             var img = go.GetComponent<Image>();
-            img.sprite = fillImage.sprite;
+            img.sprite = CurrentSilhouetteSprite;
             img.raycastTarget = false;
             img.color = new Color(0f, 0f, 0f, 0f);
             go.SetActive(false);
@@ -633,10 +636,26 @@ namespace Magi.LedgeBoardGame.Board
             rt.localRotation = fillImage.transform.localRotation;
         }
 
-        /// Called after ApplyShapeAndFill assigns a (possibly new) fillImage
-        /// sprite/rotation so the underlay layers stay in sync with the tile's
-        /// current shape instead of freezing on whatever shape was active when
-        /// they were first created (pooled/reused SpaceViews).
+        // Untinted white mask matching this tile's shape, chosen alongside the
+        // fill/frame/glow sprites in ApplyShapeAndFill. The underlays used to
+        // copy fillImage.sprite, which is shape-correct but carries baked
+        // pigment (Ring2 splits, bridge gradients); UI tint multiplies against
+        // that pigment, so the accent rim picked up the fill's hue unevenly —
+        // Design saw CP067's gold rim read as an arc on the token side rather
+        // than a uniform band. A white mask multiplies to exactly the tint.
+        private Sprite _silhouetteSprite;
+
+        // Falls back to the fill sprite only if a layer is somehow created
+        // before the first ApplyShapeAndFill; RefreshSilhouetteLayers corrects
+        // it on the next SetData either way.
+        private Sprite CurrentSilhouetteSprite =>
+            _silhouetteSprite != null ? _silhouetteSprite
+            : (fillImage != null ? fillImage.sprite : null);
+
+        /// Called after ApplyShapeAndFill assigns a (possibly new) shape mask /
+        /// fillImage rotation so the underlay layers stay in sync with the
+        /// tile's current shape instead of freezing on whatever shape was
+        /// active when they were first created (pooled/reused SpaceViews).
         private void RefreshSilhouetteLayers()
         {
             if (fillImage == null) return;
@@ -655,7 +674,7 @@ namespace Magi.LedgeBoardGame.Board
         private void RefreshSilhouetteLayer(Image layer)
         {
             if (layer == null) return;
-            layer.sprite = fillImage.sprite;
+            layer.sprite = CurrentSilhouetteSprite;
             ApplySilhouetteTransform(layer.rectTransform);
         }
 
@@ -1128,15 +1147,18 @@ namespace Magi.LedgeBoardGame.Board
             }
         }
 
-        /// Shape + color dispatch. Called once per SetData. Assigns sprites for fill/frame/glow,
-        /// picks the right color rule per space type, and rotates non-hex shapes to align with
-        /// their wedge axis.
+        /// Shape + color dispatch. Called once per SetData. Assigns sprites for fill/frame/glow
+        /// plus the untinted silhouette mask the rim/keyline underlays draw with, picks the right
+        /// color rule per space type, and rotates non-hex shapes to align with their wedge axis.
         private void ApplyShapeAndFill(int id, SpaceMeta meta)
         {
             float rotZ = 0f;
             Sprite fillSprite;
             Sprite frameSprite;
             Sprite glowSprite;
+            // Center/Ring2/Ring3/OuterAdded/default all draw on the hex outline; only the two
+            // bespoke inner-ring polys override this below.
+            Sprite silhouetteSprite = LedgeSpriteFactory.HexSilhouette;
 
             switch (meta.Type)
             {
@@ -1154,6 +1176,7 @@ namespace Magi.LedgeBoardGame.Board
                     fillSprite = LedgeSpriteFactory.GetBridgeFill(outerColor: complementColor, innerColor: ownColor);
                     frameSprite = LedgeSpriteFactory.BridgeFrame;
                     glowSprite = LedgeSpriteFactory.BridgeFrameGlow;
+                    silhouetteSprite = LedgeSpriteFactory.BridgeSilhouette;
                     break;
                 }
 
@@ -1164,6 +1187,7 @@ namespace Magi.LedgeBoardGame.Board
                     fillSprite = LedgeSpriteFactory.GetWallFill();
                     frameSprite = LedgeSpriteFactory.WallFrame;
                     glowSprite = LedgeSpriteFactory.WallFrameGlow;
+                    silhouetteSprite = LedgeSpriteFactory.WallSilhouette;
                     break;
                 }
 
@@ -1249,6 +1273,7 @@ namespace Magi.LedgeBoardGame.Board
                 frameGlowImage.transform.localRotation = Quaternion.Euler(0f, 0f, rotZ);
             }
 
+            _silhouetteSprite = silhouetteSprite;
             RefreshSilhouetteLayers();
         }
 
