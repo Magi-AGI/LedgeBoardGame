@@ -5,8 +5,9 @@ namespace Magi.LedgeBoardGame.Board
 {
     /// Runtime-generated UI sprites so Phase 1 visual polish ships without art-pipeline dependencies.
     /// Shapes are baked into 128x128 RGBA textures with 2x supersample AA. Caller-tintable sprites
-    /// (Disc, Counter, HexFrame, BridgeFrame, WallFrame) are pure white on transparent; colored
-    /// sprites (HexFill/HexSplit/BridgeFill/WallFill) bake pigment in so they can represent
+    /// (Disc, Counter, HexFrame, BridgeFrame, WallFrame, HexSilhouette, BridgeSilhouette,
+    /// WallSilhouette) are pure white on transparent; colored sprites
+    /// (HexFill/HexSplit/BridgeFill/WallFill) bake pigment in so they can represent
     /// multi-color gradients and splits that a UI.Image tint can't reproduce.
     public static class LedgeSpriteFactory
     {
@@ -47,6 +48,16 @@ namespace Magi.LedgeBoardGame.Board
         public static Sprite BridgeFrameGlow => GetOrBuild("bridgeframeglow", BuildBridgeFrameGlow);
         public static Sprite WallFrame => GetOrBuild("wallframe", BuildWallFrame);
         public static Sprite WallFrameGlow => GetOrBuild("wallframeglow", BuildWallFrameGlow);
+
+        // Full-shape silhouette masks (tintable white-on-transparent). Same alpha geometry as the
+        // matching *Fill sprites, but with no pigment baked into RGB, so a UI.Image tint reproduces
+        // the requested color exactly. The rim/keyline underlays (SpaceView's visitor + movable-
+        // source bands) must use these rather than the tile's fill sprite: on a split/gradient fill
+        // the baked pigment multiplies into the tint, which is what made CP067's gold rim read as
+        // an arc on the token side instead of a uniform band.
+        public static Sprite HexSilhouette => GetOrBuild("hexsilhouette", BuildHexSilhouette);
+        public static Sprite BridgeSilhouette => GetOrBuild("bridgesilhouette", BuildBridgeSilhouette);
+        public static Sprite WallSilhouette => GetOrBuild("wallsilhouette", BuildWallSilhouette);
 
         public static Sprite GetHexFill(Color color)
         {
@@ -227,6 +238,25 @@ namespace Magi.LedgeBoardGame.Board
             return Finalize(px, "HexFrameGlow");
         }
 
+        /// White-on-transparent twin of BuildHexFill — identical R/apothem so the mask covers
+        /// exactly the same footprint as any hex fill (solid, split, or Ring3-off split).
+        private static Sprite BuildHexSilhouette()
+        {
+            var px = new Color32[Size * Size];
+            float cx = (Size - 1) * 0.5f;
+            float R = (Size * 0.5f - 0.5f) * HexRadiusFraction;
+            float apothem = R * Mathf.Sqrt(3f) * 0.5f;
+            for (int y = 0; y < Size; y++)
+            {
+                for (int x = 0; x < Size; x++)
+                {
+                    float a = SampleAA(x, y, cx, (xs, ys) => HexAlpha(xs, ys, apothem));
+                    px[y * Size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+            return Finalize(px, "HexSilhouette");
+        }
+
         // ---------------- Builders: Bridge ----------------
 
         // Bridge silhouette is a 12-vertex polygon symmetric about the radial (+Y) axis,
@@ -378,6 +408,23 @@ namespace Magi.LedgeBoardGame.Board
             return Finalize(px, "BridgeFrameGlow");
         }
 
+        /// White-on-transparent twin of BuildBridgeFill — same 12-gon alpha, no baked gradient.
+        private static Sprite BuildBridgeSilhouette()
+        {
+            var px = new Color32[Size * Size];
+            float cx = (Size - 1) * 0.5f;
+            float halfSize = cx;
+            for (int y = 0; y < Size; y++)
+            {
+                for (int x = 0; x < Size; x++)
+                {
+                    float a = SampleAA(x, y, cx, (xs, ys) => BridgeAlpha(xs, ys, halfSize));
+                    px[y * Size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+            return Finalize(px, "BridgeSilhouette");
+        }
+
         // ---------------- Builders: Wall ----------------
 
         // Wall silhouette is a 6-vertex polygon symmetric about the radial (+Y) axis,
@@ -485,6 +532,28 @@ namespace Magi.LedgeBoardGame.Board
                 }
             }
             return Finalize(px, "WallFrameGlow");
+        }
+
+        /// White-on-transparent twin of BuildWallFill — same 6-gon alpha, no baked gray.
+        private static Sprite BuildWallSilhouette()
+        {
+            var px = new Color32[Size * Size];
+            float cx = (Size - 1) * 0.5f;
+            float halfSize = cx;
+            for (int y = 0; y < Size; y++)
+            {
+                for (int x = 0; x < Size; x++)
+                {
+                    float a = SampleAA(x, y, cx, (xs, ys) =>
+                    {
+                        float nx = xs / halfSize;
+                        float ny = ys / halfSize;
+                        return WallInside(nx, ny);
+                    });
+                    px[y * Size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+            return Finalize(px, "WallSilhouette");
         }
 
         // ---------------- Legacy builders (Disc / Ring / Counter / FrameGlow) ----------------
