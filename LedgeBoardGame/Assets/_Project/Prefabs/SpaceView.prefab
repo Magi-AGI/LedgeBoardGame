@@ -183,9 +183,28 @@ MonoBehaviour:
   pulseFrequencyHz: 1.4
   pulseMinAlpha: 0.25
   pulseMaxAlpha: 0.85
+  innerRingPulseDamping: 0.5
+  radialPhasePerHop: 0.15
+  validTargetFadeInDelay: 0.6
+  validTargetFadeDuration: 0.35
   sourceBreatheHz: 0.7
   sourceMinAlpha: 0
   sourceMaxAlpha: 0.08
+  sourceKeylineScale: 1.06
+  sourceRimScale: 1.16
+  sourceRimAlphaMin: 0.85
+  sourceRimAlphaMax: 1
+  sourceRimPulsePeriodSeconds: 1.6
+  sourceKeylineAlpha: 0.95
+  visitorKeylineScale: 1.045
+  visitorRimScale: 1.115
+  visitorWaveEndScale: 1.55
+  visitorWaveDuration: 0.3
+  visitorRimAlphaMin: 0.85
+  visitorRimAlphaMax: 1
+  visitorRimPulsePeriodSeconds: 2.4
+  visitorKeylineAlpha: 0.95
+  visitorWaveStartAlpha: 0.95
   onClicked:
     m_PersistentCalls:
       m_Calls: []

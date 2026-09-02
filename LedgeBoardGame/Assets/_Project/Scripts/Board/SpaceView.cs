@@ -104,8 +104,17 @@ namespace Magi.LedgeBoardGame.Board
         [SerializeField] private float visitorRimScale = 1.115f;
         [SerializeField] private float visitorWaveEndScale = 1.55f;
         [SerializeField] private float visitorWaveDuration = 0.30f;
-        [SerializeField] private float visitorRimAlphaMin = 0.55f;
-        [SerializeField] private float visitorRimAlphaMax = 0.85f;
+        // CP072: raised from 0.55/0.85 to the source rim's envelope. CP071's portrait
+        // captures caught the gap — at 720x1280 this tile renders ~49px wide instead of
+        // landscape's ~120px, so the same alpha has roughly a third of the pixels to
+        // carry the band, and Claude Design could not locate the rim at 0.550 at all
+        // (the visitor pill was carrying the entire visitor signal on a phone). The
+        // 0.55 floor dates to CP054's diffuse glow, which needed a deep trough to feel
+        // calm; the CP064 crisp-rim primitive does not. Kept equal to
+        // sourceRimAlphaMin/Max so the two rim families can't drift apart again —
+        // SpaceViewRimAlphaContractTests asserts the parity rather than the literals.
+        [SerializeField] private float visitorRimAlphaMin = 0.85f;
+        [SerializeField] private float visitorRimAlphaMax = 1.0f;
         [SerializeField] private float visitorRimPulsePeriodSeconds = 2.4f;
         [SerializeField] private float visitorKeylineAlpha = 0.95f;
         [SerializeField] private float visitorWaveStartAlpha = 0.95f;
