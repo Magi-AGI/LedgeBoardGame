@@ -3,6 +3,7 @@
     "rootNamespace": "Magi.LedgeBoardGame.Tests.EditMode",
     "references": [
         "Magi.LedgeBoardGame",
+        "Unity.TextMeshPro",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
