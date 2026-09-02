@@ -12,10 +12,23 @@ namespace Magi.LedgeBoardGame.Board
     /// re-save.
     public class BoardViewHud : MonoBehaviour
     {
+        /// Panel footprint, in canvas reference units. Public because the
+        /// top-band chrome has to be placed around it — see
+        /// StatusBanner.ResolveToastAnchoredPosition.
+        public const float HudWidth = 280f;
+        public const float HudHeight = 144f;
+
         private MultiBoardLayout _layout;
         private LedgeButton _toggleButton;
         private RectTransform _comparisonGroup;
         private TextMeshProUGUI _opponentLabel;
+        private RectTransform _root;
+
+        /// The top-right glass panel this component builds under the canvas. Note
+        /// this is NOT the component's own transform: BoardViewHud lives on a
+        /// bare host GameObject and builds its UI as a canvas sibling. Null until
+        /// Initialize has run.
+        public RectTransform Root => _root;
 
         public void Initialize(MultiBoardLayout layout)
         {
@@ -72,8 +85,9 @@ namespace Magi.LedgeBoardGame.Board
             rootRect.anchorMax = new Vector2(1f, 1f);
             rootRect.pivot = new Vector2(1f, 1f);
             rootRect.anchoredPosition = new Vector2(-LedgeUITokens.PanelEdgeInset, -LedgeUITokens.PanelEdgeInset);
-            rootRect.sizeDelta = new Vector2(280f, 144f);
+            rootRect.sizeDelta = new Vector2(HudWidth, HudHeight);
             rootRect.SetAsLastSibling();
+            _root = rootRect;
 
             // Glass panel backdrop so this matches the TL/BL chrome.
             var glass = LedgeGlassPanel.Build(rootRect, "Glass");

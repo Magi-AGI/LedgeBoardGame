@@ -69,9 +69,13 @@ namespace Magi.LedgeBoardGame.UI
         // Full chrome vs the slim Comparison-view variant. Compact keeps the
         // identity strip + action line and drops the tone tracker / sub line,
         // so the panel stops crowding the SEATS strip at 3+ seats.
-        private const float PanelWidth = 360f;
-        private const float FullHeight = 130f;
-        private const float CompactHeight = 80f;
+        //
+        // Public because this panel owns the top-left corner of the top band and
+        // other top chrome has to place itself around it — see
+        // StatusBanner.ResolveToastAnchoredPosition (CP073).
+        public const float PanelWidth = 360f;
+        public const float FullHeight = 130f;
+        public const float CompactHeight = 80f;
 
         // Row geometry, in content-local space (the glass panel insets its
         // content by PanelPadX/PanelPadY, so y=0 is already inside the padding).
