@@ -53,7 +53,7 @@ namespace Magi.LedgeBoardGame.UI
         public const float SectionLabelSize = 9.5f;    // mono, 0.22em tracking, uppercase
         public const float BodySize         = 12.5f;
         public const float IdentNameSize    = 15f;
-        public const float TurnBannerSize   = 32f;     // Fraunces italic
+        public const float TurnBannerSize   = 32f;     // display action/banner size; style is per-surface (CP076)
         public const float ButtonMdSize     = 12f;
         public const float ButtonSmSize     = 11f;
         public const float ButtonLgSize     = 13f;
