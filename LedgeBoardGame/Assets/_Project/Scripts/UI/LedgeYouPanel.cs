@@ -21,7 +21,17 @@ namespace Magi.LedgeBoardGame.UI
     ///      aligned. One quiet row instead of three loud ones. Identity and
     ///      wedge colour are still first-class, just no longer dominant.
     ///   2. Action line — the state-specific instruction, at display weight
-    ///      (TurnBannerSize, Fraunces italic). This is the panel now.
+    ///      (TurnBannerSize, DisplayFont upright). This is the panel now.
+    ///      Upright is deliberate (CP076) and is NOT an oversight to be
+    ///      "fixed" for consistency with the StatusBanner toast: italic is
+    ///      the game narrating (transient, third-person events and ceremony),
+    ///      upright is the interface instructing (persistent, second-person
+    ///      imperatives you must act on). This row is all imperatives —
+    ///      "Place Light", "Select a stack", "Choose destination" — so it
+    ///      takes the instruction voice. The italic it used to carry was
+    ///      inherited, not chosen: pre-CP066 this row held the aside
+    ///      "Player1's turn." at 22f, and the style rode along when CP066
+    ///      promoted it to a 32f command.
     ///   3. Tone tracker — placement only: which of Light/Dark is still owed.
     ///   4. Sub line — short supporting detail, the row that is dropped first.
     ///
@@ -201,7 +211,11 @@ namespace Magi.LedgeBoardGame.UI
             // ── Row 2: the action line — the panel's dominant read ──────
             _actionLabel = MakeText(content, "ActionLabel", LedgeUITokens.DisplayFont,
                 ActionSizeMax_Full, LedgeUITokens.Ink, "");
-            _actionLabel.fontStyle = FontStyles.Italic;
+            // Set Normal explicitly rather than omitting the line: an explicit
+            // upright is self-documenting and immune to whatever style the
+            // resolved font asset defaults to. See the class doc for why this
+            // row is upright while the StatusBanner toast stays italic (CP076).
+            _actionLabel.fontStyle = FontStyles.Normal;
             // Autosizing rather than a fixed size: "Waiting for <long name>" and
             // "Choose destination" have very different widths, and a 360px panel
             // has to hold both without clipping. Shrink first, ellipsize only if

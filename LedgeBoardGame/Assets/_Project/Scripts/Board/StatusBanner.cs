@@ -98,8 +98,18 @@ namespace Magi.LedgeBoardGame.Board
                 label = labelGo.AddComponent<TextMeshProUGUI>();
                 label.alignment = TextAlignmentOptions.Center;
                 label.fontSize = LedgeUITokens.TurnBannerSize;
-                // Display font (Fraunces italic) for the theatrical "Your turn" feel
-                // when the asset is present; falls back to UI font otherwise.
+                // DisplayFont italic — the theatrical, ceremonial voice, kept
+                // here on purpose (CP076). This toast NARRATES: transient,
+                // third-person copy about events and players ("Player2 wins!",
+                // "Player1 eliminated.", "… no legal moves — turn skipped").
+                // The You-panel action headline draws the same DisplayFont at
+                // the same TurnBannerSize but UPRIGHT, because it INSTRUCTS —
+                // persistent second-person imperatives ("Place Light", "Select
+                // a stack"). The style bit is the only thing carrying that
+                // distinction, so do not "align" the two for consistency; the
+                // asymmetry is the design. LedgeTypeVoiceTests pins both sides.
+                // (DisplayFont falls back to the UI font when no display asset
+                // is imported, in which case TMP synthesises the oblique.)
                 label.font = LedgeUITokens.DisplayFont;
                 label.fontStyle = FontStyles.Italic;
                 label.color = LedgeUITokens.Ink;
